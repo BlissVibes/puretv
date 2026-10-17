@@ -13,6 +13,7 @@ import com.puretv.twitch.android.data.db.WatchHistoryDao
 import com.puretv.twitch.android.data.db.WatchHistoryEntry
 import com.puretv.twitch.android.data.db.toCachedStream
 import com.puretv.twitch.android.data.db.toStreamInfo
+import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
@@ -303,6 +304,7 @@ class StreamViewModel(
     private val settingsStore: AppSettingsStore,
     private val watchHistoryDao: WatchHistoryDao,
     private val twitchPlayer: TwitchPlayer,
+    private val backgroundPlayback: BackgroundPlayback,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -393,6 +395,9 @@ class StreamViewModel(
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
         twitchPlayer.stop()
+        // In-app Back means done watching, not "keep playing in the background":
+        // the media notification goes with the stream.
+        backgroundPlayback.onStreamClosed()
     }
 }
 
@@ -474,6 +479,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setAnimateEmotes(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(animateEmotes = enabled) }
+    }
+
+    fun setBackgroundPlay(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(backgroundPlay = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

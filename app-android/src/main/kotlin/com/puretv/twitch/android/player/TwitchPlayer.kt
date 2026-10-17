@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -74,6 +75,11 @@ class TwitchPlayer(
             /* handleAudioFocus = */ true,
         )
         .setHandleAudioBecomingNoisy(true)
+        // Background play (issue #27) keeps streaming with the screen off. A
+        // foreground service alone holds no wake or Wi-Fi lock, so without this
+        // the CPU or radio dozes and the stream stalls a few minutes in. ExoPlayer
+        // only holds the locks while actually playing.
+        .setWakeMode(C.WAKE_MODE_NETWORK)
         .setLoadControl(
             DefaultLoadControl.Builder()
                 // Deeper buffer than the old (2s/15s/0.5s/1s) thresholds: mobile
@@ -134,11 +140,12 @@ class TwitchPlayer(
      * Selects a stream for playback, resetting the transient-error retry budget
      * so a fresh stream always gets its full allowance even if the previous one
      * exhausted it without ever reaching STATE_READY (a dead/offline channel).
+     * [metadata] is what the media notification and lock screen show.
      */
-    fun playUrl(url: String) {
+    fun playUrl(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY) {
         errorRetries = 0
         with(exoPlayer) {
-            setMediaItem(MediaItem.fromUri(url))
+            setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build())
             prepare()
             play()
         }
@@ -153,6 +160,20 @@ class TwitchPlayer(
         _exoPlayer?.run {
             stop()
             clearMediaItems()
+        }
+    }
+
+    /**
+     * The notification's Stop: pause and drop the network and decoder, but keep
+     * the stream queued and parked at the live edge. The stream screen is still
+     * on the back stack, so coming back shows the player's play button, and one
+     * tap re-prepares at live instead of leaving an empty, unplayable surface.
+     */
+    fun stopKeepingStream() {
+        _exoPlayer?.run {
+            pause()
+            stop()
+            seekToDefaultPosition()
         }
     }
 

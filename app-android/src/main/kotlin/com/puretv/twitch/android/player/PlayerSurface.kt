@@ -19,6 +19,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -31,15 +32,15 @@ import org.koin.compose.koinInject
  * equivalent yet.
  *
  * The ExoPlayer instance is a Koin singleton shared across navigation so PiP
- * keeps playing; the playback model is "PiP + pause-on-leave", no background
- * service. Teardown (stop + clearMediaItems) lives in `StreamViewModel.onCleared`,
- * NOT here, because this surface leaves composition on rotation and PiP branch
- * switches too, and stopping there would re-buffer playback on every rotation.
- * onCleared fires only on a real back-stack pop, i.e. truly leaving the stream.
+ * and background play keep the same session. Teardown (stop + clearMediaItems)
+ * lives in `StreamViewModel.onCleared`, NOT here, because this surface leaves
+ * composition on rotation and PiP branch switches too, and stopping there would
+ * re-buffer playback on every rotation. onCleared fires only on a real
+ * back-stack pop, i.e. truly leaving the stream.
  *
- * This surface only owns the lifecycle pause/resume: it pauses on ON_STOP when
- * the host Activity is NOT in PiP, and resumes on ON_RESUME, so backgrounding
- * without PiP does not keep audio running while PiP is left playing.
+ * This surface only reports the Activity's stop/resume to [BackgroundPlayback],
+ * which decides whether leaving pauses (background play off, no PiP) or keeps
+ * playing under the media notification (background play on).
  */
 @OptIn(UnstableApi::class)
 @SuppressLint("ClickableViewAccessibility")
@@ -56,11 +57,15 @@ fun PlayerSurface(
     // Reports the player controller's show/hide so overlay chrome (back button,
     // pills, badges) can auto-hide in sync instead of persisting over the video.
     onControlsVisibilityChanged: ((Boolean) -> Unit)? = null,
+    // Title, channel and artwork for the media notification and lock screen.
+    metadata: MediaMetadata = MediaMetadata.EMPTY,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val twitchPlayer = koinInject<TwitchPlayer>()
+    val backgroundPlayback = koinInject<BackgroundPlayback>()
+    val currentMetadata by rememberUpdatedState(metadata)
 
     // Keep live handles to the latest callbacks so the listeners installed once in
     // factory{} always call the current ones (fullscreen/state changes).
@@ -76,27 +81,24 @@ fun PlayerSurface(
         // (which also resets the transient-error retry budget for the new stream).
         val currentUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
         if (currentUri != url) {
-            twitchPlayer.playUrl(url)
+            twitchPlayer.playUrl(url, currentMetadata)
         }
+        // Still in the foreground here, which is the only place Android 12+ lets
+        // the foreground service start. No-op when background play is off.
+        backgroundPlayback.startService()
     }
 
-    // Pause when backgrounded WITHOUT PiP; resume when foregrounded. PiP is left
-    // playing so the floating window keeps audio/video.
+    // Leaving the app pauses only when background play is off and no PiP window
+    // is showing the video; coming back resumes only a pause we made ourselves.
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
                     val inPip =
                         (context as? android.app.Activity)?.isInPictureInPictureMode == true
-                    if (!inPip) {
-                        twitchPlayer.exoPlayer.pause()
-                    }
+                    backgroundPlayback.onAppStopped(inPip)
                 }
-                Lifecycle.Event.ON_RESUME -> {
-                    if (twitchPlayer.exoPlayer.mediaItemCount > 0) {
-                        twitchPlayer.exoPlayer.play()
-                    }
-                }
+                Lifecycle.Event.ON_RESUME -> backgroundPlayback.onAppResumed()
                 else -> Unit
             }
         }

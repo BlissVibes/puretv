@@ -4,6 +4,7 @@ import android.app.Application
 import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.di.androidModule
+import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
@@ -78,6 +79,17 @@ class PureTvApp : Application() {
                 .map { it.adBlockEnabled }
                 .distinctUntilChanged()
                 .collect { engine.setEnabled(it) }
+        }
+
+        // Same pattern for "Background play": the stream screen and MainActivity
+        // read it synchronously as the app leaves the foreground, so a process-
+        // wide holder is kept current rather than suspending on DataStore there.
+        appScope.launch {
+            val playback = koinApp.koin.get<BackgroundPlayback>()
+            koinApp.koin.get<AppSettingsStore>().flow
+                .map { it.backgroundPlay }
+                .distinctUntilChanged()
+                .collect { playback.setEnabled(it) }
         }
     }
 

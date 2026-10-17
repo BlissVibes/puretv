@@ -69,3 +69,6 @@ vaft.user.js
 # the signed build here under the exact asset name the in-app updater expects).
 # Build output, never source: a 6.4MB binary that must not land in history.
 /*.apk
+
+# Subagent git worktrees (Claude Code). Separate checkouts, never part of this one.
+/.claude/worktrees/

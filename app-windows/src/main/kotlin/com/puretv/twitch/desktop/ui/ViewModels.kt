@@ -9,6 +9,7 @@ import com.puretv.twitch.core.api.DeviceCodeResponse
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TokenResponse
 import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.TwitchChatClient
@@ -849,8 +850,11 @@ class LoginViewModel(
                 _state.update { it.copy(isAuthenticating = false, error = "Couldn't start sign-in — check your connection and try again.") }
                 return@launch
             }
-            // Best-effort pre-fill; the activate page works with or without it.
-            oauthManager.openInBrowser("${device.verificationUri}?public_code=${device.userCode}")
+            // The bare activate page, as on phone and TV (see TwitchConfig.ACTIVATE_URL).
+            // This used to append `?public_code=` to verification_uri, which already
+            // carries a query string, so the pre-fill was malformed and the page often
+            // failed to take the code. The screen copies the code for pasting instead.
+            oauthManager.openInBrowser(TwitchConfig.ACTIVATE_URL)
             _state.update { it.copy(userCode = device.userCode, verificationUri = device.verificationUri) }
             pollForToken(device)
         }

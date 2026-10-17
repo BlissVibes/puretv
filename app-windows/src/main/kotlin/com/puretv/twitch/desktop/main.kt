@@ -21,6 +21,7 @@ import javax.swing.SwingUtilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
@@ -35,11 +36,18 @@ fun main() {
     startKoin(koinApp)
 
     val settingsStore = koinApp.koin.get<DesktopSettingsStore>()
-    // Refresh a near-expired access token at startup so the session survives the
-    // ~4h token lifetime instead of silently dying across restarts (audit F2).
-    // Fire-and-forget on a background scope so it never blocks UI startup.
+    // Keep the session fresh for the life of the process: refresh a near-expired
+    // access token at startup (audit F2), then check again every minute, so a window
+    // left open past the ~4h token lifetime (or a laptop waking from sleep) gets a
+    // new token instead of quietly failing every Helix call and chat send. Each
+    // check is a no-op until the token is within its refresh leeway. Background
+    // scope, so it never blocks UI startup.
     CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-        runCatching { settingsStore.refreshIfNeeded(koinApp.koin.get<HttpClient>()) }
+        val http = koinApp.koin.get<HttpClient>()
+        while (true) {
+            runCatching { settingsStore.refreshIfNeeded(http) }
+            delay(SESSION_REFRESH_CHECK_MS)
+        }
     }
 
     val vlcPlayer = koinApp.koin.get<DesktopPlayer>()
@@ -98,3 +106,6 @@ fun main() {
     runCatching { vlcPlayer.release() }
     exitProcess(0)
 }
+
+/** How often the background session check runs (see main). Cheap: one small file decrypt. */
+private const val SESSION_REFRESH_CHECK_MS = 60_000L

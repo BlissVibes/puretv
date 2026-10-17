@@ -12,6 +12,8 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -294,15 +296,22 @@ class DesktopSettingsStore(
      * even though a valid refresh token is sitting encrypted on disk. Safe to
      * call at startup: a no-op when not logged in, when there's no refresh token,
      * or when the token is still fresh (or its expiry is unknown — we never
-     * gamble a working token on a refresh). A genuinely revoked refresh token
-     * (typed [TokenRefreshException]) clears the session so the user is prompted
-     * to sign in again; transient network errors leave the token untouched.
+     * gamble a working token on a refresh). Only a refresh token Twitch reports
+     * as dead ([TokenRefreshException.revoked]) clears the session so the user is
+     * prompted to sign in again. Anything else (network errors, 5xx, a refused
+     * client secret) leaves the session alone for the next attempt: clearing on
+     * "invalid client secret" is what signed every Windows user out daily.
+     *
+     * Called at startup and then on a timer for the life of the process (see
+     * main.kt), so a session left open past the token's lifetime stays signed in.
+     * [refreshMutex] keeps two overlapping calls from both spending the same
+     * refresh token, since Twitch may rotate it on use.
      */
-    suspend fun refreshIfNeeded(http: HttpClient, nowEpochSeconds: Long = System.currentTimeMillis() / 1000) {
-        val current = loadTokens() ?: return
-        val refresh = current.refreshToken ?: return
-        if (current.expiresAtEpochSeconds <= 0) return
-        if (nowEpochSeconds < current.expiresAtEpochSeconds - REFRESH_LEEWAY_SECONDS) return
+    suspend fun refreshIfNeeded(http: HttpClient, nowEpochSeconds: Long = System.currentTimeMillis() / 1000) = refreshMutex.withLock {
+        val current = loadTokens() ?: return@withLock
+        val refresh = current.refreshToken ?: return@withLock
+        if (current.expiresAtEpochSeconds <= 0) return@withLock
+        if (nowEpochSeconds < current.expiresAtEpochSeconds - REFRESH_LEEWAY_SECONDS) return@withLock
         runCatching { DeviceAuth.refreshToken(http, refresh) }
             .onSuccess { fresh ->
                 saveTokens(
@@ -313,8 +322,11 @@ class DesktopSettingsStore(
                     login = current.login,
                 )
             }
-            .onFailure { e -> if (e is TokenRefreshException) clearTokens() }
+            .onFailure { e -> if (e is TokenRefreshException && e.revoked) clearTokens() }
+        Unit
     }
+
+    private val refreshMutex = Mutex()
 
     data class StoredTokensResult(
         val accessToken: String,

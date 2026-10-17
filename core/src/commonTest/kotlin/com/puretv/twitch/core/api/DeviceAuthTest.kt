@@ -21,9 +21,28 @@ class DeviceAuthTest {
         // A revoked/invalid refresh token returns {status,message} with no
         // access_token — must surface a clean TokenRefreshException (audit F4),
         // not an opaque kotlinx MissingFieldException.
-        assertFailsWith<TokenRefreshException> {
+        val e = assertFailsWith<TokenRefreshException> {
             DeviceAuth.parseRefreshResponse("""{"status":400,"message":"Invalid refresh token"}""")
         }
+        assertTrue(e.revoked, "a dead refresh token must be reported as revoked")
+    }
+
+    @Test
+    fun parseRefreshResponse_bad_client_secret_is_not_a_revoked_session() {
+        // What every shipped Windows build got back while its CI build left out the
+        // secret. The session was fine; clearing it is what signed users out daily.
+        val e = assertFailsWith<TokenRefreshException> {
+            DeviceAuth.parseRefreshResponse("""{"status":403,"message":"invalid client secret"}""")
+        }
+        assertFalse(e.revoked)
+    }
+
+    @Test
+    fun parseRefreshResponse_missing_client_secret_is_not_a_revoked_session() {
+        val e = assertFailsWith<TokenRefreshException> {
+            DeviceAuth.parseRefreshResponse("""{"status":400,"message":"missing client secret"}""")
+        }
+        assertFalse(e.revoked)
     }
 
     @Test

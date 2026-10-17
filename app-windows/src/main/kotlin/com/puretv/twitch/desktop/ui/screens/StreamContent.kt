@@ -79,6 +79,12 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.adblock.AdBlockStatus
+import com.puretv.twitch.core.chat.ComposerSuggestion
+import com.puretv.twitch.core.chat.completeWord
+import com.puretv.twitch.core.chat.composerSuggestions
+import com.puretv.twitch.core.chat.insertAtCursor
+import com.puretv.twitch.core.chat.recentChatters
+import com.puretv.twitch.core.chat.wordAtCursor
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
@@ -90,13 +96,9 @@ import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.StreamViewModel
 import com.puretv.twitch.desktop.ui.chat.ComposerKeyAction
-import com.puretv.twitch.desktop.ui.chat.completeWord
 import com.puretv.twitch.desktop.ui.chat.composerKeyAction
-import com.puretv.twitch.desktop.ui.chat.insertAtCursor
-import com.puretv.twitch.desktop.ui.chat.matchEmotes
 import com.puretv.twitch.desktop.ui.chat.nextFollowing
 import com.puretv.twitch.desktop.ui.chat.scrollAnchor
-import com.puretv.twitch.desktop.ui.chat.wordAtCursor
 import com.puretv.twitch.desktop.ui.components.AdBlockPill
 import com.puretv.twitch.desktop.ui.components.Avatar
 import com.puretv.twitch.desktop.ui.components.ChatMessageRow
@@ -495,6 +497,8 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                     ChatInputBar(
                         canChat = state.canChat,
                         emotes = state.emotes,
+                        recentMessages = state.chatMessages,
+                        selfLogin = state.selfLogin,
                         replyingTo = state.replyingTo,
                         onCancelReply = viewModel::cancelReply,
                         onSend = viewModel::sendChatMessage,
@@ -940,6 +944,8 @@ private fun ChatInputBar(
     canChat: Boolean,
     emotes: List<PickableEmote>,
     onSend: (String) -> Unit,
+    recentMessages: List<ChatMessage> = emptyList(),
+    selfLogin: String? = null,
     replyingTo: ChatMessage? = null,
     onCancelReply: () -> Unit = {},
     onFocusChanged: (Boolean) -> Unit = {},
@@ -991,9 +997,15 @@ private fun ChatInputBar(
         }
     }
 
-    // Autocomplete suggestions for the word the cursor sits in.
+    // Autocomplete suggestions for the word the cursor sits in: emotes, plus
+    // recent chatters for "@" (and, ranked after emotes, for a plain prefix).
+    // Skipped for an empty word so new messages don't rescan chat while idle.
     val (word, _) = wordAtCursor(value.text, value.selection.start)
-    val suggestions = matchEmotes(word, emotes)
+    val suggestions = if (word.isEmpty()) {
+        emptyList()
+    } else {
+        composerSuggestions(word, emotes, recentChatters(recentMessages, selfLogin))
+    }
 
     fun applyCompletion(code: String) {
         val (t, cur) = completeWord(value.text, value.selection.start, code)
@@ -1051,12 +1063,12 @@ private fun ChatInputBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 suggestions.forEach { s ->
-                    val chipInteraction = remember(s.code) { MutableInteractionSource() }
+                    val chipInteraction = remember(s.completion) { MutableInteractionSource() }
                     Row(
                         modifier = Modifier
                             .expressiveClickable(
                                 interaction = chipInteraction,
-                                onClick = { applyCompletion(s.code) },
+                                onClick = { applyCompletion(s.completion) },
                                 restRadius = PureTvTheme.shapes.pill,
                                 hoverRadius = PureTvTheme.shapes.pillMorph,
                                 color = c.surfaceHigh,
@@ -1065,9 +1077,11 @@ private fun ChatInputBar(
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        EmoteImage(s.imageUrl, s.code, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(5.dp))
-                        Text(s.code, color = c.onSurfaceVariant, style = PureTvType.dataSmall)
+                        if (s is ComposerSuggestion.Emote) {
+                            EmoteImage(s.emote.imageUrl, s.emote.code, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(s.completion, color = c.onSurfaceVariant, style = PureTvType.dataSmall)
                     }
                 }
             }
@@ -1115,14 +1129,14 @@ private fun ChatInputBar(
                                 fieldFocused = it.isFocused
                                 onFocusChanged(it.isFocused)
                             }
-                            // Enter sends the message; Tab accepts the first emote
-                            // suggestion when one is offered (see composerKeyAction).
+                            // Enter sends the message; Tab accepts the first emote or
+                            // @username suggestion when one is offered (see composerKeyAction).
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 val isEnter = ev.key == Key.Enter || ev.key == Key.NumPadEnter
                                 when (composerKeyAction(isEnter, ev.key == Key.Tab, suggestions.isNotEmpty())) {
                                     ComposerKeyAction.SEND -> { submit(); true }
-                                    ComposerKeyAction.COMPLETE -> { applyCompletion(suggestions.first().code); true }
+                                    ComposerKeyAction.COMPLETE -> { applyCompletion(suggestions.first().completion); true }
                                     ComposerKeyAction.NONE -> false
                                 }
                             },

@@ -82,7 +82,7 @@ val androidModule = module {
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }

@@ -1,4 +1,4 @@
-package com.puretv.twitch.desktop.ui.chat
+package com.puretv.twitch.core.chat
 
 import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.MessagePart
@@ -71,5 +71,13 @@ class SelfEchoTest {
         )
         val names = echo.parsedParts.filterIsInstance<com.puretv.twitch.core.model.MessagePart.ThirdPartyEmote>().map { it.name }
         assertEquals(listOf("catJAM"), names)
+    }
+
+    @Test fun outgoingBodyMatchesWhatThePrivmsgLineCarries() {
+        val raw = "a\r\nb" + "x".repeat(600)
+        val body = outgoingChatBody(raw)
+        assertEquals(500, body.length)
+        assertTrue(body.startsWith("a  b"))
+        assertEquals("PRIVMSG #chan :" + body, buildPrivmsgLine("chan", raw))
     }
 }

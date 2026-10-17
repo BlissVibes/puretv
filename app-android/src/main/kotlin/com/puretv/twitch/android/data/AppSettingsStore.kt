@@ -62,6 +62,8 @@ class AppSettingsStore(
         val THEME = stringPreferencesKey("theme")
         val SHAPE_INTENSITY = stringPreferencesKey("shape_intensity")
         val COMPACT_MODE = booleanPreferencesKey("compact_mode")
+        val BACKGROUND_PLAY = booleanPreferencesKey("background_play")
+        val PIP_ON_LEAVE = booleanPreferencesKey("pip_on_leave")
     }
 
     /** Mirrors [SecureTokenStore]; updated explicitly by [setSession]/[clearSession]. */
@@ -112,6 +114,8 @@ class AppSettingsStore(
             theme = prefs[Keys.THEME] ?: "dark",
             shapeIntensity = prefs[Keys.SHAPE_INTENSITY] ?: AppSettings().shapeIntensity,
             compactMode = prefs[Keys.COMPACT_MODE] ?: false,
+            backgroundPlay = prefs[Keys.BACKGROUND_PLAY] ?: AppSettings().backgroundPlay,
+            pipOnLeave = prefs[Keys.PIP_ON_LEAVE] ?: AppSettings().pipOnLeave,
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
@@ -157,6 +161,8 @@ class AppSettingsStore(
             prefs[Keys.THEME] = next.theme
             prefs[Keys.SHAPE_INTENSITY] = next.shapeIntensity
             prefs[Keys.COMPACT_MODE] = next.compactMode
+            prefs[Keys.BACKGROUND_PLAY] = next.backgroundPlay
+            prefs[Keys.PIP_ON_LEAVE] = next.pipOnLeave
         }
     }
 

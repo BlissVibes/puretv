@@ -1,7 +1,12 @@
 package com.puretv.twitch.android.ui.screens
 
+import android.Manifest
 import android.app.Activity
+import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -32,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -46,16 +52,21 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.MediaMetadata
 import androidx.media3.ui.AspectRatioFrameLayout
 import coil3.compose.AsyncImage
 import com.puretv.twitch.android.LocalIsInPip
+import com.puretv.twitch.android.player.BackgroundPlayback
+import com.puretv.twitch.android.player.NowPlaying
 import com.puretv.twitch.android.player.PlayerSurface
 import com.puretv.twitch.android.ui.StreamUiState
 import com.puretv.twitch.android.ui.StreamViewModel
@@ -71,6 +82,7 @@ import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
 /**
@@ -86,6 +98,13 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val isInPip = LocalIsInPip.current
     val c = PureTvTheme.colors
+
+    // What the media notification and lock screen show while playing in the
+    // background. Channel and stream info land before the playable URL does.
+    val metadata = remember(state.channel, state.streamInfo) {
+        NowPlaying.of(channelLogin, state.channel, state.streamInfo).toMediaMetadata()
+    }
+    BackgroundPlayNotificationPermission()
 
     // Saveable so an immersive fullscreen survives process death + restore (plain
     // remember would silently drop the user back to the windowed layout).
@@ -155,6 +174,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     onToggleChat = toggleChat,
                     onRetry = viewModel::retry,
                     isInPip = isInPip,
+                    metadata = metadata,
                     modifier = Modifier.weight(if (showChat) 1f - chatFraction else 1f).fillMaxHeight(),
                 )
                 if (showChat) {
@@ -175,6 +195,8 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                         messages = state.chatMessages,
                         onSend = viewModel::sendChatMessage,
                         emotes = state.emotes,
+                        pickableEmotes = state.pickableEmotes,
+                        selfLogin = state.selfLogin,
                         canSend = state.isLoggedIn,
                         modifier = Modifier.weight(chatFraction).fillMaxHeight(),
                     )
@@ -195,6 +217,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                 onToggleChat = toggleChat,
                 onRetry = viewModel::retry,
                 isInPip = isInPip,
+                metadata = metadata,
                 modifier = if (isInPip) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
             )
             if (!isInPip) {
@@ -205,10 +228,33 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     messages = state.chatMessages,
                     onSend = viewModel::sendChatMessage,
                     emotes = state.emotes,
+                    pickableEmotes = state.pickableEmotes,
+                    selfLogin = state.selfLogin,
                     canSend = state.isLoggedIn,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }
+        }
+    }
+}
+
+/**
+ * Android 13+ asks before an app may post notifications, and background play
+ * lives in one, so ask when a stream opens with it switched on. Playback never
+ * waits on the answer: a refusal only hides the notification, and Android stops
+ * showing the prompt by itself once the viewer has declined it twice.
+ */
+@Composable
+private fun BackgroundPlayNotificationPermission() {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+    val context = LocalContext.current
+    val backgroundPlayback = koinInject<BackgroundPlayback>()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        if (backgroundPlayback.enabled && !granted) {
+            runCatching { launcher.launch(Manifest.permission.POST_NOTIFICATIONS) }
         }
     }
 }
@@ -268,6 +314,7 @@ private fun PlayerArea(
     onToggleChat: () -> Unit,
     onRetry: () -> Unit,
     isInPip: Boolean,
+    metadata: MediaMetadata,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -292,6 +339,7 @@ private fun PlayerArea(
             // filling the whole display (and cutout) is meaningful.
             onDoubleTap = { if (fullscreen) onToggleFill() },
             onControlsVisibilityChanged = { controlsVisible = it },
+            metadata = metadata,
             modifier = Modifier.fillMaxSize(),
         )
 

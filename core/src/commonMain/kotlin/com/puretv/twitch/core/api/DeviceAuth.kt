@@ -157,9 +157,28 @@ object DeviceAuth {
         val message = runCatching {
             json.parseToJsonElement(body).jsonObject["message"]?.jsonPrimitive?.content
         }.getOrNull().orEmpty()
-        throw TokenRefreshException(message.ifBlank { "refresh token rejected" })
+        throw TokenRefreshException(
+            message = message.ifBlank { "refresh token rejected" },
+            revoked = isRevokedRefreshMessage(message),
+        )
     }
+
+    /**
+     * True only when Twitch is saying the refresh token itself is dead (revoked,
+     * expired, already rotated away): `{"status":400,"message":"Invalid refresh token"}`.
+     * Every other refusal is about the request, not the session. The one that
+     * mattered in practice is `{"status":403,"message":"invalid client secret"}`
+     * from a build that shipped without the real secret: treating that as a
+     * revoked session signed every Windows user out about four hours after they
+     * signed in, even though their refresh token was perfectly good.
+     */
+    internal fun isRevokedRefreshMessage(message: String): Boolean =
+        message.contains("invalid refresh token", ignoreCase = true)
 }
 
-/** Thrown when a token refresh fails (invalid/expired/revoked refresh token). */
-class TokenRefreshException(message: String) : Exception(message)
+/**
+ * Thrown when a token refresh fails. [revoked] separates a dead refresh token
+ * (the user has to sign in again) from a refusal of the request itself, such as
+ * a bad client secret, where the stored session is still valid and must be kept.
+ */
+class TokenRefreshException(message: String, val revoked: Boolean = false) : Exception(message)

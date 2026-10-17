@@ -7,6 +7,7 @@ import com.puretv.twitch.android.data.SecureTokenStore
 import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.data.db.PureTvDatabase
+import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.core.follows.FollowedChannelsService
@@ -71,6 +72,9 @@ val androidModule = module {
     // TwitchPlayer(context, adBlockEngine, backupStreamResolver) — the last one
     // powers the seamless ad-free backup player-type swap in the interceptor.
     single { TwitchPlayer(get(), get(), get()) }
+    // Background play (issue #27): the media session service's on/off switch and
+    // the leave/return pause rules, shared by the stream screen and MainActivity.
+    single { BackgroundPlayback(get(), get()) }
     single { AndroidUpdateManager(get()) }
 
     // --- ViewModels --------------------------------------------------------
@@ -82,7 +86,7 @@ val androidModule = module {
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }

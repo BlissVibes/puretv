@@ -12,6 +12,15 @@
          consent the first time; this permission is what lets us ask. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Background play (issue #27): a media-playback foreground service keeps a
+         stream going after the app leaves the screen, its notification carries
+         the controls (asked for at runtime on Android 13+), and the wake lock
+         lets ExoPlayer keep the CPU and Wi-Fi up with the screen off. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <!-- Package visibility (API 30+): the updater resolves the "install unknown
          apps" consent screen before offering a button for it, and resolution is
          filtered like any other cross-package lookup. Without this the match can
@@ -53,6 +62,18 @@
         <receiver
             android:name=".update.AndroidUpdateInstallReceiver"
             android:exported="false" />
+
+        <!-- Media session for background play. Exported with the media3 action
+             so system media controls, Bluetooth and the lock screen can reach the
+             session; media3 decides when it runs in the foreground. -->
+        <service
+            android:name=".player.PlaybackService"
+            android:exported="true"
+            android:foregroundServiceType="mediaPlayback">
+            <intent-filter>
+                <action android:name="androidx.media3.session.MediaSessionService" />
+            </intent-filter>
+        </service>
 
     </application>
 </manifest>

@@ -9,6 +9,7 @@ import com.puretv.twitch.core.api.DeviceCodeResponse
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TokenResponse
 import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.TwitchChatClient
@@ -17,6 +18,8 @@ import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
 import com.puretv.twitch.core.emotes.ResolvedEmote
 import com.puretv.twitch.core.emotes.SevenTvEmoteDelta
+import com.puretv.twitch.core.chat.buildSelfEcho
+import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.SevenTvEventClient
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.applyThirdPartyEmotes
@@ -46,7 +49,6 @@ import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.ui.chat.ChatModeration
-import com.puretv.twitch.desktop.ui.chat.buildSelfEcho
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -300,6 +302,8 @@ data class StreamUiState(
     val badges: BadgeIndex = BadgeIndex.EMPTY,
     /** True only when we hold both a token and the token-owner's login (can speak). */
     val canChat: Boolean = false,
+    /** The signed-in viewer's login, so @-completion never suggests yourself. */
+    val selfLogin: String? = null,
     /** The message the composer is currently replying to, if any. */
     val replyingTo: ChatMessage? = null,
     val isLoading: Boolean = true,
@@ -475,7 +479,7 @@ class StreamViewModel(
             // silently killing the whole chat coroutine (audit U5).
             val saved = runCatching { settingsStore.loadTokens() }.getOrNull()
             selfLogin = saved?.login
-            _state.update { it.copy(canChat = saved?.accessToken != null && saved.login != null) }
+            _state.update { it.copy(canChat = saved?.accessToken != null && saved.login != null, selfLogin = saved?.login) }
             chatClient.connect(channelLogin, saved?.accessToken, saved?.login)
             chatClient.events.collect { event ->
                 when (event) {
@@ -568,14 +572,12 @@ class StreamViewModel(
     fun sendChatMessage(text: String) = scope.launch {
         val replyParent = _state.value.replyingTo
         chatClient.sendMessage(channelLogin, text, replyParent?.id)
-        // Optimistic local echo — Twitch never sends our own message back to us,
+        // Optimistic local echo: Twitch never sends our own message back to us,
         // so render it ourselves or the sender never sees what they typed.
-        // Echo ONLY what actually went on the wire: buildPrivmsgLine truncates the
-        // body to MAX_CHAT_MESSAGE_LENGTH, so clamp the echo to the same limit or the
-        // sender sees more than was sent (M8). CRLF is neutralised to spaces on the
-        // wire too; the composer sends on Enter so newlines don't reach here, but
-        // mirror it so the echo can never diverge from the delivered text.
-        val wireText = text.replace('\r', ' ').replace('\n', ' ').take(MAX_CHAT_MESSAGE_LENGTH)
+        // Echo ONLY what actually went on the wire: outgoingChatBody is the same
+        // CRLF-to-space + 500-char clamp buildPrivmsgLine applies, so the sender
+        // never sees more than was sent (M8).
+        val wireText = outgoingChatBody(text)
         val echo = buildSelfEcho(
             id = "self-" + (echoCounter++).toString(),
             login = selfLogin ?: "you",
@@ -702,14 +704,6 @@ class StreamViewModel(
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
         vlcPlayer.stop()
-    }
-
-    private companion object {
-        // Twitch (and core's buildPrivmsgLine) hard-cap the wire body at 500 chars.
-        // Mirrored here so the optimistic echo never shows more than was sent (M8);
-        // kept in sync with core's internal MAX_CHAT_MESSAGE_LENGTH, which isn't
-        // visible across the module boundary.
-        private const val MAX_CHAT_MESSAGE_LENGTH = 500
     }
 }
 
@@ -849,8 +843,11 @@ class LoginViewModel(
                 _state.update { it.copy(isAuthenticating = false, error = "Couldn't start sign-in — check your connection and try again.") }
                 return@launch
             }
-            // Best-effort pre-fill; the activate page works with or without it.
-            oauthManager.openInBrowser("${device.verificationUri}?public_code=${device.userCode}")
+            // The bare activate page, as on phone and TV (see TwitchConfig.ACTIVATE_URL).
+            // This used to append `?public_code=` to verification_uri, which already
+            // carries a query string, so the pre-fill was malformed and the page often
+            // failed to take the code. The screen copies the code for pasting instead.
+            oauthManager.openInBrowser(TwitchConfig.ACTIVATE_URL)
             _state.update { it.copy(userCode = device.userCode, verificationUri = device.verificationUri) }
             pollForToken(device)
         }

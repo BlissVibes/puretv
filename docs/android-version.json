@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.1.3",
+  "versionCode": 8,
+  "versionName": "1.2.0",
   "apkUrl": "https://github.com/dhawal-ss/puretv/releases/download/android-latest/PureTV-for-Twitch-Android.apk",
-  "notes": "Updating is fixed. The app used to start downloading an update and only then ask Android for permission to install it, which interrupted the update part-way through and could leave the app unable to open afterwards. Permission is now asked for first, before anything is downloaded, and once you allow it the update carries on by itself. Unfinished update attempts are also cleared away instead of piling up."
+  "notes": "Background play is here. Streams keep playing when you switch apps or turn the screen off, with controls in the notification and on the lock screen (you can turn it off in Settings). Picture-in-picture on Home is now optional, so you can keep just the audio going. Chat shows your own messages, the emote picker is a searchable grid instead of a single row, and emotes and @names autocomplete as you type."
 }

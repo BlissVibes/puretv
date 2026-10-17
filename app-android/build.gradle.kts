@@ -18,8 +18,8 @@ android {
         // versionCode is the monotonic value the in-app updater compares against
         // the published android-version.json (see docs/android-version.json).
         // Bump it on every Android release so the updater offers the new APK.
-        versionCode = 7
-        versionName = "1.1.3"
+        versionCode = 8
+        versionName = "1.2.0"
         ndk { abiFilters += listOf("armeabi-v7a", "arm64-v8a") } // skip x86 to cut APK size
     }
 
@@ -130,6 +130,9 @@ dependencies {
     implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     implementation(libs.media3.datasource.okhttp)
+    // Background play: MediaSessionService + media notification around the same
+    // ExoPlayer (same 1.4.1 release train as the player above).
+    implementation(libs.media3.session)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation(libs.room.runtime)
@@ -142,4 +145,6 @@ dependencies {
     implementation(libs.workmanager)
     implementation(libs.coil.compose)
     implementation(libs.coil.network)
+
+    testImplementation(libs.kotlin.test)
 }

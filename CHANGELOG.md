@@ -11,6 +11,57 @@ release notes automatically.
 
 ---
 
+## 1.12.0 - 2026-10-17
+
+You stay signed in now. No more linking PureTV to Twitch again every day.
+
+### Fixed
+- **Signing in really is a one-time thing again.** Your sign-in renews itself
+  every few hours behind the scenes, and on Windows that renewal was always
+  failing, so the app quietly forgot you and asked you to link it again,
+  usually the next day. Renewal now works, it also happens while the app is
+  open, and a hiccup on Twitch's side or a dropped connection can no longer
+  sign you out. If you were signed out before updating, sign in one more time
+  and it will stick.
+- **The sign-in code fits in a small window.** If the window wasn't
+  maximised, the code and its Copy button ended up off the bottom of the
+  screen. The page now scrolls and tightens up to fit.
+
+### Improved
+- **Signing in is quicker.** The code is copied for you the moment it
+  appears, so on Twitch's page you just paste and click Authorize. You can
+  also select the code yourself, and a button reopens the Twitch page if you
+  closed it.
+- **@names autocomplete in chat.** Type @ and the start of someone's name to
+  pick from people who are chatting, or press Tab to fill in the first match.
+
+## Android 1.2.0 - 2026-10-17
+
+Background play is here, along with a much better emote picker. Windows has
+its own update today, and the TV app is unchanged.
+
+### New
+- **Keep listening when you leave the app.** A stream now keeps playing when
+  you switch to another app or turn the screen off, with play, pause and stop
+  in the notification and on the lock screen. You can turn it off in
+  Settings, under Playback.
+- **Picture-in-picture is now optional.** Going Home still floats the video
+  in a small window by default. Turn "Picture-in-picture on leave" off in
+  Settings to keep just the audio going while you use other apps.
+
+### Improved
+- **A real emote picker.** Instead of one row of about eight emotes, the
+  picker is now a scrollable grid with a search box, grouped by where the
+  emotes come from.
+- **Autocomplete for emotes and names.** Suggestions appear above the chat
+  box as you type, and @ suggests people who are chatting. Tap one to fill it
+  in.
+
+### Fixed
+- **You can see your own messages.** Messages you sent never showed up in
+  your own chat, because Twitch does not send them back to you. They now
+  appear as soon as you send them.
+
 ## 1.11.2 - 2026-09-01
 
 Windows catches up with a fix the phone and TV apps already shipped. Nothing

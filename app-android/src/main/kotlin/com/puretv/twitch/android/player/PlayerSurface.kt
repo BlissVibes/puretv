@@ -20,6 +20,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -86,6 +87,22 @@ fun PlayerSurface(
         // Still in the foreground here, which is the only place Android 12+ lets
         // the foreground service start. No-op when background play is off.
         backgroundPlayback.startService()
+    }
+
+    // Playback can restart without a lifecycle event: Stop in the notification
+    // shade tears the session down without pausing the Activity, then a tap on
+    // play would run with no notification behind it and keep going unseen once
+    // the viewer leaves. Re-raise the session whenever playback actually starts;
+    // startService is idempotent and gated on the setting.
+    val sharedPlayer = twitchPlayer.exoPlayer
+    DisposableEffect(sharedPlayer) {
+        val listener = object : Player.Listener {
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) backgroundPlayback.startService()
+            }
+        }
+        sharedPlayer.addListener(listener)
+        onDispose { sharedPlayer.removeListener(listener) }
     }
 
     // Leaving the app pauses only when background play is off and no PiP window

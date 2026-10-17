@@ -195,6 +195,12 @@ data class AppSettings(
     val lowLatencyMode: Boolean = true,
     val upscalingMode: UpscalingMode = UpscalingMode.OFF,
     val playbackBackend: PlaybackBackend = PlaybackBackend.VLC,
+    // Keep a stream's audio going after leaving the app, with a media
+    // notification to control it. Android phone only for now.
+    val backgroundPlay: Boolean = true,
+    // Float the video in a picture-in-picture window on Home. Off sends the
+    // stream straight to background play instead. Android phone only.
+    val pipOnLeave: Boolean = true,
 
     // Ad Block
     val adBlockEnabled: Boolean = true,

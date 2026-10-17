@@ -14,8 +14,10 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.compose.rememberNavController
+import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.ui.RootScreen
@@ -71,6 +73,7 @@ class MainActivity : ComponentActivity() {
     // App-wide singleton; released in onDestroy when the task is genuinely
     // finishing so codec/audio resources are not held for the process lifetime.
     private val twitchPlayer: TwitchPlayer by inject()
+    private val backgroundPlayback: BackgroundPlayback by inject()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -175,6 +178,8 @@ class MainActivity : ComponentActivity() {
         // from a spinner or an error overlay just pops a black, chrome-less window
         // the user cannot retry from.
         val isPlaying = runCatching { twitchPlayer.exoPlayer.isPlaying }.getOrDefault(false)
+        // The viewer can turn PiP off to keep listening with nothing on screen.
+        if (!backgroundPlayback.pipOnLeave) return
         if (currentRouteIsStream && isPlaying && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val params = PictureInPictureParams.Builder()
                 .setAspectRatio(Rational(16, 9))
@@ -188,7 +193,11 @@ class MainActivity : ComponentActivity() {
         // Free the shared player only on a real finish (not a config-change teardown;
         // the manifest's configChanges already blocks rotation recreation). If the
         // process survives and the user reopens, TwitchPlayer rebuilds a fresh player.
+        // A finishing Activity is the app being closed (recents swipe, or the PiP
+        // window closed where that removes the task), so background play ends too:
+        // drop the media session first so it never outlives the player it drives.
         if (isFinishing) {
+            backgroundPlayback.stopService()
             twitchPlayer.release()
         }
         super.onDestroy()
@@ -199,6 +208,12 @@ class MainActivity : ComponentActivity() {
         // Surface PiP state into Compose so StreamScreen collapses to video only
         // (no back button, pills, ad badge, live badge, or chat) in the small window.
         isInPipState.value = isInPictureInPictureMode
+        // Leaving PiP while already stopped means the window was closed, not
+        // expanded (expanding brings the Activity back to started first).
+        // BackgroundPlayback decides whether that pauses or plays on as audio.
+        if (!isInPictureInPictureMode && lifecycle.currentState == Lifecycle.State.CREATED) {
+            backgroundPlayback.onPipDismissed()
+        }
     }
 
     private companion object {

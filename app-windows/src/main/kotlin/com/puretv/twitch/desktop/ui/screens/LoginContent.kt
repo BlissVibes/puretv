@@ -294,7 +294,7 @@ private fun AuthenticatingArea(userCode: String?, onCopyCode: (String) -> Unit, 
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 ExpressiveButton(
-                    text = if (copied) "Copied, paste it on Twitch" else "Copy code",
+                    text = if (copied) "Copied" else "Copy code",
                     onClick = { onCopyCode(code); copied = true },
                     style = ExpressiveButtonStyle.Outlined,
                     size = ExpressiveButtonSize.Small,

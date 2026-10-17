@@ -18,14 +18,24 @@ import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
+import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.buildSelfEcho
+import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.emotes.PickableEmote
+import com.puretv.twitch.core.emotes.ResolvedEmote
+import com.puretv.twitch.core.emotes.buildEmoteIndex
+import com.puretv.twitch.core.emotes.buildPickableEmotes
+import com.puretv.twitch.core.emotes.prioritizeThirdParty
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
@@ -286,7 +296,15 @@ data class StreamUiState(
     val chatMessages: List<ChatMessage> = emptyList(),
     val chatFraction: Float = 0.5f,
     val chatEnabled: Boolean = true,
+    /** Third-party (7TV/BTTV/FFZ) name-to-url map the chat rows word-match against.
+     *  Third-party ONLY on purpose: Twitch-native emotes arrive `emotes=`-tagged, so
+     *  name-matching them would render a sub emote a non-subscriber merely typed. */
     val emotes: Map<String, String> = emptyMap(),
+    /** Everything the picker and autocomplete offer, first-party Twitch included,
+     *  in [buildPickableEmotes] order (channel sets before globals). */
+    val pickableEmotes: List<PickableEmote> = emptyList(),
+    /** The signed-in viewer's login, so @-completion never suggests yourself. */
+    val selfLogin: String? = null,
     val isLoading: Boolean = true,
     val playbackError: String? = null,
     val isLoggedIn: Boolean = false,
@@ -303,9 +321,26 @@ class StreamViewModel(
     private val settingsStore: AppSettingsStore,
     private val watchHistoryDao: WatchHistoryDao,
     private val twitchPlayer: TwitchPlayer,
+    private val apiClient: TwitchApiClient,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
+
+    // Identity for the optimistic local echo of our own sent messages: Twitch never
+    // echoes your own PRIVMSG back. Login comes from the stored session, the rest
+    // from USERSTATE/GLOBALUSERSTATE. Every writer and reader here (emote load,
+    // chat collect, send) runs on viewModelScope's main dispatcher, so plain vars.
+    private var selfLogin: String? = null
+    private var selfDisplayName: String? = null
+    private var selfColor: String? = null
+    private var selfBadges: List<Badge> = emptyList()
+    private var echoCounter = 0
+
+    // Tokenizes only YOUR OWN echoed message: third-party plus first-party Twitch,
+    // because your own message carries no `emotes=` tag, so a typed Kappa or sub
+    // emote can only be resolved by name. Incoming rows keep using the
+    // third-party-only [StreamUiState.emotes] map.
+    private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
 
     init {
         viewModelScope.launch {
@@ -334,6 +369,22 @@ class StreamViewModel(
                 runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) }.getOrDefault(emptyList())
             } ?: emptyList()
             _state.update { s -> s.copy(emotes = (global + channelEmotes).associate { it.name to it.url }) }
+
+            // First-party Twitch emotes (Helix; best-effort, empty without a token)
+            // feed the picker, autocomplete and self-echo only, never incoming rows.
+            // Android has no per-provider toggles in its settings UI, so every
+            // provider is on; prioritizeThirdParty still applies the 7TV > BTTV > FFZ
+            // collision order the desktop uses.
+            val twitchGlobal = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
+            val twitchChannel = channel?.let {
+                runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList())
+            } ?: emptyList()
+            val tpChannel = prioritizeThirdParty(channelEmotes, ALL_THIRD_PARTY)
+            val tpGlobal = prioritizeThirdParty(global, ALL_THIRD_PARTY)
+            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
+            _state.update { s ->
+                s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))
+            }
         }
         viewModelScope.launch {
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
@@ -346,14 +397,22 @@ class StreamViewModel(
             _state.update { it.copy(chatFraction = settings.chatFraction, chatEnabled = settings.chatEnabled) }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             // Anonymous IRC can read but not send; gate the composer on a real token.
-            _state.update { it.copy(isLoggedIn = token != null) }
             val username = settings.username.takeIf { it.isNotBlank() }
+            selfLogin = username
+            _state.update { it.copy(isLoggedIn = token != null, selfLogin = username) }
             chatClient.connect(channelLogin, token, username)
             chatClient.events.collect { event ->
-                if (event is ChatEvent.Message) {
-                    _state.update { current ->
+                when (event) {
+                    is ChatEvent.Message -> _state.update { current ->
                         current.copy(chatMessages = (current.chatMessages + event.message).takeLast(200))
                     }
+                    // Our own name/color/badges, used to dress the self-echo.
+                    is ChatEvent.SelfState -> {
+                        event.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                        selfColor = event.color
+                        selfBadges = event.badges
+                    }
+                    else -> {}
                 }
             }
         }
@@ -376,6 +435,22 @@ class StreamViewModel(
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
         chatClient.sendMessage(channelLogin, text)
+        // Optimistic local echo: Twitch never sends our own message back, so render
+        // it ourselves or the sender never sees what they typed. outgoingChatBody
+        // mirrors the wire clamp, so the echo never shows more than was sent. The
+        // "self-" ids never collide with Twitch's UUID message ids (LazyColumn keys).
+        val echo = buildSelfEcho(
+            id = "self-" + (echoCounter++).toString(),
+            login = selfLogin ?: "you",
+            displayName = selfDisplayName,
+            color = selfColor,
+            badges = selfBadges,
+            channel = channelLogin,
+            text = outgoingChatBody(text),
+            timestamp = System.currentTimeMillis(),
+            emoteIndex = selfEchoIndex,
+        )
+        _state.update { it.copy(chatMessages = (it.chatMessages + echo).takeLast(200)) }
     }
 
     fun setChatFraction(fraction: Float) = viewModelScope.launch {
@@ -393,6 +468,10 @@ class StreamViewModel(
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
         twitchPlayer.stop()
+    }
+
+    private companion object {
+        val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
     }
 }
 

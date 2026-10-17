@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.chat
 
+import com.puretv.twitch.core.chat.buildSelfEcho
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

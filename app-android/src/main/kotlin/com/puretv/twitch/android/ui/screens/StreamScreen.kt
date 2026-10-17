@@ -175,6 +175,8 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                         messages = state.chatMessages,
                         onSend = viewModel::sendChatMessage,
                         emotes = state.emotes,
+                        pickableEmotes = state.pickableEmotes,
+                        selfLogin = state.selfLogin,
                         canSend = state.isLoggedIn,
                         modifier = Modifier.weight(chatFraction).fillMaxHeight(),
                     )
@@ -205,6 +207,8 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     messages = state.chatMessages,
                     onSend = viewModel::sendChatMessage,
                     emotes = state.emotes,
+                    pickableEmotes = state.pickableEmotes,
+                    selfLogin = state.selfLogin,
                     canSend = state.isLoggedIn,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )

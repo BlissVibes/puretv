@@ -197,6 +197,15 @@ class TwitchChatClient(
 internal const val MAX_CHAT_MESSAGE_LENGTH = 500
 
 /**
+ * The exact body [TwitchChatClient.sendMessage] puts on the wire for [message]:
+ * line breaks neutralised to spaces and truncated to [MAX_CHAT_MESSAGE_LENGTH].
+ * Public so an optimistic self-echo can show precisely what was sent, never
+ * more (audit M8).
+ */
+fun outgoingChatBody(message: String): String =
+    message.replace('\r', ' ').replace('\n', ' ').take(MAX_CHAT_MESSAGE_LENGTH)
+
+/**
  * Builds a single IRC PRIVMSG line, hardened against CRLF command injection.
  *
  * IRC delimits commands with `\r\n`, so an outgoing [message] body containing a
@@ -206,7 +215,7 @@ internal const val MAX_CHAT_MESSAGE_LENGTH = 500
  * is truncated to Twitch's [MAX_CHAT_MESSAGE_LENGTH] limit.
  */
 internal fun buildPrivmsgLine(channel: String, message: String, replyParentMsgId: String? = null): String {
-    val safeBody = message.replace('\r', ' ').replace('\n', ' ').take(MAX_CHAT_MESSAGE_LENGTH)
+    val safeBody = outgoingChatBody(message)
     val base = "PRIVMSG #" + channel.lowercase() + " :" + safeBody
     return if (replyParentMsgId.isNullOrBlank()) base else "@reply-parent-msg-id=" + replyParentMsgId + " " + base
 }

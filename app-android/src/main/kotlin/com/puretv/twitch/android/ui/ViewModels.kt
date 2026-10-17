@@ -368,19 +368,27 @@ class StreamViewModel(
             val channelEmotes = channel?.let {
                 runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) }.getOrDefault(emptyList())
             } ?: emptyList()
-            _state.update { s -> s.copy(emotes = (global + channelEmotes).associate { it.name to it.url }) }
-
-            // First-party Twitch emotes (Helix; best-effort, empty without a token)
-            // feed the picker, autocomplete and self-echo only, never incoming rows.
             // Android has no per-provider toggles in its settings UI, so every
             // provider is on; prioritizeThirdParty still applies the 7TV > BTTV > FFZ
-            // collision order the desktop uses.
+            // collision order the desktop uses. The picker and echo get the
+            // third-party sets right away, so a slow Helix call can't leave the
+            // picker empty.
+            val tpChannel = prioritizeThirdParty(channelEmotes, ALL_THIRD_PARTY)
+            val tpGlobal = prioritizeThirdParty(global, ALL_THIRD_PARTY)
+            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
+            _state.update { s ->
+                s.copy(
+                    emotes = (global + channelEmotes).associate { it.name to it.url },
+                    pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
+                )
+            }
+
+            // First-party Twitch emotes (Helix; best-effort, empty without a token)
+            // then join the picker, autocomplete and self-echo only, never incoming rows.
             val twitchGlobal = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
             val twitchChannel = channel?.let {
                 runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList())
             } ?: emptyList()
-            val tpChannel = prioritizeThirdParty(channelEmotes, ALL_THIRD_PARTY)
-            val tpGlobal = prioritizeThirdParty(global, ALL_THIRD_PARTY)
             selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
             _state.update { s ->
                 s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))

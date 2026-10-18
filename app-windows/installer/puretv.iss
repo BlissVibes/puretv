@@ -40,8 +40,11 @@ RestartApplications=no
 ; replace the config LAST as the commit marker. If setup is interrupted, the old
 ; config and its referenced jars remain runnable; a completed install points the
 ; launcher at the newly copied content-hashed jar set.
-Source: "..\build\compose\binaries\main-release\app\PureTV for Twitch\*"; DestDir: "{app}"; Excludes: "app\PureTV for Twitch.cfg"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\build\compose\binaries\main-release\app\PureTV for Twitch\app\PureTV for Twitch.cfg"; DestDir: "{app}\app"; Flags: ignoreversion
+;
+; BeforeInstall runs once per file on a wildcard entry, so every file is checked
+; for a lock right before Setup replaces it (see ReleaseFileFromPureTV).
+Source: "..\build\compose\binaries\main-release\app\PureTV for Twitch\*"; DestDir: "{app}"; Excludes: "app\PureTV for Twitch.cfg"; Flags: recursesubdirs createallsubdirs ignoreversion; BeforeInstall: ReleaseFileFromPureTV
+Source: "..\build\compose\binaries\main-release\app\PureTV for Twitch\app\PureTV for Twitch.cfg"; DestDir: "{app}\app"; Flags: ignoreversion; BeforeInstall: ReleaseFileFromPureTV
 
 [Icons]
 Name: "{group}\PureTV"; Filename: "{app}\{#MyAppExe}"
@@ -75,6 +78,64 @@ begin
   Exec('taskkill.exe', '/F /IM "PureTV for Twitch.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
   Result := '';
+end;
+
+// PrepareToInstall only covers PureTV processes that exist BEFORE the copy. The
+// in-app update runs silently, so to the user the app just closes, and reopening
+// it a few seconds later lands mid-copy: the old launcher loads its jars, Setup
+// hits "file in use" on the next one it replaces, gives up after 4 retries and
+// rolls the whole update back. The user ends up on the old version, still being
+// offered the update, every time (v1.11.2 -> v1.12.0).
+//
+// So before each file is replaced, test whether anything holds it open. If so,
+// close PureTV again and wait for the file to free up. Anything other than PureTV
+// holding it still fails the normal way after the cap, rather than hanging Setup.
+const
+  GENERIC_READ = $80000000;
+  OPEN_EXISTING = 3;
+  ERROR_SHARING_VIOLATION = 32;
+  INVALID_HANDLE_VALUE = -1;
+  LOCK_WAIT_CAP_MS = 10000;
+
+function CreateFile(lpFileName: String; dwDesiredAccess, dwShareMode, lpSecurityAttributes,
+  dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile: Cardinal): THandle;
+  external 'CreateFileW@kernel32.dll stdcall';
+function CloseHandle(hObject: THandle): BOOL;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+// True when another process has the file open: an exclusive (share mode 0) open
+// fails with a sharing violation. A missing file or any other error is not a lock.
+function IsFileLocked(const FileName: String): Boolean;
+var
+  Handle: THandle;
+begin
+  Result := False;
+  if not FileExists(FileName) then Exit;
+  Handle := CreateFile(FileName, GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  if Handle = THandle(INVALID_HANDLE_VALUE) then
+    Result := DLLGetLastError = ERROR_SHARING_VIOLATION
+  else
+    CloseHandle(Handle);
+end;
+
+procedure ReleaseFileFromPureTV();
+var
+  Dest: String;
+  ResultCode, Waited: Integer;
+begin
+  Dest := ExpandConstant(CurrentFileName);
+  if not IsFileLocked(Dest) then Exit;
+  Log('In use, closing PureTV before replacing: ' + Dest);
+  Waited := 0;
+  repeat
+    Exec('taskkill.exe', '/F /IM "PureTV for Twitch.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Sleep(500);
+    Waited := Waited + 500;
+  until (not IsFileLocked(Dest)) or (Waited >= LOCK_WAIT_CAP_MS);
+  if IsFileLocked(Dest) then
+    Log('Still in use after ' + IntToStr(Waited) + ' ms: ' + Dest)
+  else
+    Log('Released after ' + IntToStr(Waited) + ' ms');
 end;
 
 // A successful installer must never leave a launcher without its config. Raise

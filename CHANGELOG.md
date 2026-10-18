@@ -11,6 +11,24 @@ release notes automatically.
 
 ---
 
+## 1.12.1 - 2026-10-17
+
+Updates install properly again, even if you reopen PureTV while one is running.
+
+### Fixed
+- **The update to 1.12.0 kept undoing itself.** Updating closes PureTV for a
+  few seconds while the new version is copied in. If you opened PureTV again
+  during that time, the install gave up and put the old version back, so you
+  were offered the same update every time. The installer now closes that extra
+  copy and carries on, then opens the new version for you.
+
+### Improved
+- **You can see an update happening.** A progress window now shows while the
+  new version installs, instead of PureTV just disappearing.
+- **A failed update tells you.** If an install ever can't finish, PureTV
+  reopens on the old version and says so, rather than quietly offering the
+  same update again.
+
 ## 1.12.0 - 2026-10-17
 
 You stay signed in now. No more linking PureTV to Twitch again every day.

@@ -87,11 +87,17 @@ end;
 // rolls the whole update back. The user ends up on the old version, still being
 // offered the update, every time (v1.11.2 -> v1.12.0).
 //
-// So before each file is replaced, test whether anything holds it open. If so,
-// close PureTV again and wait for the file to free up. Anything other than PureTV
-// holding it still fails the normal way after the cap, rather than hanging Setup.
+// So before each file is replaced, check whether PureTV is running at all, and
+// whether anything holds that file open. If either, close PureTV again and wait.
+// Checking the file alone is not enough: a PureTV that is still starting opens
+// its jars one by one, so a jar that is free at the check can be locked by the
+// time Setup deletes it (seen with jna-jpms on a real 1.11.2 -> 1.12.1 run).
+// Anything other than PureTV holding a file still fails the normal way after the
+// cap, rather than hanging Setup.
 const
   GENERIC_READ = $80000000;
+  GENERIC_WRITE = $40000000;
+  FILE_SHARE_ALL = 7;
   OPEN_EXISTING = 3;
   ERROR_SHARING_VIOLATION = 32;
   INVALID_HANDLE_VALUE = -1;
@@ -103,19 +109,40 @@ function CreateFile(lpFileName: String; dwDesiredAccess, dwShareMode, lpSecurity
 function CloseHandle(hObject: THandle): BOOL;
   external 'CloseHandle@kernel32.dll stdcall';
 
-// True when another process has the file open: an exclusive (share mode 0) open
-// fails with a sharing violation. A missing file or any other error is not a lock.
-function IsFileLocked(const FileName: String): Boolean;
+// Opens the file with the given access/sharing and closes it again; True only if
+// that fails with a sharing violation. Nothing is read or written. A missing file
+// or any other error counts as not in use.
+function OpenFailsWithSharingViolation(const FileName: String; Access, Share: Cardinal): Boolean;
 var
   Handle: THandle;
 begin
   Result := False;
   if not FileExists(FileName) then Exit;
-  Handle := CreateFile(FileName, GENERIC_READ, 0, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+  Handle := CreateFile(FileName, Access, Share, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
   if Handle = THandle(INVALID_HANDLE_VALUE) then
     Result := DLLGetLastError = ERROR_SHARING_VIOLATION
   else
     CloseHandle(Handle);
+end;
+
+// True when another process has the file open: an exclusive (share mode 0) open
+// fails with a sharing violation.
+function IsFileLocked(const FileName: String): Boolean;
+begin
+  Result := OpenFailsWithSharingViolation(FileName, GENERIC_READ, 0);
+end;
+
+// True while any PureTV launched from this install is running. Windows refuses
+// write access to a running executable even when every sharing mode is allowed,
+// while a read-only exclusive open of it succeeds, so this probes for write.
+function IsPureTVRunning(): Boolean;
+begin
+  Result := OpenFailsWithSharingViolation(ExpandConstant('{app}\{#MyAppExe}'), GENERIC_WRITE, FILE_SHARE_ALL);
+end;
+
+function PureTVInTheWay(const Dest: String): Boolean;
+begin
+  Result := IsPureTVRunning() or IsFileLocked(Dest);
 end;
 
 procedure ReleaseFileFromPureTV();
@@ -124,15 +151,15 @@ var
   ResultCode, Waited: Integer;
 begin
   Dest := ExpandConstant(CurrentFileName);
-  if not IsFileLocked(Dest) then Exit;
-  Log('In use, closing PureTV before replacing: ' + Dest);
+  if not PureTVInTheWay(Dest) then Exit;
+  Log('PureTV running or file in use, closing PureTV before replacing: ' + Dest);
   Waited := 0;
   repeat
     Exec('taskkill.exe', '/F /IM "PureTV for Twitch.exe"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Sleep(500);
     Waited := Waited + 500;
-  until (not IsFileLocked(Dest)) or (Waited >= LOCK_WAIT_CAP_MS);
-  if IsFileLocked(Dest) then
+  until (not PureTVInTheWay(Dest)) or (Waited >= LOCK_WAIT_CAP_MS);
+  if PureTVInTheWay(Dest) then
     Log('Still in use after ' + IntToStr(Waited) + ' ms: ' + Dest)
   else
     Log('Released after ' + IntToStr(Waited) + ' ms');

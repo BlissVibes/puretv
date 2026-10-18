@@ -72,10 +72,19 @@ class UpdateManager {
     fun checkForUpdates(force: Boolean = false) {
         if (!isPackaged && !force) return
         scope.launch {
+            val failedVersion = consumeFailedInstallVersion()
             val info = runCatching { fetchLatest() }.getOrNull()
-            _state.value =
-                if (info != null && Semver.isNewer(AppBuildConfig.VERSION, info.version)) UpdateState.Available(info)
-                else UpdateState.Idle
+            _state.value = when {
+                info == null || !Semver.isNewer(AppBuildConfig.VERSION, info.version) -> UpdateState.Idle
+                // The last attempt at this exact update rolled back. Say so once,
+                // rather than offering it again as if nothing happened; Retry
+                // re-checks and brings the Update button back.
+                failedVersion == info.version -> {
+                    updateLog("previous install of ${info.version} did not finish")
+                    UpdateState.Error(INSTALL_DID_NOT_FINISH, resolveReleaseUrl(info.htmlUrl))
+                }
+                else -> UpdateState.Available(info)
+            }
         }
     }
 
@@ -140,7 +149,7 @@ class UpdateManager {
                 updateLog("=== apply ${AppBuildConfig.VERSION} -> ${info.version}  url=${info.downloadUrl} ===")
                 _state.value = UpdateState.Downloading(0f)
                 val installer = downloadAndVerify(info)
-                launchInstaller(installer)
+                launchInstaller(installer, info.version)
                 updateLog("installer launched; exiting app to apply")
             }.onSuccess {
                 SwingUtilities.invokeLater { exitApplication() }
@@ -274,11 +283,23 @@ class UpdateManager {
      *  the next failure records exactly which step + why. */
     private fun updateLog(message: String) {
         runCatching {
-            val dir = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
-            dir.mkdirs()
-            File(dir, "update.log").appendText("${java.time.Instant.now()} [v${AppBuildConfig.VERSION}] $message\n")
+            dataDir.mkdirs()
+            File(dataDir, "update.log").appendText("${java.time.Instant.now()} [v${AppBuildConfig.VERSION}] $message\n")
         }
     }
+
+    private val dataDir: File
+        get() = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+
+    /** Written by the update script when Setup failed; holds the version it tried. */
+    private val failedInstallMarker: File get() = File(dataDir, "update-failed.txt")
+
+    /** Reads and clears the failed-install marker. Never throws. */
+    private fun consumeFailedInstallVersion(): String? = runCatching {
+        val marker = failedInstallMarker
+        if (!marker.exists()) return@runCatching null
+        marker.readText().trim().also { marker.delete() }.ifBlank { null }
+    }.getOrNull()
 
     private suspend fun downloadText(url: String): String = withUpdateRetry {
         requireTrustedAssetHost(url)
@@ -296,7 +317,7 @@ class UpdateManager {
         response.body()
     }
 
-    private fun launchInstaller(installer: File) {
+    private fun launchInstaller(installer: File, targetVersion: String) {
         val exe = resolveAppExecutable()
         val batFile = File(installer.parentFile, "apply-update.bat")
         val vbsFile = File(installer.parentFile, "apply-update.vbs")
@@ -309,6 +330,9 @@ class UpdateManager {
             // process holding the app's files. The script waits for it to exit
             // (and force-closes it if it lingers) before installing.
             appPid = ProcessHandle.current().pid(),
+            targetVersion = targetVersion,
+            updateLogPath = File(dataDir, "update.log").absolutePath,
+            failureMarkerPath = failedInstallMarker.absolutePath,
         )
         batFile.writeText(scripts.bat)
         vbsFile.writeText(scripts.vbs)
@@ -374,6 +398,9 @@ class UpdateManager {
     private companion object {
         /** jpackage launcher name — derives from build.gradle.kts `packageName`. */
         const val LAUNCHER_EXE_NAME = "PureTV for Twitch.exe"
+
+        const val INSTALL_DID_NOT_FINISH =
+            "the install didn't finish. Retry, and let PureTV reopen by itself when it's done."
     }
 }
 
@@ -402,6 +429,9 @@ internal fun isTrustedGithubAssetHost(url: String): Boolean {
         host == "githubusercontent.com" || host.endsWith(".githubusercontent.com")
 }
 
+/** Installer runs before the update script gives up and reopens the old version. */
+private const val INSTALL_ATTEMPTS = 2
+
 /** The two scripts the updater drops next to the installer. */
 internal data class UpdateScripts(val bat: String, val vbs: String)
 
@@ -409,8 +439,10 @@ internal data class UpdateScripts(val bat: String, val vbs: String)
  * Builds the detached self-update scripts.
  *
  * The .bat first WAITS FOR EVERY APP PROCESS TO FULLY EXIT, then runs the
- * installer silently, validates its exit code and launcher config, relaunches
- * the app only after those gates pass, then exits. The .vbs runs that .bat through a
+ * installer with its progress window, validates its exit code and launcher
+ * config, relaunches the app only after those gates pass, then exits. A failed
+ * install is retried once; if it still fails, the script logs it, leaves
+ * [failureMarkerPath] for the app to report, and reopens the old version. The .vbs runs that .bat through a
  * HIDDEN window (style 0) via WScript.Shell, so the update never shows — or
  * leaves open — a console window. (The old `cmd /c start "" /min <bat>` left a
  * prompt window sitting open.)
@@ -436,6 +468,9 @@ internal fun buildUpdateScripts(
     appExePath: String?,
     batPath: String,
     appPid: Long,
+    targetVersion: String = "",
+    updateLogPath: String? = null,
+    failureMarkerPath: String? = null,
 ): UpdateScripts {
     val lines = mutableListOf<String>()
     lines += "@echo off"
@@ -461,14 +496,45 @@ internal fun buildUpdateScripts(
     lines += ":puretv_all_closed"
     // ~2s settle so the OS fully releases file handles after the processes die.
     lines += "ping 127.0.0.1 -n 3 >nul"
-    val installerLog = "$installerPath.install.log"
+    // One log per attempt, so a retry never overwrites the log that explains why
+    // the first attempt failed.
+    val installerLog = "$installerPath.install-%ATTEMPT%.log"
+    lines += "set \"ATTEMPT=0\""
+    lines += ":puretv_install"
+    lines += "set /a ATTEMPT+=1"
+    // /SILENT, not /VERYSILENT: Setup shows its progress window. Fully silent, the
+    // app just vanished for ~20s, so people reopened it mid-install, which locked
+    // the jars Setup was replacing and rolled the update back.
     lines += if (isMsi) {
         "msiexec /i \"" + installerPath + "\" /passive /norestart /l*v \"" + installerLog + "\""
     } else {
-        "\"" + installerPath + "\" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=\"" + installerLog + "\""
+        "\"" + installerPath + "\" /SILENT /SUPPRESSMSGBOXES /NORESTART /LOG=\"" + installerLog + "\""
     }
     lines += "set \"INSTALL_EXIT=%ERRORLEVEL%\""
-    lines += "if not \"%INSTALL_EXIT%\"==\"0\" exit /b %INSTALL_EXIT%"
+    lines += "if \"%INSTALL_EXIT%\"==\"0\" goto puretv_installed"
+    // A failed Setup rolls back, leaving the old version intact. Close PureTV
+    // again and retry once, since the usual cause is the app reopened mid-copy.
+    lines += "if %ATTEMPT% GEQ $INSTALL_ATTEMPTS goto puretv_install_failed"
+    lines += "taskkill /f /im \"PureTV for Twitch.exe\" >nul 2>&1"
+    lines += "ping 127.0.0.1 -n 4 >nul"
+    lines += "goto puretv_install"
+    lines += ":puretv_install_failed"
+    if (updateLogPath != null) {
+        lines += ">>\"" + updateLogPath + "\" echo %DATE% %TIME% [updater] install of " + targetVersion +
+            " failed with exit %INSTALL_EXIT% after %ATTEMPT% attempts, see " + installerLog
+    }
+    // Tells the reopened app the update did not land, so it says so instead of
+    // silently offering the same update again.
+    if (failureMarkerPath != null) {
+        lines += ">\"" + failureMarkerPath + "\" echo " + targetVersion
+    }
+    // Never leave the user with no app: reopen the old version unless they
+    // already have.
+    if (appExePath != null) {
+        lines += "tasklist /fi \"IMAGENAME eq PureTV for Twitch.exe\" 2>nul | find /i \"PureTV for Twitch.exe\" >nul || start \"\" \"" + appExePath + "\""
+    }
+    lines += "exit /b %INSTALL_EXIT%"
+    lines += ":puretv_installed"
     if (appExePath != null) {
         val separator = maxOf(appExePath.lastIndexOf('\\'), appExePath.lastIndexOf('/'))
         val installDir = if (separator >= 0) appExePath.substring(0, separator) else "."

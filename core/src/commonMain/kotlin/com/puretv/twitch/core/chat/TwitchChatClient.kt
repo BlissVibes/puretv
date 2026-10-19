@@ -298,9 +298,13 @@ object TwitchIrcParser {
             // tag block it is server chatter (login notices), not for the viewer.
             "NOTICE" -> trailing?.takeIf { it.isNotBlank() && tags["msg-id"] != null }
                 ?.let { ChatEvent.Notice(msgId = tags["msg-id"].orEmpty(), text = it) }
+            // A missing tag stays null: a partial update (only the mode that
+            // changed) must not switch the other modes off.
             "ROOMSTATE" -> ChatEvent.RoomState(
                 slowModeSeconds = tags["slow"]?.toIntOrNull(),
-                emoteOnly = tags["emote-only"] == "1",
+                emoteOnly = tags["emote-only"]?.let { it == "1" },
+                followersOnlyMinutes = tags["followers-only"]?.toIntOrNull(),
+                subsOnly = tags["subs-only"]?.let { it == "1" },
             )
             "GLOBALUSERSTATE" -> ChatEvent.SelfState(
                 displayName = tags["display-name"].orEmpty(),

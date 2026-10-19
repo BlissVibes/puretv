@@ -12,6 +12,8 @@ import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.di.desktopModule
+import com.puretv.twitch.core.perf.TimingLog
+import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayer
@@ -30,6 +32,7 @@ import org.koin.core.context.GlobalContext.startKoin
 import org.koin.dsl.koinApplication
 
 fun main() {
+    TimingFileSink.install()
     val koinApp = koinApplication {
         modules(coreModule, desktopModule)
     }
@@ -81,6 +84,7 @@ fun main() {
             // window is realized; one EDT-deferred retry covers the rare case
             // where the HWND isn't bound yet at first composition.
             LaunchedEffect(Unit) {
+                TimingLog.log("app.first_window", TimingFileSink.sinceProcessStartMs())
                 if (!WindowsNative.enableBorderlessSnap(window)) {
                     SwingUtilities.invokeLater { WindowsNative.enableBorderlessSnap(window) }
                 }

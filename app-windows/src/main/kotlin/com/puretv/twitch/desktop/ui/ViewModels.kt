@@ -38,6 +38,7 @@ import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
+import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
@@ -59,6 +60,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -339,6 +341,7 @@ class StreamViewModel(
     private var echoCounter = 0
     private var systemCounter = 0
     private val playbackStallWatchdog = PlaybackStallWatchdog()
+    private val openTiming = StreamOpenTiming(channelLogin)
 
     // Written on the emote-load coroutine, read on the chat-collect + send paths.
     // Safe as a @Volatile reference because the map is immutable after publish:
@@ -433,6 +436,7 @@ class StreamViewModel(
                 // Build indices + picker from the now-complete source lists and re-map
                 // any messages that arrived before emotes finished loading.
                 rebuildEmoteIndicesAndPublish()
+                openTiming.mark("emotes_ready")
                 // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
                 sevenTvEventClient.connect(ch.id)
             }
@@ -453,6 +457,10 @@ class StreamViewModel(
         }
         scope.launch {
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
+        }
+        scope.launch {
+            vlcPlayer.status.first { it.isPlaying }
+            openTiming.mark("first_frame")
         }
         scope.launch {
             // libVLC can remain in PLAYING after its HLS demuxer has stopped
@@ -534,6 +542,7 @@ class StreamViewModel(
     private fun playAt(quality: StreamQuality) {
         val url = LocalStreamProxy.streamUrl(channelLogin, quality)
         playbackStallWatchdog.reset()
+        openTiming.mark("play_requested")
         _state.update { it.copy(playableUrl = url, currentQuality = quality) }
         vlcPlayer.play(url)
     }

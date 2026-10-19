@@ -21,6 +21,8 @@ import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
+import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.ChatChange
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ChatTimeline
@@ -33,6 +35,8 @@ import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
 import com.puretv.twitch.core.emotes.ResolvedEmote
+import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.applySevenTvDelta
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.buildPickableEmotes
 import com.puretv.twitch.core.emotes.prioritizeThirdParty
@@ -339,6 +343,10 @@ data class StreamUiState(
     /** Everything the picker and autocomplete offer, first-party Twitch included,
      *  in [buildPickableEmotes] order (channel sets before globals). */
     val pickableEmotes: List<PickableEmote> = emptyList(),
+    /** Chat badge art (global and channel); the rows draw text chips until it loads. */
+    val badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. */
+    val showBadges: Boolean = true,
     /** The signed-in viewer's login, so @-completion never suggests yourself. */
     val selfLogin: String? = null,
     val isLoading: Boolean = true,
@@ -366,6 +374,8 @@ class StreamViewModel(
     private val apiClient: TwitchApiClient,
     private val backgroundPlayback: BackgroundPlayback,
     private val playableStreamCache: PlayableStreamCache,
+    private val badgeRepository: BadgeRepository,
+    private val sevenTvEventClient: SevenTvEventClient,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -386,6 +396,14 @@ class StreamViewModel(
     // emote can only be resolved by name. Incoming rows keep using the
     // third-party-only [StreamUiState.emotes] map.
     private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
+
+    // The emote source lists everything above is built from. Fields (not locals of
+    // the load coroutine) so a live 7TV change can fold into the channel set and
+    // rebuild without fetching again. Main dispatcher only, like the identity above.
+    private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
+    private var twitchChannelEmotes: List<ChannelEmote> = emptyList()
+    private var twitchGlobalEmotes: List<ChannelEmote> = emptyList()
 
     private val openTiming = StreamOpenTiming(channelLogin)
     private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
@@ -430,33 +448,37 @@ class StreamViewModel(
                     ?: emptyList()
             }
 
-            // Third-party emotes: the copy cached from the last visit first, so the
-            // first chat lines already render, then the fresh set. Android has no
-            // per-provider toggles in its settings UI, so every provider is on;
-            // prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision
-            // order the desktop uses.
-            var tpChannel = emptyList<ChannelEmote>()
-            var tpGlobal = emptyList<ChannelEmote>()
-            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
-                tpChannel = prioritizeThirdParty(emotes.channel, ALL_THIRD_PARTY)
-                tpGlobal = prioritizeThirdParty(emotes.global, ALL_THIRD_PARTY)
-                selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
-                _state.update { s ->
-                    s.copy(
-                        emotes = (emotes.global + emotes.channel).associate { it.name to it.url },
-                        pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
-                    )
+            // Badge art only needs the channel id, so it loads on its own coroutine and
+            // early lines show the text chips for as short a time as possible.
+            // Best-effort: a failure (or no session) keeps the chips.
+            channel?.let { ch ->
+                launch {
+                    val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
+                    _state.update { it.copy(badges = badges) }
                 }
+            }
+
+            // Third-party emotes: the copy cached from the last visit first, so the
+            // first chat lines already render, then the fresh set.
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannelEmotes = emotes.channel
+                tpGlobalEmotes = emotes.global
+                rebuildEmotes()
                 openTiming.mark("emotes_ready")
             }
 
             // First-party Twitch emotes (Helix; best-effort, empty without a token)
             // then join the picker, autocomplete and self-echo only, never incoming rows.
-            val twitchGlobal = twitchGlobalLookup.await()
-            val twitchChannel = twitchChannelLookup.await()
-            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
-            _state.update { s ->
-                s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))
+            twitchGlobalEmotes = twitchGlobalLookup.await()
+            twitchChannelEmotes = twitchChannelLookup.await()
+            rebuildEmotes()
+            // Live 7TV emote changes for as long as this stream is open.
+            channel?.let { sevenTvEventClient.connect(it.id) }
+        }
+        viewModelScope.launch {
+            sevenTvEventClient.updates.collect { delta ->
+                tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
+                rebuildEmotes()
             }
         }
         viewModelScope.launch {
@@ -474,6 +496,7 @@ class StreamViewModel(
                     chatFraction = settings.chatFraction,
                     chatEnabled = settings.chatEnabled,
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    showBadges = settings.showBadges,
                     quality = preferred,
                 )
             }
@@ -566,6 +589,22 @@ class StreamViewModel(
     }
 
     /**
+     * Rebuilds the row emote map, the picker and the self-echo index from the
+     * source lists. Runs when emotes load and on every live 7TV change. Android has
+     * no per-provider toggles in its settings UI, so every provider is on;
+     * prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision order the
+     * desktop uses, and the row map follows the same order (channel before global).
+     */
+    private fun rebuildEmotes() {
+        val tpChannel = prioritizeThirdParty(tpChannelEmotes, ALL_THIRD_PARTY)
+        val tpGlobal = prioritizeThirdParty(tpGlobalEmotes, ALL_THIRD_PARTY)
+        selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannelEmotes, twitchGlobalEmotes)
+        val rowEmotes = buildEmoteIndex(tpChannel, tpGlobal).mapValues { it.value.url }
+        val picks = buildPickableEmotes(twitchChannelEmotes, tpChannel, twitchGlobalEmotes, tpGlobal)
+        _state.update { it.copy(emotes = rowEmotes, pickableEmotes = picks) }
+    }
+
+    /**
      * [changes] applied to the chat rows and room modes (see [applying]). The phone
      * has no Mentions tab, so a ping is only highlighted in place.
      */
@@ -595,6 +634,7 @@ class StreamViewModel(
     override fun onCleared() {
         super.onCleared()
         chatClient.disconnect()
+        sevenTvEventClient.disconnect()
         // Teardown lives here, not in PlayerSurface.onDispose: onCleared fires only
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.

@@ -27,6 +27,7 @@ import com.puretv.twitch.core.emotes.SevenTvEmoteDelta
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.applySevenTvDelta
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.applyThirdPartyEmotes
 import com.puretv.twitch.core.emotes.buildPickableEmotes
@@ -687,22 +688,12 @@ class StreamViewModel(
     }
 
     /**
-     * Fold a live 7TV EventAPI delta into the channel emote set, then rebuild.
-     * Removals match 7TV emotes by name; additions are de-duped against existing 7TV
-     * names so a repeated push can't double-insert. No-ops (no rebuild) when the delta
-     * changes nothing. Note: a removed emote already rendered in an OLD message stays
-     * as-is — re-tokenizing only re-scans text, it doesn't revert existing emote parts.
+     * Fold a live 7TV EventAPI delta into the channel emote set (core's
+     * [applySevenTvDelta], shared with phone and TV), then rebuild. No rebuild when
+     * the delta changes nothing.
      */
     private fun applyEmoteDelta(delta: SevenTvEmoteDelta) {
-        val removedNames = delta.removed.mapTo(HashSet()) { it.name }
-        val afterRemoval =
-            if (removedNames.isEmpty()) tpChannelEmotes
-            else tpChannelEmotes.filterNot { it.provider == EmoteProvider.SEVENTV && it.name in removedNames }
-        val present7tv = afterRemoval.filterTo(HashSet()) { it.provider == EmoteProvider.SEVENTV }.mapTo(HashSet()) { it.name }
-        val additions = delta.added.filter { it.name.isNotBlank() && present7tv.add(it.name) }
-        val changed = afterRemoval.size != tpChannelEmotes.size || additions.isNotEmpty()
-        if (!changed) return
-        tpChannelEmotes = afterRemoval + additions
+        tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return
         rebuildEmoteIndicesAndPublish()
     }
 

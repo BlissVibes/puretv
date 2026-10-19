@@ -94,7 +94,7 @@ val tvModule = module {
     viewModel { BrowseViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { SearchViewModel(get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
     viewModel { SettingsViewModel(get()) }
     // Device Code Grant flow: (httpClient, settingsStore, userRepository).

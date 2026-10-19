@@ -298,6 +298,8 @@ fun TvStreamScreen(
             modifier = Modifier.fillMaxSize(),
             textScale = state.chatTextScale,
             roomModes = state.roomModes,
+            badges = state.badges,
+            showBadges = state.showBadges,
         )
     }
 }

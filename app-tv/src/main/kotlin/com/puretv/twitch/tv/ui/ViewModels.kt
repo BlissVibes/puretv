@@ -7,6 +7,8 @@ import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
+import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.ChatChange
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ChatTimeline
@@ -15,6 +17,12 @@ import com.puretv.twitch.core.chat.TwitchChatClient
 import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.applySevenTvDelta
+import com.puretv.twitch.core.emotes.buildEmoteIndex
+import com.puretv.twitch.core.emotes.prioritizeThirdParty
+import com.puretv.twitch.core.model.ChannelEmote
+import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
@@ -361,6 +369,13 @@ data class StreamUiState(
     val chatMessages: List<ChatMessage> = emptyList(),
     /** Slow, emote-only, followers-only and sub-only, shown in the chat header. */
     val roomModes: ChatRoomModes = ChatRoomModes(),
+    /** Third-party (7TV/BTTV/FFZ) name-to-url map the chat rows word-match against.
+     *  Third-party only: Twitch's own emotes arrive tagged in each message. */
+    val emotes: Map<String, String> = emptyMap(),
+    /** Chat badge art (global and channel); rows draw text chips until it loads. */
+    val badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. */
+    val showBadges: Boolean = true,
     val isLoading: Boolean = true,
     /**
      * Why playback could not start, or null while it is fine. Stream resolution
@@ -392,6 +407,8 @@ class StreamViewModel(
     private val adBlockEngine: AdBlockEngine,
     private val settingsStore: AppSettingsStore,
     private val playableStreamCache: PlayableStreamCache,
+    private val badgeRepository: BadgeRepository,
+    private val sevenTvEventClient: SevenTvEventClient,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -402,6 +419,12 @@ class StreamViewModel(
     // that @-mentions them is highlighted. Written once, before chat connects.
     private var selfLogin: String? = null
     private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
+
+    // The third-party emote lists the row map is built from. Fields so a live 7TV
+    // change can fold into the channel set without fetching again. Every reader
+    // and writer runs on viewModelScope's main dispatcher, so plain vars.
+    private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
 
     init {
         adBlockEngine.resetForNewStream()
@@ -416,8 +439,31 @@ class StreamViewModel(
             val channel = channelLookup.await()
             _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
-            runCatching { emoteRepository.loadGlobalEmotes() }
-            channel?.let { runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) } }
+            // Badge art only needs the channel id, so it loads on its own coroutine.
+            // Best-effort: Helix wants a session, so a signed-out TV keeps the chips.
+            channel?.let { ch ->
+                launch {
+                    val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
+                    _state.update { it.copy(badges = badges) }
+                }
+            }
+
+            // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
+            // first, so the first lines already render, then the fresh set.
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannelEmotes = emotes.channel
+                tpGlobalEmotes = emotes.global
+                rebuildEmotes()
+                openTiming.mark("emotes_ready")
+            }
+            // Live 7TV emote changes for as long as this stream is open.
+            channel?.let { sevenTvEventClient.connect(it.id) }
+        }
+        viewModelScope.launch {
+            sevenTvEventClient.updates.collect { delta ->
+                tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
+                rebuildEmotes()
+            }
         }
         viewModelScope.launch {
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
@@ -430,6 +476,7 @@ class StreamViewModel(
             _state.update {
                 it.copy(
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    showBadges = settings.showBadges,
                     quality = StreamQuality.fromSetting(settings.preferredQuality),
                 )
             }
@@ -447,6 +494,20 @@ class StreamViewModel(
                 if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
+    }
+
+    /**
+     * Rebuilds the name-to-url map chat rows match words against. Runs when emotes
+     * load and on every live 7TV change. TV has no per-provider toggles in its
+     * settings, so every provider is on; collisions resolve 7TV > BTTV > FFZ and
+     * channel before global, as on the other apps.
+     */
+    private fun rebuildEmotes() {
+        val map = buildEmoteIndex(
+            prioritizeThirdParty(tpChannelEmotes, ALL_THIRD_PARTY),
+            prioritizeThirdParty(tpGlobalEmotes, ALL_THIRD_PARTY),
+        ).mapValues { it.value.url }
+        _state.update { it.copy(emotes = map) }
     }
 
     /** [changes] applied to the chat rows and room modes (see [applying]). */
@@ -537,11 +598,13 @@ class StreamViewModel(
     override fun onCleared() {
         super.onCleared()
         chatClient.disconnect()
+        sevenTvEventClient.disconnect()
     }
 
     private companion object {
         const val TAG = "StreamViewModel"
         const val MAX_FRESH_SESSION_RETRIES = 1
+        val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
     }
 }
 

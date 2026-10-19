@@ -74,6 +74,7 @@ import coil3.compose.AsyncImage
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
+import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ComposerSuggestion
 import com.puretv.twitch.core.chat.completeWord
@@ -119,6 +120,10 @@ fun ChatPanel(
     textScale: Float = 1f,
     /** The room's chat modes, shown as a chip row above the composer while any is on. */
     roomModes: ChatRoomModes = ChatRoomModes(),
+    /** Chat badge art; until it loads (or for an unknown badge) rows show text chips. */
+    badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. Off shows name and message only. */
+    showBadges: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -181,7 +186,13 @@ fun ChatPanel(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     items(messages, key = { it.id }) { message ->
-                        ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+                        ChatMessageRow(
+                            message = message,
+                            emotes = emotes,
+                            badges = badges,
+                            showBadges = showBadges,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
@@ -304,7 +315,13 @@ fun ChatPanel(
  * legible while scrolling past rather than only while touched.
  */
 @Composable
-private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, modifier: Modifier = Modifier) {
+private fun ChatMessageRow(
+    message: ChatMessage,
+    emotes: Map<String, String>,
+    badges: BadgeIndex,
+    showBadges: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val c = PureTvTheme.colors
     // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
     // centred, muted line instead of the name, badge and emote pipeline.
@@ -348,13 +365,28 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (message.isBroadcaster) {
-                ChatBadgeChip("HOST", c.primary, c.onPrimary)
-            } else if (message.isModerator) {
-                ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+            val resolvedBadges = remember(message.badges, badges) {
+                if (badges === BadgeIndex.EMPTY) emptyList()
+                else message.badges.mapNotNull { badges.resolve(it.setId, it.version) }
             }
-            if (message.isSubscriber) {
-                ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+            if (!showBadges) {
+                // Badges turned off: name and message only.
+            } else if (resolvedBadges.isNotEmpty()) {
+                // Badge art is square (BadgeIndex picks the 2x CDN image).
+                resolvedBadges.forEach { badge ->
+                    AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(18.dp))
+                }
+            } else {
+                // Art not loaded yet (or this channel returned none): text chips keep
+                // rank legible meanwhile.
+                if (message.isBroadcaster) {
+                    ChatBadgeChip("HOST", c.primary, c.onPrimary)
+                } else if (message.isModerator) {
+                    ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+                }
+                if (message.isSubscriber) {
+                    ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+                }
             }
             Text(
                 message.displayName,

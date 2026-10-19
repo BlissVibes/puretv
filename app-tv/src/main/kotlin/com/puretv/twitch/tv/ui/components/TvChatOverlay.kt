@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -35,6 +36,8 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import coil3.compose.AsyncImage
+import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.model.ChatMessage
@@ -62,6 +65,10 @@ fun TvChatOverlay(
     textScale: Float = 1f,
     /** The room's chat modes, shown under the header while any is on. */
     roomModes: ChatRoomModes = ChatRoomModes(),
+    /** Chat badge art; until it loads (or for an unknown badge) rows show text chips. */
+    badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. */
+    showBadges: Boolean = true,
 ) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
@@ -110,7 +117,9 @@ fun TvChatOverlay(
                     val density = LocalDensity.current
                     CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
                         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(messages, key = { it.id }) { message -> TvChatMessageRow(message) }
+                            items(messages, key = { it.id }) { message ->
+                                TvChatMessageRow(message, badges = badges, showBadges = showBadges)
+                            }
                         }
                     }
                 }
@@ -151,7 +160,7 @@ private fun TvRoomModeChips(modes: ChatRoomModes) {
  * run-on wall of same-weight text with no boundary between messages.
  */
 @Composable
-private fun TvChatMessageRow(message: ChatMessage) {
+private fun TvChatMessageRow(message: ChatMessage, badges: BadgeIndex, showBadges: Boolean) {
     val c = PureTvTvTheme.colors
     // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
     // centred, muted line instead of a card with a name.
@@ -185,6 +194,7 @@ private fun TvChatMessageRow(message: ChatMessage) {
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (showBadges) TvChatBadges(message, badges)
             Text(
                 text = message.displayName,
                 style = MaterialTheme.typography.labelLarge,
@@ -210,6 +220,45 @@ private fun TvChatMessageRow(message: ChatMessage) {
             )
         }
     }
+}
+
+/**
+ * The sender's badges as images (22 dp, readable from the sofa), or text chips
+ * while the art loads or when the channel's badges are unknown, so a moderator
+ * or the streamer still stands out.
+ */
+@Composable
+private fun TvChatBadges(message: ChatMessage, badges: BadgeIndex) {
+    val c = PureTvTvTheme.colors
+    val resolved = remember(message.badges, badges) {
+        if (badges === BadgeIndex.EMPTY) emptyList()
+        else message.badges.mapNotNull { badges.resolve(it.setId, it.version) }
+    }
+    if (resolved.isNotEmpty()) {
+        resolved.forEach { badge ->
+            AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(22.dp))
+        }
+        return
+    }
+    if (message.isBroadcaster) {
+        TvBadgeChip("HOST", c.primary, c.onPrimary)
+    } else if (message.isModerator) {
+        TvBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+    }
+    if (message.isSubscriber) TvBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+}
+
+@Composable
+private fun TvBadgeChip(text: String, bg: Color, fg: Color) {
+    Text(
+        text = text,
+        style = PureTvTvType.dataSmall,
+        color = fg,
+        modifier = Modifier
+            .clip(PureTvTvTheme.shapes.pillShape)
+            .background(bg)
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    )
 }
 
 /** New lines closer together than this snap into view instead of gliding. */

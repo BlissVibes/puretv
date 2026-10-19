@@ -112,8 +112,12 @@ class DesktopPlayerProvider(create: () -> DesktopPlayer) {
     fun warmUp() {
         if (lazyPlayer.isInitialized()) return
         val started = System.nanoTime()
-        lazyPlayer.value
-        TimingLog.log("app.player_built", (System.nanoTime() - started) / 1_000_000)
+        val built = lazyPlayer.value
+        TimingLog.log(
+            "app.player_built",
+            (System.nanoTime() - started) / 1_000_000,
+            if (built.isAvailable) "ready" else "unavailable",
+        )
     }
 
     fun releaseIfCreated() {

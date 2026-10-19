@@ -12,6 +12,8 @@ import com.puretv.twitch.core.emotes.EmoteCache
 import com.puretv.twitch.core.emotes.PersistentEmoteCache
 import com.puretv.twitch.core.storage.FileTextStore
 import java.io.File
+import coil3.disk.DiskCache
+import okio.Path.Companion.toOkioPath
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.MpvPlayer
 import com.puretv.twitch.desktop.player.VlcPlayer
@@ -70,7 +72,17 @@ val desktopModule = module {
     single { ViewerHistoryStore() }
     // In-app auto-updater (GitHub Releases) — see UpdateManager.
     single { UpdateManager() }
-    single { EmoteFrameCache(get()) }
+    // One Coil disk cache for the whole app: the image loader fills it with
+    // avatars, thumbnails and emotes, and the animated-emote decoder reads from
+    // it, so an emote already on disk is never downloaded again. Bounded so it
+    // can never grow without limit.
+    single<DiskCache> {
+        DiskCache.Builder()
+            .directory(File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/image_cache").toOkioPath())
+            .maxSizeBytes(256L * 1024 * 1024)
+            .build()
+    }
+    single { EmoteFrameCache(get(), get()) }
     // Emote lists survive restarts so chat shows emotes on its first lines.
     single<EmoteCache> {
         val localData = System.getenv("LOCALAPPDATA") ?: System.getenv("APPDATA") ?: System.getProperty("user.home")

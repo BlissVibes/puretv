@@ -349,7 +349,10 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
     // attached (play() caches in pendingUrl instead) and serializes every native
     // call against detach's terminate_destroy via nativeLock (audit P0-9).
 
-    override fun play(streamUrl: String) {
+    // lowLatency needs nothing here: mpv's HLS demuxer already starts three
+    // segments from the end of the playlist, and with low latency on the proxy
+    // has turned Twitch's prefetch hints into segments, so that end is nearer live.
+    override fun play(streamUrl: String, lowLatency: Boolean) {
         pendingUrl = streamUrl
         withCtx { l, c -> doPlay(l, c, streamUrl) } // else attachToPanel drains pendingUrl
     }

@@ -60,11 +60,29 @@ class AdBlockEngine(
     }
 
     /**
+     * Called when the viewer opens a stream. This engine is an app-wide singleton,
+     * so without a reset the previous channel's last status (say, yellow "skipping
+     * ad") stayed on the new channel's pill until its first playlist refresh.
+     */
+    fun resetForNewStream() {
+        _status.value = if (isEnabled) AdBlockStatus.UNKNOWN else AdBlockStatus.DISABLED
+    }
+
+    /**
      * Returns a clean m3u8 master/media playlist URL or content that the player
      * can consume without showing ads. Tries strategies in order based on
      * [AdBlockConfig.strategy] and current proxy health.
      */
-    suspend fun resolveCleanStream(masterPlaylistUrl: String, quality: StreamQuality = StreamQuality.AUTO): CleanStreamResult {
+    suspend fun resolveCleanStream(
+        masterPlaylistUrl: String,
+        quality: StreamQuality = StreamQuality.AUTO,
+        /**
+         * The master body when the caller already holds it (stream resolution
+         * fetches and validates it). Skips a second usher round trip on every
+         * stream open.
+         */
+        prefetchedMaster: String? = null,
+    ): CleanStreamResult {
         if (config.strategy == AdBlockStrategy.DISABLED) {
             _status.value = AdBlockStatus.DISABLED
             return passthrough(masterPlaylistUrl, AdBlockStrategyResult.DISABLED)
@@ -89,7 +107,7 @@ class AdBlockEngine(
         }
 
         if (config.fallbackToManifestRewrite) {
-            val raw = fetchRaw(masterPlaylistUrl)
+            val raw = prefetchedMaster ?: fetchRaw(masterPlaylistUrl)
             if (raw != null) {
                 val filtered = rewriter.filter(raw)
                 _status.value = if (filtered.containedAds) AdBlockStatus.AD_FILTERED else AdBlockStatus.AD_BLOCKED

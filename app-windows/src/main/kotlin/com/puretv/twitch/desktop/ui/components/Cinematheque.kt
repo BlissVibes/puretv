@@ -56,6 +56,7 @@ import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.EmoteLayer
 import com.puretv.twitch.core.model.MessagePart
+import com.puretv.twitch.desktop.ui.chat.LocalChatAppearance
 import com.puretv.twitch.desktop.ui.emotes.AnimatedEmote
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
@@ -236,7 +237,7 @@ fun AdBlockPill(status: AdBlockStatus, modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
     val label = when (status) {
         AdBlockStatus.AD_BLOCKED -> "ADS BLOCKED"
-        AdBlockStatus.AD_FILTERED -> "ADS FILTERED"
+        AdBlockStatus.AD_FILTERED -> "SKIPPING AD"
         AdBlockStatus.AD_BLOCK_OFF -> "AD BLOCK OFF"
         AdBlockStatus.DISABLED -> "DISABLED"
         AdBlockStatus.UNKNOWN -> "CHECKING"
@@ -360,10 +361,11 @@ val LocalBadgeIndex = staticCompositionLocalOf { BadgeIndex.EMPTY }
 fun ChatMessageRow(
     message: ChatMessage,
     modifier: Modifier = Modifier,
-    showTimestamps: Boolean = true,
+    showTimestamps: Boolean = LocalChatAppearance.current.showTimestamps,
     onReply: ((ChatMessage) -> Unit)? = null,
 ) {
     val c = PureTvTheme.colors
+    val appearance = LocalChatAppearance.current
 
     // System rows (subs, raids, "chat cleared") carry no user identity, so render a
     // single centred, muted line and skip the whole badge/username/emote pipeline.
@@ -402,7 +404,7 @@ fun ChatMessageRow(
         .clip(PureTvTheme.shapes.mdShape)
         .background(rowFill)
         .hoverable(rowInteraction)
-        .padding(horizontal = 12.dp, vertical = 7.dp)
+        .padding(horizontal = if (appearance.compact) 8.dp else 12.dp, vertical = if (appearance.compact) 2.dp else 7.dp)
     Column(modifier = rowModifier) {
         val parentName = message.replyParentDisplayName
         if (parentName != null) {
@@ -427,7 +429,9 @@ fun ChatMessageRow(
         val badgeIndex = LocalBadgeIndex.current
         val resolvedBadges = if (badgeIndex === BadgeIndex.EMPTY) emptyList()
             else message.badges.mapNotNull { badgeIndex.resolve(it.setId, it.version) }
-        if (resolvedBadges.isNotEmpty()) {
+        if (!appearance.showBadges) {
+            // Badges turned off in Settings > Chat: name and message only.
+        } else if (resolvedBadges.isNotEmpty()) {
             // Badge art is already square (BadgeIndex resolves the 2x CDN image),
             // so a fixed square box is correct here, no aspect-ratio bug to fix.
             resolvedBadges.forEach { EmoteImage(it.url, it.title, Modifier.size(18.dp)) }

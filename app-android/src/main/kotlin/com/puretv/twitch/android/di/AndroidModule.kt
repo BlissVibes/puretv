@@ -23,10 +23,15 @@ import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.StreamViewModel
 import com.puretv.twitch.android.ui.WelcomeViewModel
 import com.puretv.twitch.core.di.TokenHolder
+import com.puretv.twitch.core.emotes.EmoteCache
+import com.puretv.twitch.core.emotes.PersistentEmoteCache
+import com.puretv.twitch.core.storage.FileTextStore
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
+import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
+import java.io.File
 
 /**
  * SECTION 11 — phone/tablet-specific Koin bindings layered on top of
@@ -56,6 +61,8 @@ val androidModule = module {
     single { get<PureTvDatabase>().cachedStreamDao() }
     single { get<PureTvDatabase>().cachedChannelDao() }
     single { get<PureTvDatabase>().cachedEmoteDao() }
+    // Emote lists survive restarts so chat shows emotes on its first lines.
+    single<EmoteCache> { PersistentEmoteCache(FileTextStore(File(androidContext().cacheDir, "emotes"))) }
     single { get<PureTvDatabase>().watchHistoryDao() }
     single { get<PureTvDatabase>().searchHistoryDao() }
 
@@ -69,9 +76,10 @@ val androidModule = module {
     single<FollowedChannelsSource> { FollowedChannelsService(get()) }
 
     // --- Playback ---------------------------------------------------------
-    // TwitchPlayer(context, adBlockEngine, backupStreamResolver) — the last one
-    // powers the seamless ad-free backup player-type swap in the interceptor.
-    single { TwitchPlayer(get(), get(), get()) }
+    // TwitchPlayer(context, adBlockEngine, backupStreamResolver, httpClient,
+    // playableStreamCache). The backupStreamResolver powers the seamless ad-free
+    // backup player-type swap in the interceptor.
+    single { TwitchPlayer(get(), get(), get(), get(), get()) }
     // Background play (issue #27): the media session service's on/off switch and
     // the leave/return pause rules, shared by the stream screen and MainActivity.
     single { BackgroundPlayback(get(), get()) }
@@ -82,11 +90,11 @@ val androidModule = module {
     // not matter as long as every type is bound above (the DAOs are).
     viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { FollowingViewModel(get(), get()) }
-    viewModel { WelcomeViewModel(get()) }
+    viewModel { WelcomeViewModel(get(), get()) }
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }

@@ -60,6 +60,8 @@ fun PlayerSurface(
     onControlsVisibilityChanged: ((Boolean) -> Unit)? = null,
     // Title, channel and artwork for the media notification and lock screen.
     metadata: MediaMetadata = MediaMetadata.EMPTY,
+    // Settings > Low latency, applied when a new stream starts.
+    lowLatency: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -67,6 +69,7 @@ fun PlayerSurface(
     val twitchPlayer = koinInject<TwitchPlayer>()
     val backgroundPlayback = koinInject<BackgroundPlayback>()
     val currentMetadata by rememberUpdatedState(metadata)
+    val currentLowLatency by rememberUpdatedState(lowLatency)
 
     // Keep live handles to the latest callbacks so the listeners installed once in
     // factory{} always call the current ones (fullscreen/state changes).
@@ -82,7 +85,7 @@ fun PlayerSurface(
         // (which also resets the transient-error retry budget for the new stream).
         val currentUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
         if (currentUri != url) {
-            twitchPlayer.playUrl(url, currentMetadata)
+            twitchPlayer.playUrl(url, currentMetadata, currentLowLatency)
         }
         // Still in the foreground here, which is the only place Android 12+ lets
         // the foreground service start. No-op when background play is off.
@@ -111,9 +114,11 @@ fun PlayerSurface(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
-                    val inPip =
-                        (context as? android.app.Activity)?.isInPictureInPictureMode == true
-                    backgroundPlayback.onAppStopped(inPip)
+                    val activity = context as? android.app.Activity
+                    backgroundPlayback.onAppStopped(
+                        inPip = activity?.isInPictureInPictureMode == true,
+                        changingConfigurations = activity?.isChangingConfigurations == true,
+                    )
                 }
                 Lifecycle.Event.ON_RESUME -> backgroundPlayback.onAppResumed()
                 else -> Unit

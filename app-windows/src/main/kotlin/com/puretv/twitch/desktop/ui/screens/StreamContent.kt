@@ -86,6 +86,10 @@ import com.puretv.twitch.core.chat.insertAtCursor
 import com.puretv.twitch.core.chat.recentChatters
 import com.puretv.twitch.core.chat.wordAtCursor
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.ChatTextSize
+import com.puretv.twitch.desktop.ui.chat.ChatAppearance
+import com.puretv.twitch.desktop.ui.chat.ChatScale
+import com.puretv.twitch.desktop.ui.chat.LocalChatAppearance
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.UpscalingMode
@@ -473,23 +477,32 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                             .clip(RoundedCornerShape(CHAT_PANEL_RADIUS))
                             .background(c.surfaceContainer),
                     ) {
-                        CompositionLocalProvider(LocalBadgeIndex provides state.badges) {
-                            when (chatTab) {
-                                ChatTab.Chat -> ChatMessageList(
-                                    messages = state.chatMessages,
-                                    onReply = viewModel::startReply,
-                                    modifier = Modifier.fillMaxSize(),
-                                )
-                                ChatTab.Mentions ->
-                                    if (state.mentionMessages.isEmpty()) {
-                                        MentionsEmptyState(Modifier.fillMaxSize())
-                                    } else {
-                                        ChatMessageList(
-                                            messages = state.mentionMessages,
-                                            onReply = viewModel::startReply,
-                                            modifier = Modifier.fillMaxSize(),
-                                        )
-                                    }
+                        CompositionLocalProvider(
+                            LocalBadgeIndex provides state.badges,
+                            LocalChatAppearance provides ChatAppearance(
+                                showTimestamps = appSettings.chatTimestamps,
+                                showBadges = appSettings.showBadges,
+                                compact = appSettings.compactMode,
+                            ),
+                        ) {
+                            ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {
+                                when (chatTab) {
+                                    ChatTab.Chat -> ChatMessageList(
+                                        messages = state.chatMessages,
+                                        onReply = viewModel::startReply,
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                    ChatTab.Mentions ->
+                                        if (state.mentionMessages.isEmpty()) {
+                                            MentionsEmptyState(Modifier.fillMaxSize())
+                                        } else {
+                                            ChatMessageList(
+                                                messages = state.mentionMessages,
+                                                onReply = viewModel::startReply,
+                                                modifier = Modifier.fillMaxSize(),
+                                            )
+                                        }
+                                }
                             }
                         }
                     }

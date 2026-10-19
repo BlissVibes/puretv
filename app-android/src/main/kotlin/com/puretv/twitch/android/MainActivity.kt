@@ -23,6 +23,7 @@ import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.ui.RootScreen
 import com.puretv.twitch.android.ui.Routes
 import com.puretv.twitch.android.data.AppSettingsStore
+import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.ui.theme.ShapeIntensity
 import com.puretv.twitch.android.ui.theme.ThemeVariant
 import com.puretv.twitch.android.ui.theme.PureTvTheme
@@ -165,6 +166,12 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         runCatching { getKoin().get<AndroidUpdateManager>().refreshInstallConsent() }
             .onFailure { Log.w(TAG, "Could not re-check install consent", it) }
+        // Coming back after hours away: renew the sign-in now if it is about to
+        // lapse, before the screen's first Helix call needs it. A no-op otherwise.
+        uiScope.launch(Dispatchers.IO) {
+            runCatching { getKoin().get<TokenRefresher>().refreshIfNeeded() }
+                .onFailure { Log.w(TAG, "Sign-in check on resume failed", it) }
+        }
     }
 
     /**

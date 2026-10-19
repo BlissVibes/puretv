@@ -87,7 +87,7 @@ fun TvStreamScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var chatVisible by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
-    var quality by remember { mutableStateOf(StreamQuality.SOURCE) }
+    val quality = state.quality ?: StreamQuality.AUTO
     var lastInputAt by remember { mutableStateOf(0L) }
 
     LaunchedEffect(Unit) {
@@ -99,16 +99,30 @@ fun TvStreamScreen(
 
     LaunchedEffect(state.playableUrl) {
         val url = state.playableUrl ?: return@LaunchedEffect
-        tvPlayer.playUrl(url)
+        tvPlayer.playUrl(url, lowLatency = state.lowLatency)
         isPlaying = true
     }
 
-    // Apply the selected quality to the player whenever it changes (the quality
-    // chips and FAST_FORWARD/REWIND both update `quality`). Runs on first
-    // composition too, so the initial SOURCE selection clears any stale cap the
-    // shared singleton player carried over from a previous stream.
-    LaunchedEffect(quality) {
-        runCatching { tvPlayer.setQuality(quality) }
+    // Local time-to-first-frame mark. Cleared on leave so a released screen's
+    // view model is never called back.
+    DisposableEffect(viewModel) {
+        val listener = { viewModel.onFirstFrame() }
+        val gaveUp: (androidx.media3.common.PlaybackException) -> Unit = { viewModel.onPlaybackGaveUp() }
+        tvPlayer.onFirstFrame = listener
+        tvPlayer.onGaveUp = gaveUp
+        onDispose {
+            if (tvPlayer.onFirstFrame === listener) tvPlayer.onFirstFrame = null
+            if (tvPlayer.onGaveUp === gaveUp) tvPlayer.onGaveUp = null
+        }
+    }
+
+    // Apply the quality to the player whenever it changes (the quality chips and
+    // FAST_FORWARD/REWIND both go through the view model). The first value is the
+    // saved preference, which also clears any cap the shared singleton player
+    // carried over from a previous stream.
+    LaunchedEffect(state.quality) {
+        val selected = state.quality ?: return@LaunchedEffect
+        runCatching { tvPlayer.setQuality(selected) }
     }
 
     // Auto-hide: any input bumps `lastInputAt`; this effect restarts its 3s
@@ -197,11 +211,11 @@ fun TvStreamScreen(
                         true
                     }
                     Key.MediaFastForward -> {
-                        quality = stepQuality(quality, up = true)
+                        viewModel.setQuality(stepQuality(quality, up = true))
                         true
                     }
                     Key.MediaRewind -> {
-                        quality = stepQuality(quality, up = false)
+                        viewModel.setQuality(stepQuality(quality, up = false))
                         true
                     }
                     Key.Menu -> {
@@ -274,7 +288,7 @@ fun TvStreamScreen(
                 tvPlayer.togglePlayPause()
                 isPlaying = tvPlayer.exoPlayer.isPlaying
             },
-            onSelectQuality = { quality = it },
+            onSelectQuality = viewModel::setQuality,
             modifier = Modifier.fillMaxSize(),
         )
 
@@ -282,6 +296,7 @@ fun TvStreamScreen(
             visible = chatVisible,
             messages = state.chatMessages,
             modifier = Modifier.fillMaxSize(),
+            textScale = state.chatTextScale,
         )
     }
 }

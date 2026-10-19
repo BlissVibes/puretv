@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.emotes
 
+import coil3.disk.DiskCache
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -21,6 +22,13 @@ import kotlinx.coroutines.withContext
  */
 class EmoteFrameCache(
     private val httpClient: HttpClient,
+    /**
+     * Coil's disk cache, shared with the app's image loader. The static fallback
+     * shown while frames decode is loaded through Coil, which stores the file
+     * there; reading it back means an emote already on disk (from this session
+     * or an earlier one) is never downloaded a second time.
+     */
+    private val diskCache: DiskCache? = null,
     private val maxEntries: Int = 64,
 ) {
     private val lock = Any()
@@ -70,7 +78,7 @@ class EmoteFrameCache(
         // null — only cache a successful fetch, so the next request retries after connectivity
         // returns. (A genuine static image decodes to null and IS cached so we don't re-decode.)
         val bytes = withContext(Dispatchers.IO) {
-            runCatching { httpClient.get(url).body<ByteArray>() }.getOrNull()
+            cachedBytes(url) ?: runCatching { httpClient.get(url).body<ByteArray>() }.getOrNull()
         } ?: return null
         // The Skia decode is CPU-bound and MUST run off the EDT. frames() is called from
         // AnimatedEmote's LaunchedEffect, whose dispatcher on Compose Desktop is the main
@@ -88,6 +96,19 @@ class EmoteFrameCache(
             cache[url] = decoded
             return decoded
         }
+    }
+
+    /** The file Coil already holds for [url] (its disk-cache key is the URL), or null. */
+    private fun cachedBytes(url: String): ByteArray? {
+        val cache = diskCache ?: return null
+        return runCatching {
+            val snapshot = cache.openSnapshot(url) ?: return null
+            try {
+                cache.fileSystem.read(snapshot.data) { readByteArray() }
+            } finally {
+                snapshot.close()
+            }
+        }.getOrNull()
     }
 
     /** Visible for tests: seed an entry without network IO. */

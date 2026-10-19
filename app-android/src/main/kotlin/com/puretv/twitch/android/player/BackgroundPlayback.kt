@@ -53,6 +53,20 @@ class BackgroundPlayback(
         pipOnLeave = enabled
     }
 
+    /**
+     * Mirrors the "Audio only in the background" setting; fed by `PureTvApp`.
+     * With nothing on screen, background play fetches only the audio-only
+     * rendition, and the picture comes back on return.
+     */
+    @Volatile
+    var audioOnlyInBackground: Boolean = true
+        private set
+
+    fun setAudioOnlyInBackground(enabled: Boolean) {
+        audioOnlyInBackground = enabled
+        if (!enabled) twitchPlayer.setBackgroundAudioOnly(false)
+    }
+
     fun setEnabled(enabled: Boolean) {
         this.enabled = enabled
         // Turning it off mid-stream drops the notification; the next leave pauses.
@@ -74,6 +88,7 @@ class BackgroundPlayback(
     /** In-app Back left the stream: no notification, and nothing to resume later. */
     fun onStreamClosed() {
         resumeOnReturn = false
+        twitchPlayer.setBackgroundAudioOnly(false)
         stopService()
     }
 
@@ -87,8 +102,17 @@ class BackgroundPlayback(
      * background play on the stream keeps going; otherwise pause, as before.
      * [inPip] keeps today's rule that a visible PiP window is never paused.
      */
-    fun onAppStopped(inPip: Boolean) {
-        if (shouldPauseOnLeave(backgroundPlay = enabled, inPip = inPip)) pauseForLeave()
+    fun onAppStopped(inPip: Boolean, changingConfigurations: Boolean = false) {
+        if (shouldPauseOnLeave(backgroundPlay = enabled, inPip = inPip)) {
+            pauseForLeave()
+        } else if (
+            !changingConfigurations &&
+            shouldDropVideo(backgroundPlay = enabled, audioOnlyInBackground = audioOnlyInBackground, inPip = inPip)
+        ) {
+            // A configuration change stops and restarts the Activity at once:
+            // switching to audio and straight back would only rebuffer twice.
+            dropVideoWhilePlaying()
+        }
     }
 
     /**
@@ -105,17 +129,27 @@ class BackgroundPlayback(
      * away from recents, whatever this setting says.
      */
     fun onPipDismissed() {
-        if (shouldPauseOnLeave(backgroundPlay = enabled, inPip = false)) pauseForLeave()
+        if (shouldPauseOnLeave(backgroundPlay = enabled, inPip = false)) {
+            pauseForLeave()
+        } else if (shouldDropVideo(backgroundPlay = enabled, audioOnlyInBackground = audioOnlyInBackground, inPip = false)) {
+            dropVideoWhilePlaying()
+        }
     }
 
     /** The Activity is back in front: undo our own pause, then (re)start the session. */
     fun onAppResumed() {
+        twitchPlayer.setBackgroundAudioOnly(false)
         val player = twitchPlayer.exoPlayer
         if (resumeOnReturn) {
             resumeOnReturn = false
             if (player.mediaItemCount > 0) player.play()
         }
         startService()
+    }
+
+    /** A paused stream is left alone: reloading it as audio would only spend data. */
+    private fun dropVideoWhilePlaying() {
+        if (twitchPlayer.exoPlayer.playWhenReady) twitchPlayer.setBackgroundAudioOnly(true)
     }
 
     private fun pauseForLeave() {
@@ -131,5 +165,9 @@ class BackgroundPlayback(
 
         /** Leaving pauses only when background play is off and no PiP window shows the video. */
         fun shouldPauseOnLeave(backgroundPlay: Boolean, inPip: Boolean): Boolean = !backgroundPlay && !inPip
+
+        /** Playing on in the background with no PiP window means nobody sees the video. */
+        fun shouldDropVideo(backgroundPlay: Boolean, audioOnlyInBackground: Boolean, inPip: Boolean): Boolean =
+            backgroundPlay && audioOnlyInBackground && !inPip
     }
 }

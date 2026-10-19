@@ -22,6 +22,7 @@ import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
@@ -36,15 +37,22 @@ import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.model.ChannelEmote
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
+import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.session.SessionState
 import io.ktor.client.HttpClient
 import kotlin.jvm.Volatile
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -134,30 +142,43 @@ class HomeViewModel(
                 when (session) {
                     is SessionState.LoggedOut ->
                         _state.update { it.copy(isLoggedIn = false, isLoading = it.topStreams.isEmpty(), error = null) }
-                    is SessionState.LoggedIn ->
+                    is SessionState.LoggedIn -> {
+                        userId = session.userId
                         loadLoggedInHome()
+                    }
                 }
-            }
-        }
-        // Followed "Live now": re-fetch whenever the follow set changes.
-        viewModelScope.launch {
-            userRepository.followedLogins.collect { follows ->
-                val live = if (follows.isEmpty()) emptyList()
-                else runCatching { streamRepository.streamsForChannels(follows) }.getOrDefault(emptyList())
-                _state.update { it.copy(followedLive = live) }
             }
         }
     }
 
+    /** The signed-in viewer's id, for "Live now"; set by the session collector. */
+    @Volatile private var userId: String = ""
+
+    /**
+     * Followed "Live now", asked of Twitch directly (one /streams/followed call)
+     * on every load and refresh. It used to be recomputed only when the follow
+     * list changed, so live status went stale while every refresh still
+     * re-downloaded the whole follow list.
+     */
+    private suspend fun refreshFollowedLive() {
+        val id = userId.ifBlank { return }
+        runCatching { streamRepository.followedLiveStreams(id) }
+            .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+    }
+
     private suspend fun loadLoggedInHome() {
         _state.update { it.copy(isLoggedIn = true, isLoading = it.topStreams.isEmpty(), error = null) }
-        val gamesOk = runCatching { channelRepository.topGames() }
-            .onSuccess { g -> _state.update { it.copy(games = g) } }.isSuccess
-        val topOk = runCatching { streamRepository.refreshTopStreams() }.isSuccess
+        refreshFollowedLive()
+        val games = runCatching { channelRepository.topGames() }
+            .onSuccess { g -> _state.update { it.copy(games = g) } }
+        val top = runCatching { streamRepository.refreshTopStreams() }
         runCatching { userRepository.loadFollowsForCurrentUser() }
-        val failed = !gamesOk && !topOk && _state.value.topStreams.isEmpty()
+        val failed = games.isFailure && top.isFailure && _state.value.topStreams.isEmpty()
         _state.update {
-            it.copy(isLoading = false, error = if (failed) "Couldn't load. Check your connection and try again." else null)
+            it.copy(
+                isLoading = false,
+                error = if (failed) StreamFailures.classify(top.exceptionOrNull()).sentence("Couldn't load") else null,
+            )
         }
     }
 
@@ -165,10 +186,18 @@ class HomeViewModel(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-            val ok = runCatching { streamRepository.refreshTopStreams() }.isSuccess
+            val top = runCatching { streamRepository.refreshTopStreams() }
             runCatching { channelRepository.topGames() }.onSuccess { g -> _state.update { it.copy(games = g) } }
+            refreshFollowedLive()
             _state.update {
-                it.copy(isLoading = false, error = if (!ok && it.topStreams.isEmpty()) "Couldn't refresh. Check your connection." else null)
+                it.copy(
+                    isLoading = false,
+                    error = if (top.isFailure && it.topStreams.isEmpty()) {
+                        StreamFailures.classify(top.exceptionOrNull()).sentence("Couldn't refresh")
+                    } else {
+                        null
+                    },
+                )
             }
         }
     }
@@ -309,6 +338,12 @@ data class StreamUiState(
     val isLoading: Boolean = true,
     val playbackError: String? = null,
     val isLoggedIn: Boolean = false,
+    /** Settings > Chat > Text size, as a scale for the chat list. */
+    val chatTextScale: Float = 1f,
+    /** What the player plays at: the saved preference on open, then the viewer's pick. */
+    val quality: StreamQuality = StreamQuality.AUTO,
+    /** Settings > Low latency, read with the playable URL so they reach the player together. */
+    val lowLatency: Boolean = false,
 )
 
 @OptIn(UnstableApi::class)
@@ -324,6 +359,7 @@ class StreamViewModel(
     private val twitchPlayer: TwitchPlayer,
     private val apiClient: TwitchApiClient,
     private val backgroundPlayback: BackgroundPlayback,
+    private val playableStreamCache: PlayableStreamCache,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -344,53 +380,73 @@ class StreamViewModel(
     // third-party-only [StreamUiState.emotes] map.
     private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
 
+    private val openTiming = StreamOpenTiming(channelLogin)
+    private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
+    private val gaveUpListener: (androidx.media3.common.PlaybackException) -> Unit = { onPlaybackGaveUp() }
+    private var freshSessionRetries = 0
+
     init {
+        adBlockEngine.resetForNewStream()
+        twitchPlayer.onFirstFrame = firstFrameListener
+        twitchPlayer.onGaveUp = gaveUpListener
+        // Playback first: resolving the stream does not need the channel info
+        // below, so the player starts while the metadata and emotes load.
+        viewModelScope.launch { resolvePlayable() }
         viewModelScope.launch {
-            val channel = runCatching { channelRepository.getChannel(channelLogin) }.getOrNull()
-            val liveInfo = runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
-            _state.update { it.copy(channel = channel, streamInfo = liveInfo, isLoading = false) }
+            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
+            val liveLookup = async {
+                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
+            }
+            // Twitch's own globals need no channel id, so ask for them right away.
+            val twitchGlobalLookup = async { runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList()) }
+            val channel = channelLookup.await()
+            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
             // Record this open for the Home "Continue watching" rail.
             channel?.let { ch ->
-                runCatching {
-                    watchHistoryDao.upsert(
-                        WatchHistoryEntry(
-                            channelLogin = ch.login,
-                            channelDisplayName = ch.displayName,
-                            lastWatchedEpochMs = System.currentTimeMillis(),
-                            totalWatchTimeMs = 0L,
-                        ),
-                    )
+                launch {
+                    runCatching {
+                        watchHistoryDao.upsert(
+                            WatchHistoryEntry(
+                                channelLogin = ch.login,
+                                channelDisplayName = ch.displayName,
+                                lastWatchedEpochMs = System.currentTimeMillis(),
+                                totalWatchTimeMs = 0L,
+                            ),
+                        )
+                    }
                 }
             }
 
-            resolvePlayable()
+            val twitchChannelLookup = async {
+                channel?.let { runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList()) }
+                    ?: emptyList()
+            }
 
-            val global = runCatching { emoteRepository.loadGlobalEmotes() }.getOrDefault(emptyList())
-            val channelEmotes = channel?.let {
-                runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) }.getOrDefault(emptyList())
-            } ?: emptyList()
-            // Android has no per-provider toggles in its settings UI, so every
-            // provider is on; prioritizeThirdParty still applies the 7TV > BTTV > FFZ
-            // collision order the desktop uses. The picker and echo get the
-            // third-party sets right away, so a slow Helix call can't leave the
-            // picker empty.
-            val tpChannel = prioritizeThirdParty(channelEmotes, ALL_THIRD_PARTY)
-            val tpGlobal = prioritizeThirdParty(global, ALL_THIRD_PARTY)
-            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
-            _state.update { s ->
-                s.copy(
-                    emotes = (global + channelEmotes).associate { it.name to it.url },
-                    pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
-                )
+            // Third-party emotes: the copy cached from the last visit first, so the
+            // first chat lines already render, then the fresh set. Android has no
+            // per-provider toggles in its settings UI, so every provider is on;
+            // prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision
+            // order the desktop uses.
+            var tpChannel = emptyList<ChannelEmote>()
+            var tpGlobal = emptyList<ChannelEmote>()
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannel = prioritizeThirdParty(emotes.channel, ALL_THIRD_PARTY)
+                tpGlobal = prioritizeThirdParty(emotes.global, ALL_THIRD_PARTY)
+                selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
+                _state.update { s ->
+                    s.copy(
+                        emotes = (emotes.global + emotes.channel).associate { it.name to it.url },
+                        pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
+                    )
+                }
+                openTiming.mark("emotes_ready")
             }
 
             // First-party Twitch emotes (Helix; best-effort, empty without a token)
             // then join the picker, autocomplete and self-echo only, never incoming rows.
-            val twitchGlobal = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
-            val twitchChannel = channel?.let {
-                runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList())
-            } ?: emptyList()
+            val twitchGlobal = twitchGlobalLookup.await()
+            val twitchChannel = twitchChannelLookup.await()
             selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
             _state.update { s ->
                 s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))
@@ -404,25 +460,40 @@ class StreamViewModel(
             // `TwitchChatClient` falls back to a `justinfanNNNN` identity for `null`.
             // Sending requires a real OAuth token (see Section 5.1).
             val settings = settingsStore.flow.first()
-            _state.update { it.copy(chatFraction = settings.chatFraction, chatEnabled = settings.chatEnabled) }
+            val preferred = StreamQuality.fromSetting(settings.preferredQuality)
+            twitchPlayer.setQuality(preferred)
+            _state.update {
+                it.copy(
+                    chatFraction = settings.chatFraction,
+                    chatEnabled = settings.chatEnabled,
+                    chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    quality = preferred,
+                )
+            }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             // Anonymous IRC can read but not send; gate the composer on a real token.
             val username = settings.username.takeIf { it.isNotBlank() }
             selfLogin = username
             _state.update { it.copy(isLoggedIn = token != null, selfLogin = username) }
             chatClient.connect(channelLogin, token, username)
-            chatClient.events.collect { event ->
-                when (event) {
-                    is ChatEvent.Message -> _state.update { current ->
-                        current.copy(chatMessages = (current.chatMessages + event.message).takeLast(200))
+            // A busy chat arrives in batches (about ten a second), each applied in
+            // one state update instead of one per message.
+            chatClient.events.batchedEvery().collect { batch ->
+                val incoming = ArrayList<ChatMessage>(batch.size)
+                for (event in batch) {
+                    when (event) {
+                        is ChatEvent.Message -> incoming += event.message
+                        // Our own name/color/badges, used to dress the self-echo.
+                        is ChatEvent.SelfState -> {
+                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                            selfColor = event.color
+                            selfBadges = event.badges
+                        }
+                        else -> {}
                     }
-                    // Our own name/color/badges, used to dress the self-echo.
-                    is ChatEvent.SelfState -> {
-                        event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                        selfColor = event.color
-                        selfBadges = event.badges
-                    }
-                    else -> {}
+                }
+                if (incoming.isNotEmpty()) {
+                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
                 }
             }
         }
@@ -436,12 +507,38 @@ class StreamViewModel(
      */
     private suspend fun resolvePlayable() {
         _state.update { it.copy(playbackError = null) }
-        runCatching { streamRepository.resolvePlayableStream(channelLogin) }
-            .onSuccess { playable -> _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) } }
-            .onFailure { e -> _state.update { it.copy(playbackError = e.message ?: "Could not load this stream. It may be offline.") } }
+        runCatching { playableStreamCache.get(channelLogin) }
+            .onSuccess { playable ->
+                openTiming.mark("playable_url")
+                val lowLatency = settingsStore.flow.first().lowLatencyMode
+                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null, lowLatency = lowLatency) }
+            }
+            .onFailure { e -> _state.update { it.copy(playbackError = StreamFailures.classify(e).message()) } }
     }
 
-    fun retry() = viewModelScope.launch { resolvePlayable() }
+    fun retry() = viewModelScope.launch {
+        // A retry follows a failure, so never reuse the cached session.
+        freshSessionRetries = 0
+        playableStreamCache.invalidate(channelLogin)
+        resolvePlayable()
+    }
+
+    /**
+     * The player spent its backed-off retries. Its signed stream URL may simply
+     * have expired (a long pause, a network change), so ask Twitch for a fresh
+     * session once; if that stream also fails, say so instead of staying black.
+     */
+    private fun onPlaybackGaveUp() {
+        viewModelScope.launch {
+            if (freshSessionRetries < MAX_FRESH_SESSION_RETRIES) {
+                freshSessionRetries++
+                playableStreamCache.invalidate(channelLogin)
+                resolvePlayable()
+            } else {
+                _state.update { it.copy(playbackError = STOPPED_PLAYING) }
+            }
+        }
+    }
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
         chatClient.sendMessage(channelLogin, text)
@@ -463,6 +560,15 @@ class StreamViewModel(
         _state.update { it.copy(chatMessages = (it.chatMessages + echo).takeLast(200)) }
     }
 
+    /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */
+    fun setQuality(quality: StreamQuality) {
+        twitchPlayer.setQuality(quality)
+        _state.update { it.copy(quality = quality) }
+        StreamQuality.preferenceFor(quality)?.let { preference ->
+            viewModelScope.launch { settingsStore.update { it.copy(preferredQuality = preference) } }
+        }
+    }
+
     fun setChatFraction(fraction: Float) = viewModelScope.launch {
         settingsStore.update { it.copy(chatFraction = fraction) }
     }
@@ -478,6 +584,9 @@ class StreamViewModel(
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
         twitchPlayer.stop()
+        // A stream opened on top of this one may already own the callbacks.
+        if (twitchPlayer.onFirstFrame === firstFrameListener) twitchPlayer.onFirstFrame = null
+        if (twitchPlayer.onGaveUp === gaveUpListener) twitchPlayer.onGaveUp = null
         // In-app Back means done watching, not "keep playing in the background":
         // the media notification goes with the stream.
         backgroundPlayback.onStreamClosed()
@@ -485,6 +594,9 @@ class StreamViewModel(
 
     private companion object {
         val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
+        const val MAX_FRESH_SESSION_RETRIES = 1
+        const val STOPPED_PLAYING =
+            "This stream stopped playing. PureTV tried to reconnect but couldn't. Check your connection, then try again."
     }
 }
 
@@ -556,6 +668,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         mutable.asStateFlow()
     }
 
+    fun setChatTextSize(size: ChatTextSize) = viewModelScope.launch {
+        settingsStore.update { it.copy(chatFontSize = size.sp) }
+    }
+
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {
         settingsStore.update { it.copy(preferredQuality = quality.name.lowercase()) }
     }
@@ -574,6 +690,14 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setPipOnLeave(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(pipOnLeave = enabled) }
+    }
+
+    fun setLowLatency(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(lowLatencyMode = enabled) }
+    }
+
+    fun setAudioOnlyInBackground(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioOnlyInBackground = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {
@@ -637,7 +761,12 @@ class LoginViewModel(
                         // then look up the account identity (Helix /users with no
                         // params returns the current user) and persist it so chat
                         // sends under the right name and Settings shows the username.
-                        settingsStore.setSession(accessToken = token.accessToken, refreshToken = token.refreshToken)
+                        // The expiry lets TokenRefresher renew it before it lapses.
+                        settingsStore.setSession(
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresAtEpochSeconds = System.currentTimeMillis() / 1_000 + token.expiresInSeconds,
+                        )
                         val me = runCatching { userRepository.getCurrentUser() }.getOrNull()
                         if (me != null) {
                             settingsStore.setSession(
@@ -677,6 +806,8 @@ data class FollowingUiState(
     val live: List<FollowRow> = emptyList(),
     val offline: List<FollowRow> = emptyList(),
     val errored: Boolean = false,
+    /** Why the last load failed, in words (see StreamFailures); null when it worked. */
+    val errorReason: String? = null,
 )
 
 /**
@@ -738,7 +869,7 @@ class FollowingViewModel(
                 }
             }
                 .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-                .onFailure { _state.update { it.copy(isLoading = false, errored = true) } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
         }
     }
 }
@@ -748,8 +879,11 @@ class FollowingViewModel(
  * session's cached streams (empty on a true first launch, where Welcome falls
  * back to a branded gradient). Connect itself is handled by LoginViewModel.
  */
-class WelcomeViewModel(cachedStreamDao: CachedStreamDao) : ViewModel() {
+class WelcomeViewModel(cachedStreamDao: CachedStreamDao, settingsStore: AppSettingsStore) : ViewModel() {
     val thumbnails: StateFlow<List<String>> = cachedStreamDao.observeAll()
         .map { rows -> rows.mapNotNull { it.thumbnailUrl.ifBlank { null } }.take(9) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** True when Twitch, not the viewer, ended the session (see TokenRefresher). */
+    val signedOutByTwitch: StateFlow<Boolean> = settingsStore.signedOutByTwitch
 }

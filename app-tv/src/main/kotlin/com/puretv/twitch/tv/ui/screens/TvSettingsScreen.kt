@@ -32,6 +32,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Switch
 import androidx.tv.material3.Text
 import com.puretv.twitch.core.adblock.AdBlockStrategy
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.ui.SettingsViewModel
@@ -104,6 +105,16 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
             StreamQualitySection(
                 selected = state.settings.preferredQuality,
                 onSelect = viewModel::setPreferredQuality,
+                lowLatency = state.settings.lowLatencyMode,
+                onLowLatencyChange = viewModel::setLowLatency,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
+            ChatTextSizeSection(
+                selected = ChatTextSize.from(state.settings.chatFontSize),
+                onSelect = viewModel::setChatTextSize,
             )
         }
         TvDivider()
@@ -226,7 +237,12 @@ private fun ColourSwatch(variant: ThemeVariant, selected: Boolean, onClick: () -
 // ── Stream quality ──────────────────────────────────────────────────────
 
 @Composable
-private fun StreamQualitySection(selected: String, onSelect: (StreamQuality) -> Unit) {
+private fun StreamQualitySection(
+    selected: String,
+    onSelect: (StreamQuality) -> Unit,
+    lowLatency: Boolean,
+    onLowLatencyChange: (Boolean) -> Unit,
+) {
     val c = PureTvTvTheme.colors
     Column {
         Text("Stream quality", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
@@ -238,6 +254,47 @@ private fun StreamQualitySection(selected: String, onSelect: (StreamQuality) -> 
                     selected = selected.equals(quality.name, ignoreCase = true),
                     onClick = { onSelect(quality) },
                 )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+        TvDivider()
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Low latency", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "Play a few seconds closer to live, so the stream keeps up with chat. " +
+                        "If streams pause to buffer on your Wi-Fi, turn this off. Applies to the next stream you open.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+        }
+    }
+}
+
+// ── Chat ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ChatTextSizeSection(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) {
+    val c = PureTvTvTheme.colors
+    Column {
+        Text("Chat text size", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Bigger chat is easier to read from the sofa. Emotes grow with the text.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = c.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ChatTextSize.entries.forEach { size ->
+                TvFilterChip(label = size.label, selected = size == selected, onClick = { onSelect(size) })
             }
         }
     }

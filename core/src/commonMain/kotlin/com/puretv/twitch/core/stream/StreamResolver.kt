@@ -20,6 +20,15 @@ class StreamResolver(
     private val httpClient: HttpClient,
     private val gqlClient: TwitchGqlClient,
 ) {
+    companion object {
+        /**
+         * Player type every app uses for the PRIMARY stream. Twitch targets
+         * `popout` with far fewer ads than the default `site` web player (the
+         * reference userscript forces it for every request), so most streams come
+         * back ad-free before the backup swap is ever needed.
+         */
+        const val PRIMARY_PLAYER_TYPE = "popout"
+    }
 
     suspend fun fetchToken(
         channelLogin: String,
@@ -42,6 +51,9 @@ class StreamResolver(
             "?sig=${token.signature}" +
             "&token=$encodedToken" +
             "&allow_source=true" +
+            // Adds the audio-only rendition (about 160 kbps). The players never see
+            // it unless audio only is asked for: see HlsMasterParser.forPlayback.
+            "&allow_audio_only=true" +
             "&allow_spectre=false" +
             "&fast_bread=true" +
             "&p=$p" +
@@ -84,6 +96,9 @@ class StreamResolver(
             throw UsherPlaylistException(
                 "usher refused the master playlist for \"$channelLogin\" (playerType=$playerType): " +
                     "HTTP ${response.status.value} ${response.status.description}. ${raw.summarize()}",
+                status = response.status.value,
+                body = raw.take(2_000),
+                tokenValue = token.value,
             )
         }
         // A 200 is not proof of a playlist: usher answers some rejections with a
@@ -92,6 +107,9 @@ class StreamResolver(
             throw UsherPlaylistException(
                 "usher returned HTTP ${response.status.value} for \"$channelLogin\" but the body is not an " +
                     "HLS playlist. ${raw.summarize()}",
+                status = response.status.value,
+                body = raw.take(2_000),
+                tokenValue = token.value,
             )
         }
 
@@ -160,14 +178,18 @@ object HlsMasterParser {
      *   3. closest by pixel count
      *
      * [targetResolution] is the `WIDTHxHEIGHT` string from the primary stream's
-     * `#EXT-X-STREAM-INF`. Returns null only if the master has no variants.
+     * `#EXT-X-STREAM-INF`, or blank for the audio-only rendition (it has no
+     * RESOLUTION). Returns null only if the master has no variant of that kind.
      */
     fun selectVariantUrl(
         masterPlaylist: String,
         targetResolution: String,
         targetFrameRate: Double,
     ): String? {
-        val variants = parseVariants(masterPlaylist)
+        // Masters carry an audio-only rendition (allow_audio_only). An audio-only
+        // stream matches only that, and a video stream never falls back to it.
+        val wantAudio = targetResolution.isBlank()
+        val variants = parseVariants(masterPlaylist).filter { (it.quality == StreamQuality.AUDIO_ONLY) == wantAudio }
         if (variants.isEmpty()) return null
 
         variants.firstOrNull {
@@ -179,6 +201,56 @@ object HlsMasterParser {
         val targetPixels = pixelCount(targetResolution)
         return variants.minByOrNull { kotlin.math.abs(pixelCount(it.resolution) - targetPixels) }?.url
     }
+
+    /**
+     * The master a player should be handed. Normally that is every rendition
+     * except audio only: VLC and ExoPlayer pick renditions by bandwidth, and the
+     * 160 kbps audio-only one would look like the cheapest "quality", dropping the
+     * picture on a slow link. With [audioOnly] it is the opposite: only the
+     * audio-only rendition (and its EXT-X-MEDIA line), so the player downloads no
+     * video at all. If the stream has no audio-only rendition, the video master
+     * comes back unchanged rather than nothing.
+     */
+    fun forPlayback(master: String, audioOnly: Boolean): String {
+        val lines = master.lines()
+        val hasAudioOnly = lines.any { it.startsWith("#EXT-X-STREAM-INF") && isAudioOnlyStreamInf(it) }
+        if (!hasAudioOnly) return master
+        val out = StringBuilder(master.length)
+        var i = 0
+        while (i < lines.size) {
+            val line = lines[i]
+            when {
+                line.startsWith("#EXT-X-STREAM-INF") -> {
+                    val uri = lines.getOrNull(i + 1)
+                    val keep = isAudioOnlyStreamInf(line) == audioOnly
+                    if (keep) out.append(line).append('\n')
+                    if (uri != null && uri.isNotBlank() && !uri.startsWith("#")) {
+                        if (keep) out.append(uri).append('\n')
+                        i++
+                    }
+                }
+                line.startsWith("#EXT-X-MEDIA") -> {
+                    val group = parseAttributeList(line.substringAfter(":"))["GROUP-ID"].orEmpty()
+                    if ((group == AUDIO_ONLY_GROUP) == audioOnly) out.append(line).append('\n')
+                }
+                else -> out.append(line).append('\n')
+            }
+            i++
+        }
+        return out.toString().trimEnd('\n') + "\n"
+    }
+
+    private const val AUDIO_ONLY_GROUP = "audio_only"
+
+    /** Twitch tags the audio-only rendition `VIDEO="audio_only"`; its CODECS also lack a video codec. */
+    private fun isAudioOnlyStreamInf(line: String): Boolean {
+        val attrs = parseAttributeList(line.substringAfter(":"))
+        if (attrs["VIDEO"] == AUDIO_ONLY_GROUP) return true
+        val codecs = attrs["CODECS"] ?: return false
+        return VIDEO_CODEC_PREFIXES.none { prefix -> codecs.split(',').any { it.trim().startsWith(prefix) } }
+    }
+
+    private val VIDEO_CODEC_PREFIXES = listOf("avc", "hvc", "hev", "av01", "vp09")
 
     private fun frameRatesMatch(a: Double, b: Double): Boolean = kotlin.math.abs(a - b) < 1.0
 
@@ -223,7 +295,15 @@ object HlsMasterParser {
  * went offline between the mint and the fetch. Distinct from
  * [GqlPlaybackTokenException], which means the token itself was never issued.
  */
-class UsherPlaylistException(message: String) : Exception(message)
+class UsherPlaylistException(
+    message: String,
+    /** usher's HTTP status, when it answered at all. */
+    val status: Int? = null,
+    /** The start of usher's body: its JSON error names the reason (see [StreamFailures]). */
+    val body: String = "",
+    /** The playback token's JSON value, whose `authorization` block can say why too. */
+    val tokenValue: String = "",
+) : Exception(message)
 
 /** First line of a response body, bounded, for putting in an error message. */
 private fun String.summarize(limit: Int = 180): String {

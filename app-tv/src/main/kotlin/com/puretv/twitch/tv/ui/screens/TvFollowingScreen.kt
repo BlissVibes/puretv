@@ -60,6 +60,7 @@ import com.puretv.twitch.tv.ui.components.TvPageTitle
 import com.puretv.twitch.tv.ui.components.TvPanel
 import com.puretv.twitch.tv.ui.components.TvSectionHeading
 import com.puretv.twitch.tv.ui.components.formatTvViewerCount
+import com.puretv.twitch.tv.ui.components.prewarmStreamOnFocus
 import com.puretv.twitch.tv.ui.components.tvFocusClickable
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
@@ -173,7 +174,11 @@ fun TvFollowingScreen(
                 state.isLoading && noData ->
                     Text("Loading…", style = MaterialTheme.typography.bodyLarge, color = c.onSurfaceVariant)
 
-                state.errored && noData -> ErrorBlock(onRetry = viewModel::refresh, focusRequester = firstFocusRequester)
+                state.errored && noData -> ErrorBlock(
+                    reason = state.errorReason,
+                    onRetry = viewModel::refresh,
+                    focusRequester = firstFocusRequester,
+                )
 
                 noData -> TvPanel {
                     Column {
@@ -234,14 +239,14 @@ private fun SignedOutBlock(onSignIn: () -> Unit, focusRequester: FocusRequester)
 }
 
 @Composable
-private fun ErrorBlock(onRetry: () -> Unit, focusRequester: FocusRequester) {
+private fun ErrorBlock(reason: String?, onRetry: () -> Unit, focusRequester: FocusRequester) {
     val c = PureTvTvTheme.colors
     TvPanel {
         Column {
             Text("Couldn't load your follows", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
             Spacer(Modifier.height(8.dp))
             Text(
-                "The last request failed. Check your connection and try again.",
+                reason ?: "The last request failed. Check your connection and try again.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = c.onSurfaceVariant,
             )
@@ -307,6 +312,7 @@ private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modi
         modifier = modifier
             .padding(6.dp)
             .width(220.dp)
+            .prewarmStreamOnFocus(row.login, live = row.isLive)
             .tvFocusClickable(
                 interaction = interaction,
                 onClick = onClick,

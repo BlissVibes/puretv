@@ -2,6 +2,10 @@ package com.puretv.twitch.core.chat
 
 import com.puretv.twitch.core.api.ChatBadgeSetDto
 import com.puretv.twitch.core.api.TwitchApiClient
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** A resolved chat badge image: a CDN URL plus its human title (tooltip/alt text). */
 data class ChatBadgeImage(val url: String, val title: String)
@@ -44,12 +48,25 @@ class BadgeIndex(private val bySet: Map<String, Map<String, ChatBadgeImage>>) {
 /**
  * Loads Twitch chat badge sets for a channel and assembles a [BadgeIndex].
  * Best-effort: a failed fetch yields an empty set so chat still renders (just
- * without that tier of badge art).
+ * without that tier of badge art). The global sets rarely change, so they are
+ * fetched once per session and fetched alongside the channel's, not before it.
  */
 class BadgeRepository(private val api: TwitchApiClient) {
-    suspend fun loadForChannel(broadcasterId: String): BadgeIndex {
-        val global = api.getGlobalChatBadges()
-        val channel = api.getChannelChatBadges(broadcasterId)
-        return BadgeIndex.from(global, channel)
+    private val globalLock = Mutex()
+    private var globalSets: List<ChatBadgeSetDto>? = null
+
+    suspend fun loadForChannel(broadcasterId: String): BadgeIndex = coroutineScope {
+        val global = async { globalBadgeSets() }
+        val channel = async { api.getChannelChatBadges(broadcasterId) }
+        BadgeIndex.from(global.await(), channel.await())
+    }
+
+    private suspend fun globalBadgeSets(): List<ChatBadgeSetDto> {
+        globalLock.withLock { globalSets }?.let { return it }
+        val fresh = api.getGlobalChatBadges()
+        // The API call is best-effort and answers a failure with an empty list;
+        // only a real answer is kept, so a failure is retried on the next open.
+        if (fresh.isNotEmpty()) globalLock.withLock { globalSets = fresh }
+        return fresh
     }
 }

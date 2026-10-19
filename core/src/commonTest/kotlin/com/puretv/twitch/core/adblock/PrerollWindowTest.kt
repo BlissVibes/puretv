@@ -51,7 +51,7 @@ class PrerollWindowTest {
         )
     }
 
-    private companion object {
+    internal companion object {
         val REAL_PREROLL_WINDOW = """
             #EXTM3U
             #EXT-X-VERSION:3

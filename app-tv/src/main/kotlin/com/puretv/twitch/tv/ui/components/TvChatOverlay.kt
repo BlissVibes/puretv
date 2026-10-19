@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -17,13 +18,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -44,13 +48,28 @@ private val ClockFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * is rendered (mirrors real Twitch-on-TV apps' chat treatment).
  */
 @Composable
-fun TvChatOverlay(visible: Boolean, messages: List<ChatMessage>, modifier: Modifier = Modifier) {
+fun TvChatOverlay(
+    visible: Boolean,
+    messages: List<ChatMessage>,
+    modifier: Modifier = Modifier,
+    /** Settings > Chat text size, as a scale for the message list. */
+    textScale: Float = 1f,
+) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    // Key on the newest message id, not messages.size: the list is capped at 200,
+    // so its size stops changing and a size-keyed effect stopped scrolling as soon
+    // as a busy chat filled up. A quiet chat glides to each new line; a busy one
+    // snaps, because an animation restarted on every batch never settles.
+    val lastScrollAt = remember { longArrayOf(0L) }
+    LaunchedEffect(messages.lastOrNull()?.id) {
+        if (messages.isEmpty()) return@LaunchedEffect
+        val now = SystemClock.uptimeMillis()
+        val busy = now - lastScrollAt[0] < GLIDE_MIN_GAP_MS
+        lastScrollAt[0] = now
+        if (busy) listState.scrollToItem(messages.lastIndex) else listState.animateScrollToItem(messages.lastIndex)
     }
 
     AnimatedVisibility(
@@ -79,8 +98,11 @@ fun TvChatOverlay(visible: Boolean, messages: List<ChatMessage>, modifier: Modif
                         color = c.onSurface,
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
-                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(messages, key = { it.id }) { message -> TvChatMessageRow(message) }
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
+                        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(messages, key = { it.id }) { message -> TvChatMessageRow(message) }
+                        }
                     }
                 }
             }
@@ -130,3 +152,6 @@ private fun TvChatMessageRow(message: ChatMessage) {
         )
     }
 }
+
+/** New lines closer together than this snap into view instead of gliding. */
+private const val GLIDE_MIN_GAP_MS = 500L

@@ -32,13 +32,24 @@ class BackupStreamResolver(
     private val httpClient: HttpClient,
     private val streamResolver: StreamResolver,
     /**
-     * Player types to try, in order. `embed` and `popout` both deliver Source
-     * quality and use the default `web` platform, so they need no GQL hash or
-     * variable changes. Mirrors vaft's `BackupPlayerTypes` (minus `autoplay`,
-     * which needs `platform=android` and only yields 360p).
+     * Player types to try, in order. Every app now resolves its PRIMARY stream as
+     * [com.puretv.twitch.core.stream.StreamResolver.PRIMARY_PLAYER_TYPE]
+     * (`popout`), so trying `popout` again here would only re-ask the session
+     * that just served the ad. `embed` is the usual clean alternative; `site`
+     * (the web player) is a last try. Both deliver Source quality on the default
+     * `web` platform, so they need no GQL hash or variable changes. Adapted from
+     * vaft's `BackupPlayerTypes` (minus `autoplay`, which needs
+     * `platform=android` and only yields 360p).
      */
-    private val backupPlayerTypes: List<String> = listOf("embed", "popout"),
+    private val backupPlayerTypes: List<String> = listOf("embed", "site"),
     private val cacheTtlMs: Long = 90_000,
+    /**
+     * How long a failed mint or master fetch is remembered. Without it, an ad
+     * break where a backup type keeps failing re-minted a token on every ~2s
+     * playlist refresh: extra GQL calls for Twitch to notice, and extra time
+     * holding up the refresh while each attempt timed out.
+     */
+    private val failureBackoffMs: Long = 15_000,
     /**
      * Hard cap on cached masters. Only the active channel's entries matter, so a
      * small cap is plenty; without it the map grew one entry per
@@ -52,6 +63,7 @@ class BackupStreamResolver(
 
     // key = "channel|playerType"
     private val masterCache = HashMap<String, CachedMaster>()
+    private val failedAtMs = HashMap<String, Long>()
     private val cacheLock = Mutex()
 
     /**
@@ -101,13 +113,24 @@ class BackupStreamResolver(
                 // Stale — drop it so the map doesn't accumulate dead entries.
                 masterCache.remove(key)
             }
+            val failedAt = failedAtMs[key]
+            if (failedAt != null) {
+                if (nowMs - failedAt < failureBackoffMs) return null
+                failedAtMs.remove(key)
+            }
         }
         val master = runCatching {
             streamResolver.resolveMasterPlaylist(channelLogin, oauthToken, playerType).rawContent
-        }.getOrNull() ?: return null
+        }.getOrNull()
         cacheLock.withLock {
-            masterCache[key] = CachedMaster(master, nowMs)
-            pruneLocked(nowMs)
+            if (master == null) {
+                failedAtMs[key] = nowMs
+                // Same bound as the master cache, and for the same reason.
+                if (failedAtMs.size > maxEntries) failedAtMs.entries.removeAll { nowMs - it.value >= failureBackoffMs }
+            } else {
+                masterCache[key] = CachedMaster(master, nowMs)
+                pruneLocked(nowMs)
+            }
         }
         return master
     }

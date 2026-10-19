@@ -60,9 +60,10 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.crossfade
-import okio.Path.Companion.toOkioPath
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteFrameCache
@@ -128,10 +129,6 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
     // memoizes the singleton, so calling it here in the composable body (idempotent
     // factory swap) is the intended usage; it can't be hoisted into remember{}.
     setSingletonImageLoaderFactory { context ->
-        val imageCacheDir = java.io.File(
-            System.getenv("APPDATA") ?: System.getProperty("user.home"),
-            "PureTwitch/image_cache",
-        )
         ImageLoader.Builder(context)
             .components { add(KtorNetworkFetcherFactory()) }
             // Bound the on-heap decoded-image cache explicitly. Coil's default is 25% of
@@ -140,13 +137,9 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
             .memoryCache { MemoryCache.Builder().maxSizePercent(context, 0.20).build() }
             // Persist fetched avatars/thumbnails across navigation and restarts so they
             // are not re-downloaded + re-decoded every session (desktop had no disk cache
-            // by default). Bounded so it can never grow without limit.
-            .diskCache {
-                DiskCache.Builder()
-                    .directory(imageCacheDir.toOkioPath())
-                    .maxSizeBytes(256L * 1024 * 1024)
-                    .build()
-            }
+            // by default). One instance app-wide (see DesktopModule), shared with the
+            // animated-emote decoder.
+            .diskCache { koin.get<DiskCache>() }
             .crossfade(true)
             .build()
     }
@@ -164,10 +157,16 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
 
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
+        val streamPrewarm = remember {
+            val cache = koin.get<PlayableStreamCache>()
+            val prewarm: (String) -> Unit = { login -> cache.prewarm(login) }
+            prewarm
+        }
         CompositionLocalProvider(
             LocalAppShell provides shell,
             LocalEmoteAnimation provides settings.animateEmotes,
             LocalEmoteFrameCache provides emoteFrameCache,
+            LocalStreamPrewarm provides streamPrewarm,
         ) {
             var destination by remember { mutableStateOf(Destination.HOME) }
             var route by remember { mutableStateOf<Route>(Route.Top) }

@@ -1,4 +1,6 @@
 import java.io.FileInputStream
+import java.security.KeyStore
+import java.security.MessageDigest
 import java.util.Properties
 
 plugins {
@@ -60,7 +62,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Sign with the release key when it's present; unsigned otherwise.
+            // Signed with the release key from keystore.properties. Without it the
+            // release build now fails (see verifyTvReleaseSigningKey) instead of
+            // quietly producing an unsigned APK nobody can install as an update.
             signingConfig = if (hasReleaseSigning) signingConfigs.getByName("release") else null
         }
         debug {
@@ -177,3 +181,46 @@ dependencies {
     // integration module needed; we render the BitMatrix to a Compose bitmap).
     implementation("com.google.zxing:core:3.5.3")
 }
+
+/**
+ * SHA-256 of the certificate under [alias] in [keystore], lowercase hex, or null
+ * if the keystore cannot be read. JKS and PKCS12 both load through the JDK's
+ * compatible keystore type.
+ */
+fun signingCertSha256(keystore: File, password: String, alias: String): String? = runCatching {
+    val ks = KeyStore.getInstance("PKCS12")
+    keystore.inputStream().use { ks.load(it, password.toCharArray()) }
+    val cert = ks.getCertificate(alias) ?: return@runCatching null
+    MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it) }
+}.getOrNull()
+
+// The certificate every published TV release was signed with (CN=PureTV for
+// Twitch, the key in keystore.properties). Android installs an update only when
+// the certificates match, so the release build checks the key before packaging.
+// If this fails, restore the backed-up keystore; never edit the value to pass.
+val publishedTvSigningSha256 = "3d19d7907a88ea3710f8b0e9a2cd5fb740a6017494bd53068af219d287f1f94c"
+
+val verifyTvReleaseSigningKey by tasks.registering {
+    description = "Fails the TV release build when the release key is missing or is not the published one."
+    doLast {
+        if (!hasReleaseSigning) {
+            throw GradleException(
+                "Refusing to build an unsigned TV release: keystore.properties (storeFile, storePassword, keyAlias, " +
+                    "keyPassword) is missing. See docs/DEVELOPING.md.",
+            )
+        }
+        val actual = signingCertSha256(
+            rootProject.file(keystoreProps.getProperty("storeFile")),
+            keystoreProps.getProperty("storePassword"),
+            keystoreProps.getProperty("keyAlias"),
+        )
+        if (actual != publishedTvSigningSha256) {
+            throw GradleException(
+                "Refusing to build a TV release with " +
+                    (if (actual == null) "an unreadable keystore" else "a different key ($actual)") +
+                    ". Published TV releases are signed with SHA-256 $publishedTvSigningSha256.",
+            )
+        }
+    }
+}
+tasks.matching { it.name == "packageRelease" }.configureEach { dependsOn(verifyTvReleaseSigningKey) }

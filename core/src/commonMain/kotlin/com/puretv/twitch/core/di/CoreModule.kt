@@ -50,12 +50,16 @@ val coreModule = module {
     // Backup player-type swap (Section 4.1) — the primary ad remover. Needs the
     // shared HttpClient + StreamResolver to mint alternate-player-type tokens.
     single { com.puretv.twitch.core.adblock.BackupStreamResolver(get(), get()) }
+    // Resolved streams shared app-wide: dedupes opens and backs hover/focus prewarm.
+    single { com.puretv.twitch.core.stream.PlayableStreamCache(get()) }
 
     // Chat
     factory { TwitchChatClient(get()) }
     single { com.puretv.twitch.core.chat.BadgeRepository(get()) }
 
     // Emotes
+    // Each app binds a PersistentEmoteCache over its own cache folder; this
+    // in-memory default only keeps the graph resolvable (and serves tests).
     single<com.puretv.twitch.core.emotes.EmoteCache> { InMemoryEmoteCache() }
     single { EmoteRepository(get(), get()) }
     // 7TV live emote updates (EventAPI websocket) — one per stream session, like the chat client.

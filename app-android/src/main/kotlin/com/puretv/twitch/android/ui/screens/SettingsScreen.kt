@@ -61,6 +61,7 @@ import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.update.AndroidUpdateState
 import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -123,9 +124,17 @@ fun SettingsScreen(onBack: () -> Unit) {
         PlaybackPanel(
             settings = state.settings,
             onSelectQuality = viewModel::setPreferredQuality,
+            onLowLatencyChange = viewModel::setLowLatency,
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
+            onAudioOnlyInBackgroundChange = viewModel::setAudioOnlyInBackground,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        ChatPanel(
+            selected = ChatTextSize.from(state.settings.chatFontSize),
+            onSelect = viewModel::setChatTextSize,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -287,9 +296,11 @@ private fun ShapeAndMotionPanel(currentIntensity: ShapeIntensity, onSelect: (Sha
 private fun PlaybackPanel(
     settings: AppSettings,
     onSelectQuality: (StreamQuality) -> Unit,
+    onLowLatencyChange: (Boolean) -> Unit,
     onAnimateEmotesChange: (Boolean) -> Unit,
     onBackgroundPlayChange: (Boolean) -> Unit,
     onPipOnLeaveChange: (Boolean) -> Unit,
+    onAudioOnlyInBackgroundChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -312,6 +323,25 @@ private fun PlaybackPanel(
                     val selected = settings.preferredQuality.equals(quality.name, ignoreCase = true)
                     ExpressiveFilterChip(label = quality.label, selected = selected, onClick = { onSelectQuality(quality) })
                 }
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Low latency", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "Play a few seconds closer to live, so the stream keeps up with chat. If streams " +
+                            "pause to buffer on a weak connection, turn this off. Applies to the next stream you open.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.lowLatencyMode, onCheckedChange = onLowLatencyChange)
             }
 
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
@@ -360,6 +390,25 @@ private fun PlaybackPanel(
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Text("Audio only in the background", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "When you're listening with the screen off or another app open, download just the " +
+                            "sound. Saves a lot of data and battery. The picture comes back when you return.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.audioOnlyInBackground, onCheckedChange = onAudioOnlyInBackgroundChange)
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
                     Text("Animate emotes", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
                     Text(
                         "Play animated 7TV and BTTV emotes. Off shows a still frame, which is lighter on the battery.",
@@ -382,6 +431,30 @@ private fun PlaybackPanel(
  * strategy controls were removed before this pass: they had no effect on
  * Android and are not restored here.
  */
+@Composable
+private fun ChatPanel(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) {
+    val c = PureTvTheme.colors
+    ExpressivePanel {
+        Column {
+            Text("Chat", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            Text("Text size", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "How big chat reads. Emotes grow with the text.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ChatTextSize.entries) { size ->
+                    ExpressiveFilterChip(label = size.label, selected = size == selected, onClick = { onSelect(size) })
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AdBlockPanel(adBlockEnabled: Boolean, onAdBlockEnabledChange: (Boolean) -> Unit) {
     val c = PureTvTheme.colors

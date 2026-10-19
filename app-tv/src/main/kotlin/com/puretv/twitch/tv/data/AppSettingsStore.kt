@@ -44,7 +44,10 @@ class AppSettingsStore(
 ) {
     private object Keys {
         val PREFERRED_QUALITY = stringPreferencesKey("preferred_quality")
-        val LOW_LATENCY = booleanPreferencesKey("low_latency_mode")
+        // "low_latency_mode" was written as true while the setting did nothing and
+        // had no switch. Low latency is opt-in on TV (Fire TV Wi-Fi rebuffers on a
+        // thin buffer), so the working setting starts fresh under its own key.
+        val LOW_LATENCY = booleanPreferencesKey("low_latency_live")
         val AD_BLOCK_ENABLED = booleanPreferencesKey("ad_block_enabled")
         val AD_BLOCK_STRATEGY = stringPreferencesKey("ad_block_strategy")
         val CUSTOM_PROXY_URL = stringPreferencesKey("custom_proxy_url")
@@ -76,7 +79,7 @@ class AppSettingsStore(
     val flow: Flow<AppSettings> = combine(context.dataStore.data, tokenState) { prefs, token ->
         AppSettings(
             preferredQuality = prefs[Keys.PREFERRED_QUALITY] ?: "auto",
-            lowLatencyMode = prefs[Keys.LOW_LATENCY] ?: true,
+            lowLatencyMode = prefs[Keys.LOW_LATENCY] ?: false,
             adBlockEnabled = prefs[Keys.AD_BLOCK_ENABLED] ?: true,
             adBlockStrategy = prefs[Keys.AD_BLOCK_STRATEGY] ?: "proxy",
             customProxyUrl = prefs[Keys.CUSTOM_PROXY_URL] ?: "",

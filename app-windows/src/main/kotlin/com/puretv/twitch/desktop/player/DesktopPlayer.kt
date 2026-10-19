@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.perf.TimingLog
+
 import com.puretv.twitch.core.model.UpscalingMode
 import kotlinx.coroutines.flow.StateFlow
 import java.awt.Component
@@ -24,7 +26,12 @@ interface DesktopPlayer {
 
     /** Whether this (running) backend can GPU-upscale — true only for an available mpv. */
     val supportsUpscaling: Boolean get() = false
-    fun play(streamUrl: String)
+
+    /**
+     * Plays [streamUrl]. [lowLatency] (Settings > Low latency, live streams only)
+     * asks the backend to start closer to the live edge; VODs leave it off.
+     */
+    fun play(streamUrl: String, lowLatency: Boolean = false)
     fun pause()
     fun resume()
     fun togglePlayPause()
@@ -94,3 +101,31 @@ data class PlayerStatus(
     val durationMs: Long = 0,
     val isSeekable: Boolean = false,
 )
+
+/**
+ * Holds the one [DesktopPlayer], created on first use. Creating it loads libVLC
+ * (and scans its plugins) or the libmpv DLL, so it stays off the path to the
+ * first window. [releaseIfCreated] lets shutdown skip building a player only to
+ * free it.
+ */
+class DesktopPlayerProvider(create: () -> DesktopPlayer) {
+    private val lazyPlayer = lazy(create)
+
+    val player: DesktopPlayer get() = lazyPlayer.value
+
+    /** Builds the player ahead of the first stream open. Call off the UI thread. */
+    fun warmUp() {
+        if (lazyPlayer.isInitialized()) return
+        val started = System.nanoTime()
+        val built = lazyPlayer.value
+        TimingLog.log(
+            "app.player_built",
+            (System.nanoTime() - started) / 1_000_000,
+            if (built.isAvailable) "ready" else "unavailable",
+        )
+    }
+
+    fun releaseIfCreated() {
+        if (lazyPlayer.isInitialized()) lazyPlayer.value.release()
+    }
+}

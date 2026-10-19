@@ -13,6 +13,7 @@ import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
@@ -38,6 +39,11 @@ import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
+import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.stream.Failure
+import com.puretv.twitch.core.stream.FailureKind
+import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
@@ -51,6 +57,7 @@ import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.ui.chat.ChatModeration
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -59,6 +66,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -202,7 +210,7 @@ class BrowseViewModel(private val channelRepository: ChannelRepository) : Deskto
             _state.update { it.copy(isLoading = true, error = null) }
             runCatching { channelRepository.topGames() }
                 .onSuccess { games -> _state.update { it.copy(games = games, isLoading = false, error = null) } }
-                .onFailure { _state.update { it.copy(isLoading = false, error = "Couldn't load categories. Check your connection and try again.") } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = StreamFailures.classify(e).sentence("Couldn't load categories")) } }
         }
     }
 }
@@ -239,7 +247,7 @@ class CategoryViewModel(
             _state.update { it.copy(isLoading = true, error = null) }
             runCatching { streamRepository.streamsForGame(gameId) }
                 .onSuccess { streams -> _state.update { it.copy(streams = streams, isLoading = false, error = null) } }
-                .onFailure { _state.update { it.copy(isLoading = false, error = "Couldn't load this category. Check your connection and try again.") } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = StreamFailures.classify(e).sentence("Couldn't load this category")) } }
         }
     }
 }
@@ -277,7 +285,11 @@ class SearchViewModel(private val channelRepository: ChannelRepository) : Deskto
             delay(300) // debounce: wait for typing to settle before hitting the network
             runCatching { channelRepository.search(query) }
                 .onSuccess { results -> _state.update { it.copy(results = results, isSearching = false, error = null) } }
-                .onFailure { _state.update { it.copy(results = emptyList(), isSearching = false, error = "Search failed. Check your connection and try again.") } }
+                .onFailure { e ->
+                    _state.update {
+                        it.copy(results = emptyList(), isSearching = false, error = StreamFailures.classify(e).sentence("Search failed"))
+                    }
+                }
         }
     }
 
@@ -312,6 +324,12 @@ data class StreamUiState(
     val fatalError: String? = null,
 )
 
+/** Stream failures no retry can fix: say why straight away. */
+private val FINAL_FAILURES = setOf(FailureKind.OFFLINE, FailureKind.RESTRICTED, FailureKind.REGION_BLOCKED)
+
+/** Pauses before each automatic retry of a failed stream on Windows. */
+private val AUTO_RETRY_DELAYS_MS = longArrayOf(2_000, 5_000, 10_000)
+
 class StreamViewModel(
     private val channelLogin: String,
     private val streamRepository: StreamRepository,
@@ -326,6 +344,7 @@ class StreamViewModel(
     private val apiClient: TwitchApiClient,
     private val sevenTvEventClient: SevenTvEventClient,
     private val badgeRepository: BadgeRepository,
+    private val playableStreamCache: PlayableStreamCache,
 ) : DesktopViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -339,6 +358,9 @@ class StreamViewModel(
     private var echoCounter = 0
     private var systemCounter = 0
     private val playbackStallWatchdog = PlaybackStallWatchdog()
+    private val openTiming = StreamOpenTiming(channelLogin)
+    // Automatic retries after a player error; reset once the stream plays again.
+    @Volatile private var autoRetries = 0
 
     // Written on the emote-load coroutine, read on the chat-collect + send paths.
     // Safe as a @Volatile reference because the map is immutable after publish:
@@ -371,6 +393,7 @@ class StreamViewModel(
         .stateIn(scope, SharingStarted.Eagerly, followStore.isFollowed(channelLogin))
 
     init {
+        adBlockEngine.resetForNewStream()
         scope.launch {
             // SECTION 08.3 — VLC talks to our local proxy (port 7979), never
             // straight to Twitch's CDN: that's the choke point where every
@@ -389,53 +412,51 @@ class StreamViewModel(
                 return@launch
             }
 
-            val channel = runCatching { channelRepository.getChannel(channelLogin) }.getOrNull()
-            val liveInfo = runCatching {
-                streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull()
-            }.getOrNull()
-            val preferredQuality = runCatching {
-                StreamQuality.valueOf(settingsStore.settings.value.preferredQuality.uppercase())
-            }.getOrDefault(StreamQuality.AUTO)
+            val preferredQuality = StreamQuality.fromSetting(settingsStore.settings.value.preferredQuality)
 
-            _state.update {
-                it.copy(channel = channel, streamInfo = liveInfo, currentQuality = preferredQuality, isLoading = false)
+            // Playback first: VLC only needs the local proxy URL, and the proxy
+            // resolves the stream itself, so nothing below holds up the picture.
+            playAt(preferredQuality)
+
+            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
+            val liveLookup = async {
+                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
             }
+            // Twitch's own globals need no channel id, so ask for them right away.
+            val twitchGlobalLookup = async { runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList()) }
+            val channel = channelLookup.await()
+            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
             // Badge art only needs the channel id, not the emote lists below, so fetch it
-            // on its own coroutine instead of waiting behind the sequential emote-loading
-            // chain. That way early chat messages don't render the "MOD"/"SUB" text-chip
-            // fallback for longer than necessary. Best-effort: failure keeps the chips.
+            // on its own coroutine. That way early chat messages don't render the
+            // "MOD"/"SUB" text-chip fallback for longer than necessary. Best-effort:
+            // failure keeps the chips.
             channel?.let { ch ->
                 scope.launch {
                     val badgeIndex = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
                     _state.update { it.copy(badges = badgeIndex) }
                 }
             }
-
-            playAt(preferredQuality)
-
-            // Assemble the unified pickable-emote list: third-party (BTTV/FFZ/7TV)
-            // globals + first-party Twitch globals, then the channel-specific sets.
-            // Each fetch is best-effort so one provider failing doesn't sink the rest.
-            tpGlobalEmotes = runCatching { emoteRepository.loadGlobalEmotes() }.getOrDefault(emptyList())
-            twitchGlobalEmotes = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
-            // Resolve globals immediately (before channel emotes load): incoming gets
-            // third-party globals; self-echo additionally gets first-party Twitch
-            // globals so a typed emote in your own message renders right away. Honor the
-            // provider toggles/priority here too so a disabled provider never flashes in.
-            val globEnabled = enabledThirdPartyProviders()
-            val tpGlobFiltered = prioritizeThirdParty(tpGlobalEmotes, globEnabled)
-            emoteIndex = buildEmoteIndex(emptyList(), tpGlobFiltered)
-            selfEchoIndex = buildEmoteIndex(emptyList(), tpGlobFiltered, emptyList(), twitchGlobalEmotes)
-            channel?.let { ch ->
-                tpChannelEmotes = runCatching { emoteRepository.loadChannelEmotes(ch.id, ch.login) }.getOrDefault(emptyList())
-                twitchChannelEmotes = runCatching { apiClient.getChannelTwitchEmotes(ch.id) }.getOrDefault(emptyList())
-                // Build indices + picker from the now-complete source lists and re-map
-                // any messages that arrived before emotes finished loading.
-                rebuildEmoteIndicesAndPublish()
-                // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
-                sevenTvEventClient.connect(ch.id)
+            val twitchChannelLookup = async {
+                channel?.let { runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList()) }
+                    ?: emptyList()
             }
+
+            // Third-party (BTTV/FFZ/7TV) emotes: the copy cached from the last visit
+            // first, so the first chat lines already render, then the fresh set. Each
+            // pass rebuilds the indices and picker (honoring the provider toggles and
+            // priority) and re-maps messages that arrived before emotes loaded.
+            twitchGlobalEmotes = twitchGlobalLookup.await()
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpGlobalEmotes = emotes.global
+                tpChannelEmotes = emotes.channel
+                rebuildEmoteIndicesAndPublish()
+                openTiming.mark("emotes_ready")
+            }
+            twitchChannelEmotes = twitchChannelLookup.await()
+            rebuildEmoteIndicesAndPublish()
+            // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
+            channel?.let { sevenTvEventClient.connect(it.id) }
         }
         // Live 7TV emote updates: fold each delta into the channel set and rebuild.
         scope.launch {
@@ -455,6 +476,37 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         scope.launch {
+            vlcPlayer.status.first { it.isPlaying }
+            openTiming.mark("first_frame")
+        }
+        scope.launch {
+            // VLC reports every failure as the same generic fault. Ask the local
+            // proxy what really happened: a stream that cannot play (offline,
+            // restricted, blocked in this region) is explained at once; anything
+            // else is retried with a fresh session after a growing pause, and only
+            // then explained, instead of leaving a black pane to re-open by hand.
+            vlcPlayer.status.map { it.error to it.isPlaying }.distinctUntilChanged().collect { (error, playing) ->
+                if (playing) autoRetries = 0
+                val url = _state.value.playableUrl
+                if (error == null || url == null || _state.value.fatalError != null) return@collect
+                val failure = localStreamProxy.failureFor(channelLogin)
+                when {
+                    failure != null && failure.kind in FINAL_FAILURES ->
+                        _state.update { it.copy(fatalError = failure.message()) }
+                    autoRetries < AUTO_RETRY_DELAYS_MS.size -> {
+                        delay(AUTO_RETRY_DELAYS_MS[autoRetries])
+                        autoRetries++
+                        playableStreamCache.invalidate(channelLogin)
+                        playbackStallWatchdog.reset()
+                        startPlayback(url)
+                    }
+                    else -> _state.update {
+                        it.copy(fatalError = (failure ?: Failure(FailureKind.UNKNOWN, error)).message())
+                    }
+                }
+            }
+        }
+        scope.launch {
             // libVLC can remain in PLAYING after its HLS demuxer has stopped
             // advancing, so no error callback reaches the UI. Detect that exact
             // state and perform the same fresh local-URL load that previously
@@ -467,7 +519,9 @@ class StreamViewModel(
                     continue
                 }
                 if (playbackStallWatchdog.sample(vlcPlayer.status.value, System.currentTimeMillis())) {
-                    vlcPlayer.play(url)
+                    // A stalled session should not be reused: mint a fresh one.
+                    playableStreamCache.invalidate(channelLogin)
+                    startPlayback(url)
                 }
             }
         }
@@ -481,64 +535,119 @@ class StreamViewModel(
             selfLogin = saved?.login
             _state.update { it.copy(canChat = saved?.accessToken != null && saved.login != null, selfLogin = saved?.login) }
             chatClient.connect(channelLogin, saved?.accessToken, saved?.login)
-            chatClient.events.collect { event ->
-                when (event) {
-                    is ChatEvent.Message -> _state.update { current ->
-                        val mapped = event.message.copy(
-                            parsedParts = applyThirdPartyEmotes(event.message.parsedParts, emoteIndex),
-                            mentionsSelf = mentionsSelf(event.message.message),
+            // A busy chat arrives in batches (about ten a second), each applied in one
+            // state update, so 30+ messages a second no longer recompose the stream
+            // screen 30+ times. Rows are built here, outside the update lambda, which
+            // may run more than once.
+            chatClient.events.batchedEvery().collect { batch ->
+                val changes = ArrayList<ChatChange>(batch.size)
+                for (event in batch) {
+                    when (event) {
+                        is ChatEvent.Message -> changes += ChatChange.Add(
+                            event.message.copy(
+                                parsedParts = applyThirdPartyEmotes(event.message.parsedParts, emoteIndex),
+                                mentionsSelf = mentionsSelf(event.message.message),
+                            ),
                         )
-                        current.copy(
-                            chatMessages = current.chatMessages.appendCapped(mapped),
-                            mentionMessages = if (mapped.mentionsSelf) {
-                                current.mentionMessages.appendCapped(mapped)
-                            } else current.mentionMessages,
-                        )
-                    }
-                    is ChatEvent.SelfState -> {
-                        event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                        selfColor = event.color
-                        selfBadges = event.badges
-                    }
-                    // Moderator timed out/banned a user (targetUser set) or cleared the
-                    // whole room (targetUser null). Twitch removes the affected history,
-                    // so tombstone matching messages rather than deleting the rows —
-                    // Chatterino-style "<message deleted>" keeps the conversation legible.
-                    is ChatEvent.ClearChat -> _state.update { current ->
-                        val target = event.targetUser
-                        if (target == null) {
-                            current.copy(
-                                chatMessages = current.chatMessages
-                                    .appendCapped(systemMessage("Chat cleared by a moderator")),
-                            )
-                        } else {
-                            current.copy(chatMessages = ChatModeration.markUserDeleted(current.chatMessages, target))
+                        is ChatEvent.SelfState -> {
+                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                            selfColor = event.color
+                            selfBadges = event.badges
                         }
+                        // Moderator timed out/banned a user (targetUser set) or cleared the
+                        // whole room (targetUser null). Twitch removes the affected history,
+                        // so tombstone matching messages rather than deleting the rows:
+                        // Chatterino-style "<message deleted>" keeps the conversation legible.
+                        is ChatEvent.ClearChat -> changes += event.targetUser
+                            ?.let { ChatChange.DeleteUser(it) }
+                            ?: ChatChange.Add(systemMessage("Chat cleared by a moderator"))
+                        is ChatEvent.ClearMessage -> changes += ChatChange.DeleteMessage(event.targetMessageId)
+                        // Subs, resubs, raids, gifts: Twitch hands us a ready-made
+                        // human-readable system line. Render it as a centred system row.
+                        // Announcements and resub messages also carry the viewer's own words
+                        // in `raw`; show those under the system line, as Twitch does, instead
+                        // of dropping them. Newer notice types with no system text still show
+                        // their message rather than nothing.
+                        is ChatEvent.UserNotice -> {
+                            event.systemMessage.ifBlank { null }?.let { changes += ChatChange.Add(systemMessage(it)) }
+                            event.raw?.takeIf { it.message.isNotBlank() }?.let { raw ->
+                                changes += ChatChange.Add(
+                                    raw.copy(
+                                        parsedParts = applyThirdPartyEmotes(raw.parsedParts, emoteIndex),
+                                        mentionsSelf = mentionsSelf(raw.message),
+                                    ),
+                                )
+                            }
+                        }
+                        // Twitch telling the viewer why a send did not go through (or a room
+                        // mode they ran into): show it, instead of the message just vanishing.
+                        is ChatEvent.Notice -> changes += ChatChange.Add(systemMessage(event.text))
+                        // RoomState/ConnectionState are parsed in core but not surfaced in
+                        // this panel yet (no slow-mode / connection banner). Intentionally ignored.
+                        is ChatEvent.RoomState, is ChatEvent.ConnectionState -> {}
                     }
-                    is ChatEvent.ClearMessage -> _state.update { current ->
-                        current.copy(chatMessages = ChatModeration.markMessageDeleted(current.chatMessages, event.targetMessageId))
-                    }
-                    // Subs, resubs, raids, gifts: Twitch hands us a ready-made
-                    // human-readable system line. Render it as a centred system row.
-                    is ChatEvent.UserNotice -> event.systemMessage.ifBlank { null }?.let { sys ->
-                        _state.update { it.copy(chatMessages = it.chatMessages.appendCapped(systemMessage(sys))) }
-                    }
-                    // RoomState/ConnectionState are parsed in core but not surfaced in
-                    // this panel yet (no slow-mode / connection banner). Intentionally ignored.
-                    is ChatEvent.RoomState, is ChatEvent.ConnectionState -> {}
                 }
+                if (changes.isNotEmpty()) _state.update { it.withChatChanges(changes) }
             }
         }
+    }
+
+    /** One batch's effect on the chat rows, in arrival order (see [withChatChanges]). */
+    private sealed class ChatChange {
+        data class Add(val message: ChatMessage) : ChatChange()
+        data class DeleteUser(val login: String) : ChatChange()
+        data class DeleteMessage(val id: String) : ChatChange()
+    }
+
+    /**
+     * Applies a batch in order, so a deletion that lands in the same batch as the
+     * message it targets still finds it, then caps the buffers once instead of
+     * copying 200 rows per message.
+     */
+    private fun StreamUiState.withChatChanges(changes: List<ChatChange>, max: Int = 200): StreamUiState {
+        var rows: MutableList<ChatMessage> = ArrayList<ChatMessage>(chatMessages.size + changes.size).apply { addAll(chatMessages) }
+        val mentions = ArrayList<ChatMessage>()
+        for (change in changes) {
+            when (change) {
+                is ChatChange.Add -> {
+                    rows.add(change.message)
+                    if (change.message.mentionsSelf) mentions.add(change.message)
+                }
+                is ChatChange.DeleteUser -> rows = ChatModeration.markUserDeleted(rows, change.login).toMutableList()
+                is ChatChange.DeleteMessage -> rows = ChatModeration.markMessageDeleted(rows, change.id).toMutableList()
+            }
+        }
+        return copy(
+            chatMessages = rows.takeLast(max),
+            mentionMessages = if (mentions.isEmpty()) mentionMessages else (mentionMessages + mentions).takeLast(max),
+        )
     }
 
     private fun playAt(quality: StreamQuality) {
         val url = LocalStreamProxy.streamUrl(channelLogin, quality)
         playbackStallWatchdog.reset()
+        autoRetries = 0
+        openTiming.mark("play_requested")
         _state.update { it.copy(playableUrl = url, currentQuality = quality) }
-        vlcPlayer.play(url)
+        startPlayback(url)
     }
 
-    fun setQuality(quality: StreamQuality) = playAt(quality)
+    /**
+     * Every (re)start of the live stream goes through here, so a retry or a stall
+     * recovery keeps Settings > Low latency instead of falling back to the
+     * player's default delay.
+     */
+    private fun startPlayback(url: String) {
+        vlcPlayer.play(url, lowLatency = settingsStore.settings.value.lowLatencyMode)
+    }
+
+    /** A quality picked in the player: played now and kept for next time (see [StreamQuality.preferenceFor]). */
+    fun setQuality(quality: StreamQuality) {
+        playAt(quality)
+        StreamQuality.preferenceFor(quality)?.let { preference ->
+            settingsStore.updateSettings { it.copy(preferredQuality = preference) }
+        }
+    }
 
     /** Live-apply the scaler to the running player AND persist it. The whole point:
      *  it changes the picture mid-stream, not just on restart. */
@@ -796,6 +905,9 @@ class SettingsViewModel(private val settingsStore: DesktopSettingsStore) : Deskt
 
     fun setAnimateEmotes(enabled: Boolean) =
         settingsStore.updateSettings { it.copy(animateEmotes = enabled) }
+
+    fun setLowLatency(enabled: Boolean) =
+        settingsStore.updateSettings { it.copy(lowLatencyMode = enabled) }
 
     // upscalingMode + playbackBackend are now owned by the in-player gear menu
     // (StreamViewModel/VodPlayerViewModel.setUpscaling/setPlaybackBackend) — single

@@ -1,10 +1,11 @@
-package com.puretv.twitch.desktop.player
+package com.puretv.twitch.core.adblock
 
+import kotlin.jvm.Synchronized
 import kotlin.math.max
 import kotlin.math.roundToLong
 
 /** Result of making one Twitch media playlist safe to serve at a stable local URL. */
-internal data class HlsTimelineResult(
+data class HlsTimelineResult(
     val content: String,
     val sequenceNormalized: Boolean,
     val segmentsTrimmed: Int,
@@ -12,11 +13,13 @@ internal data class HlsTimelineResult(
 )
 
 /**
- * Keeps HLS media-sequence identity stable while LocalStreamProxy swaps between
- * Twitch player-type sessions. Twitch can number the same broadcast in two
+ * Keeps HLS media-sequence identity stable while the ad blocker swaps between
+ * Twitch player-type sessions (Windows `LocalStreamProxy`, and the Android and
+ * TV playlist interceptors through [MediaPlaylistCleaner]). Twitch can number the same broadcast in two
  * incompatible ways: a session-local MEDIA-SEQUENCE (often 0 or a small number)
  * and a broadcast-wide TWITCH-LIVE-SEQUENCE. Serving those sessions alternately
- * at one URL makes VLC see the live window jump thousands of segments backward.
+ * at one URL makes the player (VLC or ExoPlayer) see the live window jump
+ * thousands of segments backward.
  *
  * We canonicalize onto Twitch's broadcast-wide sequence. Some ad-only playlists
  * omit TWITCH-LIVE-SEQUENCE, so their stable value is derived from Twitch's
@@ -25,8 +28,10 @@ internal data class HlsTimelineResult(
  * from moving the first listed segment backward; already-consumed leading blocks
  * are trimmed while keeping discontinuity numbering valid.
  */
-internal class HlsTimelineNormalizer(private val maxEntries: Int = 32) {
-    private val sequenceFloors = LinkedHashMap<String, Long>(16, 0.75f, true)
+class HlsTimelineNormalizer(private val maxEntries: Int = 32) {
+    // Insertion order doubles as recency: every normalize() re-inserts its key,
+    // so the first entry is always the least recently used one to evict.
+    private val sequenceFloors = LinkedHashMap<String, Long>()
 
     @Synchronized
     fun normalize(key: String, playlist: String): HlsTimelineResult {
@@ -54,6 +59,7 @@ internal class HlsTimelineNormalizer(private val maxEntries: Int = 32) {
             currentSequence = parseLongHeader(content, MEDIA_SEQUENCE) ?: floor
         }
 
+        sequenceFloors.remove(key)
         sequenceFloors[key] = max(floor ?: currentSequence, currentSequence)
         while (sequenceFloors.size > maxEntries) {
             sequenceFloors.remove(sequenceFloors.entries.first().key)

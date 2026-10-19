@@ -36,6 +36,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.desktop.ui.CategoryViewModel
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.components.CoverImage
 import com.puretv.twitch.desktop.ui.components.EditorialEmptyState
@@ -214,7 +215,7 @@ private fun CategoryStreamCard(stream: StreamInfo, onClick: () -> Unit) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
 
-    ExpressiveCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    ExpressiveCard(onClick = onClick, modifier = Modifier.fillMaxWidth().prewarmStreamOnHover(stream.userLogin)) {
         Column {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shapes.thumbShape)) {
                 val thumbUrl = stream.thumbnailUrl.replace("{width}", "440").replace("{height}", "248")

@@ -8,6 +8,7 @@ import com.puretv.twitch.tv.data.TokenRefresher
 import com.puretv.twitch.tv.di.tvModule
 import com.puretv.twitch.tv.update.TvUpdateManager
 import android.util.Log
+import com.puretv.twitch.core.perf.TimingLog
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,6 +48,9 @@ class PureTvTvApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Local-only timing marks (time to first frame and so on) go to logcat;
+        // read them with `adb logcat -s PureTvTiming`. Nothing is sent anywhere.
+        TimingLog.sink = { line -> Log.i("PureTvTiming", line) }
         val koinApp = startKoin {
             androidLogger()
             androidContext(this@PureTvTvApp)

@@ -1,5 +1,6 @@
 package com.puretv.twitch.android.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -38,6 +39,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +52,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -62,6 +65,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import coil3.compose.AsyncImage
@@ -107,6 +111,8 @@ fun ChatPanel(
     pickableEmotes: List<PickableEmote> = emptyList(),
     selfLogin: String? = null,
     canSend: Boolean = true,
+    /** Settings > Chat > Text size. Scales the whole message list, emotes included. */
+    textScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -122,8 +128,16 @@ fun ChatPanel(
     // Key on the newest message id, not messages.size: the list is capped at 200
     // (takeLast(200) in the VM), so size saturates and a size-keyed effect would
     // stop firing, freezing auto-scroll in any busy channel.
+    // A quiet chat glides to each new line. A busy one snaps: its batches land
+    // about ten times a second, and a scroll animation restarted on every batch
+    // never settles, so the list would never stop moving.
+    val lastScrollAt = remember { longArrayOf(0L) }
     LaunchedEffect(messages.lastOrNull()?.id) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isEmpty()) return@LaunchedEffect
+        val now = SystemClock.uptimeMillis()
+        val busy = now - lastScrollAt[0] < GLIDE_MIN_GAP_MS
+        lastScrollAt[0] = now
+        if (busy) listState.scrollToItem(messages.lastIndex) else listState.animateScrollToItem(messages.lastIndex)
     }
 
     // Trimmed like desktop's submit(): a completion leaves a trailing space.
@@ -153,13 +167,16 @@ fun ChatPanel(
         val pickerHeight = (maxHeight * 0.5f).coerceAtMost(280.dp)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(messages, key = { it.id }) { message ->
-                    ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
 
@@ -549,3 +566,6 @@ private fun parseChatColor(hex: String, fallback: Color): Color =
     } else {
         runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
     }
+
+/** New lines closer together than this snap into view instead of gliding. */
+private const val GLIDE_MIN_GAP_MS = 500L

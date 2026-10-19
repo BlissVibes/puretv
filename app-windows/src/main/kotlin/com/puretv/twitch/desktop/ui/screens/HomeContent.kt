@@ -66,6 +66,7 @@ import com.puretv.twitch.desktop.ui.components.SplitButton
 import com.puretv.twitch.desktop.ui.components.StreamCardSkeleton
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -192,7 +193,7 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                                         game = ch.gameName,
                                         title = ch.title,
                                         onClick = { onOpenChannel(ch.login) },
-                                        modifier = Modifier.width(240.dp),
+                                        modifier = Modifier.width(240.dp).prewarmStreamOnHover(ch.login, live = ch.isLive),
                                     )
                                 }
                             }
@@ -214,6 +215,7 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                             game = stream.gameName,
                             title = stream.title,
                             onClick = { onOpenChannel(stream.userLogin) },
+                            modifier = Modifier.prewarmStreamOnHover(stream.userLogin),
                         )
                     }
                 } else if (state.following.isEmpty()) {

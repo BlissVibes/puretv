@@ -63,6 +63,22 @@ enum class StreamQuality(val label: String, val sortOrder: Int) {
             name.contains("audio", ignoreCase = true) -> AUDIO_ONLY
             else -> AUTO
         }
+
+        /**
+         * The quality saved as `AppSettings.preferredQuality`. Every app stores the
+         * enum name in lower case ("auto", "p1080p60", "audio_only"); anything
+         * unreadable means Auto.
+         */
+        fun fromSetting(value: String?): StreamQuality =
+            entries.firstOrNull { it.name.equals(value?.trim(), ignoreCase = true) } ?: AUTO
+
+        /**
+         * What a quality picked in the player saves as the preference, or null when
+         * it should not stick. Audio only is a choice for this moment (screen off,
+         * saving data); opening the next stream with no picture would look broken.
+         */
+        fun preferenceFor(picked: StreamQuality): String? =
+            if (picked == AUDIO_ONLY) null else picked.name.lowercase()
     }
 }
 
@@ -162,8 +178,16 @@ sealed class ChatEvent {
     data class RoomState(val slowModeSeconds: Int?, val emoteOnly: Boolean) : ChatEvent()
     data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
+    /**
+     * A NOTICE from Twitch addressed to this viewer, usually about a message they
+     * just tried to send ("This room is in subscribers-only mode", "You are
+     * permanently banned from talking in this channel"). [msgId] is Twitch's code
+     * for it; [text] is already written for people.
+     */
+    data class Notice(val msgId: String, val text: String) : ChatEvent()
 }
 
+@Serializable
 data class ChannelEmote(
     val id: String,
     val name: String,
@@ -201,6 +225,9 @@ data class AppSettings(
     // Float the video in a picture-in-picture window on Home. Off sends the
     // stream straight to background play instead. Android phone only.
     val pipOnLeave: Boolean = true,
+    // During background play with nothing on screen, fetch only the audio-only
+    // rendition instead of video nobody sees. Android phone only.
+    val audioOnlyInBackground: Boolean = true,
 
     // Ad Block
     val adBlockEnabled: Boolean = true,

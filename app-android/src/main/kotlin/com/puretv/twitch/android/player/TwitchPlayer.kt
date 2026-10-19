@@ -1,6 +1,8 @@
 package com.puretv.twitch.android.player
 
 import android.content.Context
+import android.os.Looper
+import android.os.Handler
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -15,11 +17,19 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdMarkers
+import okhttp3.Protocol
+import io.ktor.client.HttpClient
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.adblock.MediaPlaylistCleaner
 import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.adblock.BackupStreamResolver
 import com.puretv.twitch.core.adblock.PlaylistAction
 import com.puretv.twitch.core.adblock.PlaylistDetect
+import com.puretv.twitch.core.adblock.TwitchPrefetch
+import com.puretv.twitch.core.perf.TimingLog
+import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.stream.HlsMasterParser
+import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -38,12 +48,42 @@ import java.util.concurrent.ConcurrentHashMap
 @UnstableApi
 class TwitchPlayer(
     private val context: Context,
-    private val adBlockEngine: AdBlockEngine,
-    private val backupStreamResolver: BackupStreamResolver,
+    adBlockEngine: AdBlockEngine,
+    backupStreamResolver: BackupStreamResolver,
+    httpClient: HttpClient,
+    playableStreamCache: PlayableStreamCache,
 ) {
     private val okHttpClient = OkHttpClient.Builder()
-        .addInterceptor(AdBlockInterceptor(adBlockEngine, backupStreamResolver))
+        .addInterceptor(
+            AdBlockInterceptor(
+                adBlockEngine = adBlockEngine,
+                cleaner = MediaPlaylistCleaner(
+                    adBlockEngine = adBlockEngine,
+                    backupStreamResolver = backupStreamResolver,
+                    httpClient = httpClient,
+                    nowMs = System::currentTimeMillis,
+                    // ExoPlayer cannot play an empty window (issue #22); wait for content instead.
+                    holdEmptyWindows = true,
+                    lowLatency = { lowLatency },
+                ),
+                playableStreamCache = playableStreamCache,
+                audioOnly = { audioOnly },
+                lowLatency = { lowLatency },
+                // Source is forced to the top rendition and audio only has one:
+                // no automatic quality to mislead with prefetch downloads.
+                singleRendition = { pickedSource || audioOnly },
+            ),
+        )
         .build()
+
+    /**
+     * Called when the first video frame of a stream is on screen. Feeds the local
+     * time-to-first-frame mark; the stream view model sets and clears it.
+     */
+    @Volatile var onFirstFrame: (() -> Unit)? = null
+
+    /** The playing stream's "Low latency" setting, read by the playlist pipeline on OkHttp threads. */
+    @Volatile private var lowLatency = false
 
     /**
      * Backing player. Held lazily and nulled on [release] so this app-wide
@@ -109,11 +149,39 @@ class TwitchPlayer(
     private var errorRetries = 0
 
     /**
-     * SECTION 06.3 — keeps live HLS blips from dead-ending on a black screen.
+     * Called on the main thread once the backed-off retries are spent. The stream
+     * view model answers with a fresh stream session (the old signed URL may have
+     * expired, for example after a long pause) or, failing that, a visible error,
+     * so playback never just stays black.
+     */
+    @Volatile var onGaveUp: ((PlaybackException) -> Unit)? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val retryRunnable = Runnable { _exoPlayer?.prepare() }
+
+    // Local-only timing: how far behind live the stream settled, logged twice
+    // after the first frame (TimingLog, logcat tag PureTvTiming), so low latency
+    // on and off can be compared by hand.
+    private var latencySamplesLeft = 0
+    private val latencySample = object : Runnable {
+        override fun run() {
+            val player = _exoPlayer ?: return
+            val offset = player.currentLiveOffset
+            if (offset != C.TIME_UNSET) {
+                TimingLog.log("stream.live_offset", offset, if (lowLatency) "low latency" else "default")
+            }
+            if (--latencySamplesLeft > 0) mainHandler.postDelayed(this, LATENCY_SAMPLE_MS)
+        }
+    }
+
+    /**
+     * SECTION 06.3 keeps live HLS blips from dead-ending on a black screen.
      * BEHIND_LIVE_WINDOW (we fell off the live edge) is recovered by re-seeking
-     * to the default (live) position and re-preparing. Any other error gets a
-     * BOUNDED prepare() retry (max 3) so a flapping segment server cannot spin
-     * the loader forever; once playback reaches STATE_READY the budget resets.
+     * to the default (live) position and re-preparing. Any other error is retried
+     * with growing pauses ([RETRY_DELAYS_MS]), so a brief network drop gets time
+     * to clear instead of three instant retries that all hit the same outage;
+     * once those are spent, [onGaveUp] takes over. Reaching STATE_READY resets
+     * the budget.
      */
     private val recoveryListener = object : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
@@ -122,17 +190,24 @@ class TwitchPlayer(
                 exoPlayer.prepare()
                 return
             }
-            if (errorRetries < MAX_ERROR_RETRIES) {
+            if (errorRetries < RETRY_DELAYS_MS.size) {
+                mainHandler.removeCallbacks(retryRunnable)
+                mainHandler.postDelayed(retryRunnable, RETRY_DELAYS_MS[errorRetries])
                 errorRetries++
-                exoPlayer.prepare()
+            } else {
+                onGaveUp?.invoke(error)
             }
-            // Past the bound we stop: do not loop forever on a hard failure.
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_READY) {
-                errorRetries = 0
-            }
+            if (playbackState == Player.STATE_READY) errorRetries = 0
+        }
+
+        override fun onRenderedFirstFrame() {
+            onFirstFrame?.invoke()
+            mainHandler.removeCallbacks(latencySample)
+            latencySamplesLeft = LATENCY_SAMPLES
+            mainHandler.postDelayed(latencySample, LATENCY_SAMPLE_MS)
         }
     }
 
@@ -141,14 +216,83 @@ class TwitchPlayer(
      * so a fresh stream always gets its full allowance even if the previous one
      * exhausted it without ever reaching STATE_READY (a dead/offline channel).
      * [metadata] is what the media notification and lock screen show.
+     * [lowLatency] plays closer to live (see [liveConfiguration]).
      */
-    fun playUrl(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY) {
+    fun playUrl(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY, lowLatency: Boolean = false) {
         errorRetries = 0
+        mainHandler.removeCallbacks(retryRunnable)
+        this.lowLatency = lowLatency
         with(exoPlayer) {
-            setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build())
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(url)
+                    .setMediaMetadata(metadata)
+                    .setLiveConfiguration(liveConfiguration(lowLatency))
+                    .build(),
+            )
             prepare()
             play()
         }
+    }
+
+    // Audio only, by the viewer's pick or because the app is in the background.
+    // Read by the playlist interceptor on OkHttp threads: while either is set it
+    // hands ExoPlayer the audio-only master, so no video is downloaded at all.
+    @Volatile private var pickedAudioOnly = false
+    @Volatile private var backgroundAudioOnly = false
+
+    // Source forces the top rendition, so the player never picks by bandwidth.
+    @Volatile private var pickedSource = false
+    private val audioOnly: Boolean get() = pickedAudioOnly || backgroundAudioOnly
+
+    /**
+     * Picks a quality on the live HLS ladder. AUTO lets ABR pick what the link
+     * sustains; SOURCE always plays the top rendition; a specific resolution caps
+     * the video size; AUDIO_ONLY reloads the stream as audio only. Every branch
+     * resets what the others set, because this singleton carries its parameters
+     * between streams.
+     */
+    fun setQuality(quality: StreamQuality) {
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            .setForceHighestSupportedBitrate(quality == StreamQuality.SOURCE)
+        pickedSource = quality == StreamQuality.SOURCE
+        when (quality) {
+            StreamQuality.SOURCE, StreamQuality.AUTO, StreamQuality.AUDIO_ONLY -> builder.clearVideoSizeConstraints()
+            StreamQuality.P1080P60 -> builder.setMaxVideoSize(1920, 1080)
+            StreamQuality.P720P60 -> builder.setMaxVideoSize(1280, 720)
+            StreamQuality.P480P -> builder.setMaxVideoSize(854, 480)
+            StreamQuality.P360P -> builder.setMaxVideoSize(640, 360)
+        }
+        exoPlayer.trackSelectionParameters = builder.build()
+        updateAudioOnly { pickedAudioOnly = quality == StreamQuality.AUDIO_ONLY }
+    }
+
+    /**
+     * With nobody looking (screen off, another app in front, no PiP window) the
+     * picture is wasted data and battery, so background play switches to the
+     * audio-only rendition and back to video on return. See [BackgroundPlayback].
+     */
+    fun setBackgroundAudioOnly(enabled: Boolean) {
+        updateAudioOnly { backgroundAudioOnly = enabled }
+    }
+
+    private inline fun updateAudioOnly(change: () -> Unit) {
+        val before = audioOnly
+        change()
+        if (audioOnly != before) reloadCurrentStream()
+    }
+
+    /**
+     * Loads the current stream again from its master, which the interceptor now
+     * serves as audio only or as video, and carries on at the live edge. Keeps
+     * the play/pause state: a paused stream stays paused.
+     */
+    private fun reloadCurrentStream() {
+        val player = _exoPlayer ?: return
+        val item = player.currentMediaItem ?: return
+        mainHandler.removeCallbacks(retryRunnable)
+        player.setMediaItem(item)
+        player.prepare()
     }
 
     /**
@@ -157,6 +301,12 @@ class TwitchPlayer(
      * Activity finished does not resurrect a fresh idle player via [exoPlayer].
      */
     fun stop() {
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
+        // The next stream applies its own quality; it must not open as audio
+        // only because this one was.
+        pickedAudioOnly = false
+        backgroundAudioOnly = false
         _exoPlayer?.run {
             stop()
             clearMediaItems()
@@ -170,6 +320,8 @@ class TwitchPlayer(
      * tap re-prepares at live instead of leaving an empty, unplayable surface.
      */
     fun stopKeepingStream() {
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
         _exoPlayer?.run {
             pause()
             stop()
@@ -183,13 +335,19 @@ class TwitchPlayer(
      * never touches a released player.
      */
     fun release() {
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
         _exoPlayer?.release()
         _exoPlayer = null
         errorRetries = 0
     }
 
     private companion object {
-        const val MAX_ERROR_RETRIES = 3
+        /** Pauses before each automatic retry: 1s, then 3s, then 6s. */
+        val RETRY_DELAYS_MS = longArrayOf(1_000, 3_000, 6_000)
+
+        const val LATENCY_SAMPLES = 2
+        const val LATENCY_SAMPLE_MS = 30_000L
     }
 }
 
@@ -199,44 +357,52 @@ class TwitchPlayer(
  * through untouched and unbuffered; everything else is peeked, and any HLS
  * playlist (Content-Type mpegurl, or a body starting with #EXTM3U) is handled.
  *
- * Two-tier removal, ported from the desktop `LocalStreamProxy` so Android blocks
- * ads the same way instead of stalling on a blank screen:
- *   1. BACKUP SWAP (primary, seamless) — when a media playlist contains a
- *      stitched ad, mint a fresh manifest under an alternate player type
- *      (embed/popout), which Twitch usually serves ad-free for the same live
- *      stream, and serve that quality's CLEAN media playlist verbatim. The
- *      viewer keeps seeing real content, no gap. (Green pill: AD BLOCKED.)
- *   2. STRIP (fallback) — only if every backup player type is ALSO ad-showing,
- *      cut the pod out. The player briefly stalls at the splice. (Yellow pill:
- *      AD FILTERED.)
+ * The ad-blocking rules live in core's [MediaPlaylistCleaner], shared by all
+ * three apps: the backup player-type swap first (seamless, green pill), then
+ * stripping (yellow pill), holding an all-ad window instead of handing ExoPlayer
+ * an empty playlist (issue #22), and keeping the timeline continuous across
+ * swaps. This class only adapts OkHttp to it.
  *
- * To run the backup swap we need the channel + the ad-bearing variant's quality;
- * both are learned from the master playlist as it passes through (the master
- * request URL carries the channel; its #EXT-X-STREAM-INF lines carry each
- * variant's resolution/frame-rate), keyed by the variant URL path so the media
- * refreshes that follow can look themselves up.
+ * The backup swap needs the channel + the ad-bearing variant's quality; both
+ * are learned from the master playlist as it passes through (the master request
+ * URL carries the channel; its #EXT-X-STREAM-INF lines carry each variant's
+ * resolution/frame-rate), keyed by the variant URL path so the media refreshes
+ * that follow can look themselves up.
  */
 @UnstableApi
 class AdBlockInterceptor(
     private val adBlockEngine: AdBlockEngine,
-    private val backupStreamResolver: BackupStreamResolver,
+    private val cleaner: MediaPlaylistCleaner,
+    private val playableStreamCache: PlayableStreamCache,
+    /** True while the player should get the audio-only rendition instead of video. */
+    private val audioOnly: () -> Boolean,
+    /** The playing stream's low-latency choice, for playlists that skip the cleaner. */
+    private val lowLatency: () -> Boolean,
+    /** True while the player plays one rendition only (see [MediaPlaylistCleaner.clean]). */
+    private val singleRendition: () -> Boolean,
 ) : Interceptor {
-
-    private data class VariantMeta(val resolution: String, val frameRate: Double)
 
     // Learned from the master. channelLogin is @Volatile (written on the master
     // fetch, read on media fetches, possibly different OkHttp threads); the map is
     // concurrent for the same reason. Keyed by the variant media-playlist URL path.
     @Volatile private var channelLogin: String? = null
-    private val variantByPath = ConcurrentHashMap<String, VariantMeta>()
+    private val variantByPath = ConcurrentHashMap<String, MediaPlaylistCleaner.VariantQuality>()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
-        // Honour the user's "Enable ad block" switch: when off, do no filtering at
-        // all (and the engine has already flipped the pill to DISABLED).
-        if (!adBlockEngine.isEnabled) {
-            return chain.proceed(request)
+        // The view model resolved (and validated) this exact master moments ago:
+        // serve that copy instead of asking usher a second time. A master carries
+        // no ad segments, so this is safe whether ad blocking is on or off.
+        playableStreamCache.masterBody(request.url.toString())?.let { master ->
+            learnFromMaster(request.url, master)
+            return Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(HlsMasterParser.forPlayback(master, audioOnly()).toResponseBody(HLS_MEDIA_TYPE))
+                .build()
         }
 
         if (PlaylistDetect.classifyRequest(request.url.encodedPath) == PlaylistAction.SKIP_SEGMENT) {
@@ -262,11 +428,28 @@ class AdBlockInterceptor(
         val rawBody = body.string()
 
         // A master playlist (#EXT-X-STREAM-INF) carries no ad segments; we only
-        // learn its channel + variant ladder, then pass it through untouched.
+        // learn its channel + variant ladder, then hand the player the renditions
+        // it should see (never the audio-only one by accident, see forPlayback).
+        // This runs with ad blocking off too.
         if (rawBody.contains("#EXT-X-STREAM-INF")) {
             learnFromMaster(request.url, rawBody)
             return response.newBuilder()
-                .body(rawBody.toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+                .body(HlsMasterParser.forPlayback(rawBody, audioOnly()).toResponseBody(HLS_MEDIA_TYPE))
+                .removeHeader("Content-Length")
+                .build()
+        }
+
+        // Honour the user's "Enable ad block" switch: when off, media playlists
+        // pass through unfiltered (and the engine has already flipped the pill to
+        // DISABLED). Low latency still applies while no ad is showing.
+        if (!adBlockEngine.isEnabled) {
+            val passed = if (lowLatency() && !AdMarkers.containsAds(rawBody)) {
+                TwitchPrefetch.liveEdge(rawBody, promotePrefetch = singleRendition())
+            } else {
+                rawBody
+            }
+            return response.newBuilder()
+                .body(passed.toResponseBody(HLS_MEDIA_TYPE))
                 .removeHeader("Content-Length")
                 .build()
         }
@@ -274,10 +457,19 @@ class AdBlockInterceptor(
         // Media playlist: AdSimulator only makes sense here (a media playlist with
         // #EXTINF/#EXT-X-MEDIA-SEQUENCE), not on the master.
         val raw = AdSimulator.inject(rawBody)
-        val cleaned = resolveCleanMedia(request.url, raw)
+        val cleaned = runBlocking {
+            cleaner.clean(
+                variantUrl = request.url.toString(),
+                raw = raw,
+                channelLogin = channelLogin,
+                quality = variantByPath[request.url.encodedPath],
+                isCancelled = { chain.call().isCanceled() },
+                singleRendition = singleRendition(),
+            )
+        }
 
         return response.newBuilder()
-            .body(cleaned.toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+            .body(cleaned.content.toResponseBody(HLS_MEDIA_TYPE))
             .removeHeader("Content-Length")
             .build()
     }
@@ -296,48 +488,30 @@ class AdBlockInterceptor(
         }
         runCatching { HlsMasterParser.parseVariants(master) }.getOrNull()?.forEach { variant ->
             variant.url.toHttpUrlOrNull()?.let { url ->
-                variantByPath[url.encodedPath] = VariantMeta(variant.resolution, variant.frameRate)
+                variantByPath[url.encodedPath] = MediaPlaylistCleaner.VariantQuality(variant.resolution, variant.frameRate)
             }
         }
     }
 
-    private fun resolveCleanMedia(requestUrl: HttpUrl, raw: String): String {
-        if (!AdMarkers.containsAds(raw)) {
-            adBlockEngine.reportAdBlocked() // clean refresh, no ad
-            return raw
-        }
-
-        // Tier 1: seamless backup player-type swap (real content, no stall).
-        val channel = channelLogin
-        val meta = variantByPath[requestUrl.encodedPath]
-        if (channel != null && meta != null) {
-            val backup = runCatching {
-                runBlocking {
-                    backupStreamResolver.resolveAdFreeMediaPlaylist(
-                        channelLogin = channel,
-                        targetResolution = meta.resolution,
-                        targetFrameRate = meta.frameRate,
-                        nowMs = System.currentTimeMillis(),
-                    )
-                }
-            }.getOrNull()
-            if (backup != null) {
-                adBlockEngine.reportAdBlocked() // swapped to a clean manifest, no gap
-                return backup.mediaPlaylist
-            }
-        }
-
-        // Tier 2: no clean backup available; strip the pod (brief stall).
-        return try {
-            val filtered = adBlockEngine.filterPlaylist(raw)
-            adBlockEngine.reportFiltered(filtered)
-            filtered.content
-        } catch (t: Throwable) {
-            // Never silently pass ads as success: report the failure so the pill
-            // goes AD_BLOCK_OFF, then return the RAW playlist so playback keeps
-            // running instead of dead-ending.
-            adBlockEngine.reportResolutionFailure()
-            raw
-        }
+    private companion object {
+        val HLS_MEDIA_TYPE = "application/vnd.apple.mpegurl".toMediaType()
     }
 }
+
+/**
+ * The live target for a stream: with low latency on, aim [LiveLatency.EXO_TARGET_OFFSET_MS]
+ * behind live and let ExoPlayer adjust its speed slightly to stay there; with it
+ * off, ExoPlayer's own default.
+ */
+internal fun liveConfiguration(lowLatency: Boolean): MediaItem.LiveConfiguration =
+    if (!lowLatency) {
+        MediaItem.LiveConfiguration.UNSET
+    } else {
+        MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(LiveLatency.EXO_TARGET_OFFSET_MS)
+            .setMinOffsetMs(LiveLatency.EXO_MIN_OFFSET_MS)
+            .setMaxOffsetMs(LiveLatency.EXO_MAX_OFFSET_MS)
+            .setMinPlaybackSpeed(LiveLatency.EXO_MIN_SPEED)
+            .setMaxPlaybackSpeed(LiveLatency.EXO_MAX_SPEED)
+            .build()
+    }

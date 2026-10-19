@@ -20,6 +20,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -50,6 +51,7 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressivePanel
 import com.puretv.twitch.desktop.ui.components.LivePill
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
@@ -78,6 +80,13 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
     val state by viewModel.state.collectAsState()
     val isFollowed by viewModel.isFollowed.collectAsState()
     val c = PureTvTheme.colors
+
+    // Opening a live channel's page is the strongest hint the viewer is about to
+    // press Watch: resolve the stream now so playback starts at once.
+    val prewarm = LocalStreamPrewarm.current
+    LaunchedEffect(state.isLive, channelLogin) {
+        if (state.isLive) prewarm?.invoke(channelLogin)
+    }
 
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin

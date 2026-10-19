@@ -69,6 +69,7 @@ fun WelcomeScreen(
     loginViewModel: LoginViewModel = koinViewModel(),
 ) {
     val thumbnails by welcomeViewModel.thumbnails.collectAsState()
+    val signedOutByTwitch by welcomeViewModel.signedOutByTwitch.collectAsState()
     val login by loginViewModel.state.collectAsState()
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
@@ -121,6 +122,21 @@ fun WelcomeScreen(
             AppMark()
 
             Text("Watch Twitch, ad-free.", style = MaterialTheme.typography.displaySmall, color = c.onSurface, textAlign = TextAlign.Center)
+            if (signedOutByTwitch) {
+                Box(
+                    modifier = Modifier
+                        .clip(PureTvTheme.shapes.smShape)
+                        .background(c.surfaceHigh)
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        "Twitch signed you out. Connect again to get your follows and chat back.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurface,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
             Text(
                 "PureTV strips ads on-device before a stream ever reaches the player. " +
                     "No relay server, no logging of what you watch.",

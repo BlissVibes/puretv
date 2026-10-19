@@ -5,9 +5,12 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.media3.common.util.UnstableApi
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.tv.data.AppSettingsStore
+import com.puretv.twitch.tv.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.tv.update.TvUpdateManager
 import com.puretv.twitch.tv.ui.PureTvTvNavHost
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
@@ -69,9 +72,13 @@ class TvMainActivity : ComponentActivity() {
         handleAuthRedirect(intent)
         observeTheme()
 
+        val playableStreamCache = getKoin().get<PlayableStreamCache>()
+        val streamPrewarm: (String) -> Unit = { login -> playableStreamCache.prewarm(login) }
         setContent {
             PureTvTvTheme(variant = themeVariant.value) {
-                PureTvTvNavHost()
+                CompositionLocalProvider(LocalStreamPrewarm provides streamPrewarm) {
+                    PureTvTvNavHost()
+                }
             }
         }
     }

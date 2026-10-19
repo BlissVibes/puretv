@@ -11,6 +11,83 @@ release notes automatically.
 
 ---
 
+## Unreleased
+
+Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
+
+### New
+- **Low latency.** Streams now play several seconds closer to live, so what
+  you see keeps up with chat. It's on for Windows and phone. On TV it's off
+  to start with, because TV sticks on Wi-Fi are more likely to pause and
+  buffer; switch it on in Settings if your connection is solid. Turn it off
+  anywhere if streams keep buffering.
+- **Real audio only.** Picking Audio only now downloads just the sound,
+  instead of the whole video with the picture hidden. Much less data.
+- **Audio only in the background (phone).** When you're listening with the
+  screen off or another app open, PureTV downloads just the sound and brings
+  the picture back when you return. You can turn this off in Settings.
+- **Quality menu on the phone player.** Pick Auto, Source, a resolution, or
+  Audio only right from the player.
+
+### Improved
+- **Streams start sooner.** The video starts loading the moment you open a
+  channel, instead of waiting for the channel's details, emotes and badges.
+- **A head start before you click.** On Windows, resting the pointer on a live
+  channel (or opening its page) gets the stream ready in the background. On TV,
+  stopping on a channel does the same, so pressing OK plays almost at once.
+- **Emotes from the very first chat line.** PureTV remembers each channel's
+  emotes, so they show right away and quietly update in the background. If an
+  emote service is down, the ones you already had stay.
+- **Fewer ads to skip on phone and TV.** They now ask Twitch for the same kind
+  of stream Windows does, which gets far fewer ads.
+- **Smoother ad skipping on phone and TV.** Switching around an ad no longer
+  makes the video jump or freeze.
+- **Animated emotes download once on Windows,** instead of again every time
+  you start PureTV.
+- **Errors say what actually happened.** Instead of "Check your connection"
+  for everything, PureTV now tells you when a channel is offline, limited to
+  subscribers, blocked in your region, when Twitch itself is having trouble,
+  when your sign-in expired, or when you're actually offline.
+- **Streams fix themselves.** If a stream drops, PureTV retries with a short
+  pause and then reconnects with a fresh link, instead of leaving a black
+  screen until you reopen it. If it really can't, it says so with a Try again
+  button.
+- **Pick your chat text size** in Settings, on Windows, phone and TV. Emotes
+  grow with the text. On Windows you can also turn timestamps and badges on or
+  off and make chat more compact. Timestamps are now off unless you turn them
+  on.
+- **"Live now" stays current** on phone and TV, and the follows list loads
+  with far fewer requests.
+- **Copy diagnostics (Windows).** Settings has a button that copies versions,
+  recent errors and logs for a bug report. Sign-in details are left out, and
+  nothing is sent anywhere.
+- **Chat explains itself (Windows).** If Twitch won't post your message (for
+  example a subscribers-only room), chat now tells you why, and resub and
+  announcement messages show the person's own words too.
+- **Your quality choice sticks.** The quality you pick in the player is the
+  one the next stream opens at, on every app (Audio only excepted). Phone and
+  TV now open streams at your preferred quality from Settings, and Source
+  really plays the original quality instead of acting like Auto.
+- **Smoother busy chats.** Very fast chats update in small batches instead
+  of redrawing for every message, so the video and chat stay smooth.
+
+### Fixed
+- **The phone app stays signed in.** It only renewed your sign-in when it
+  started, so with background play, follows and chat stopped working after a
+  few hours. It now renews whenever it needs to, and if Twitch signs you out,
+  the app tells you so instead of looking broken.
+- **Only one PureTV runs at a time on Windows.** Opening it again brings the
+  window you already have to the front.
+- **TV search no longer shows results for what you typed earlier.**
+- **TV chat stopped scrolling in busy channels.** Once a chat filled up, new
+  messages no longer scrolled into view. They now always do.
+- **Black screen when a stream opens straight into an ad (phone and TV).**
+  PureTV now waits for the ad to finish and then starts the stream, instead of
+  leaving you on a black screen. You still never see the ad.
+- **The ad-block badge tells the truth.** It no longer carries the last
+  channel's state over to a new one, and on Windows it no longer stays green
+  while an ad is being skipped. It says "SKIPPING AD" while that happens.
+
 ## 1.12.1 - 2026-10-17
 
 Updates install properly again, even if you reopen PureTV while one is running.

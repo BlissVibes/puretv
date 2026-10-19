@@ -47,6 +47,7 @@ import com.puretv.twitch.desktop.ui.components.SegmentedToggle
 import com.puretv.twitch.desktop.ui.components.Skeleton
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -94,7 +95,7 @@ fun FollowingContent(koin: Koin, onOpenChannel: (String) -> Unit, onSignIn: () -
                 Spacer(Modifier.height(32.dp))
                 MessagePanel(
                     title = "Couldn't load your follows",
-                    message = "The last request failed. Check your connection and try again.",
+                    message = state.errorReason ?: "The last request failed. Check your connection and try again.",
                     actionLabel = "Try again",
                     onAction = { viewModel.refresh() },
                 )
@@ -239,7 +240,11 @@ private fun LiveSectionHeader(count: Int, layout: FollowingLayout, onLayoutChang
 private fun LiveGridRow(rowItems: List<FollowRow>, onOpenChannel: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         rowItems.forEach { row ->
-            LiveFollowCard(row, onClick = { onOpenChannel(row.login) }, modifier = Modifier.weight(1f))
+            LiveFollowCard(
+                row,
+                onClick = { onOpenChannel(row.login) },
+                modifier = Modifier.weight(1f).prewarmStreamOnHover(row.login, live = row.isLive),
+            )
         }
         repeat(4 - rowItems.size) { Spacer(Modifier.weight(1f)) }
     }

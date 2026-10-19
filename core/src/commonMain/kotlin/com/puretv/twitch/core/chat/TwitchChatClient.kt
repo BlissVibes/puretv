@@ -294,6 +294,10 @@ object TwitchIrcParser {
                 durationSeconds = tags["ban-duration"]?.toIntOrNull(),
             )
             "CLEARMSG" -> tags["target-msg-id"]?.let { ChatEvent.ClearMessage(it) }
+            // Twitch's answers to us (send rejected, room modes, bans). Without a
+            // tag block it is server chatter (login notices), not for the viewer.
+            "NOTICE" -> trailing?.takeIf { it.isNotBlank() && tags["msg-id"] != null }
+                ?.let { ChatEvent.Notice(msgId = tags["msg-id"].orEmpty(), text = it) }
             "ROOMSTATE" -> ChatEvent.RoomState(
                 slowModeSeconds = tags["slow"]?.toIntOrNull(),
                 emoteOnly = tags["emote-only"] == "1",

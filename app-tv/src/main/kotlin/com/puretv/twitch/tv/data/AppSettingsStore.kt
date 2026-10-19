@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.model.AppSettings
@@ -60,6 +61,8 @@ class AppSettingsStore(
         val CHAT_TIMESTAMPS = booleanPreferencesKey("chat_timestamps")
         val THEME = stringPreferencesKey("theme")
         val COMPACT_MODE = booleanPreferencesKey("compact_mode")
+        val LIVE_NOTIFICATIONS = booleanPreferencesKey("live_notifications")
+        val NOTIFY_MUTED_LOGINS = stringSetPreferencesKey("notify_muted_logins")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -92,6 +95,8 @@ class AppSettingsStore(
             chatTimestamps = prefs[Keys.CHAT_TIMESTAMPS] ?: false,
             theme = prefs[Keys.THEME] ?: "dark",
             compactMode = prefs[Keys.COMPACT_MODE] ?: false,
+            liveNotifications = prefs[Keys.LIVE_NOTIFICATIONS] ?: AppSettings().liveNotifications,
+            notifyMutedLogins = prefs[Keys.NOTIFY_MUTED_LOGINS] ?: emptySet(),
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
@@ -133,6 +138,8 @@ class AppSettingsStore(
             prefs[Keys.CHAT_TIMESTAMPS] = next.chatTimestamps
             prefs[Keys.THEME] = next.theme
             prefs[Keys.COMPACT_MODE] = next.compactMode
+            prefs[Keys.LIVE_NOTIFICATIONS] = next.liveNotifications
+            prefs[Keys.NOTIFY_MUTED_LOGINS] = next.notifyMutedLogins.mapTo(HashSet()) { it.lowercase() }
         }
     }
 

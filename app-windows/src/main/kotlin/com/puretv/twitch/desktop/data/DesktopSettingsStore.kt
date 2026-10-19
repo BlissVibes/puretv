@@ -169,6 +169,11 @@ class DesktopSettingsStore(
         val compactMode: Boolean = false,
         val upscalingMode: String = "off",
         val playbackBackend: String = "vlc",
+        val liveNotifications: Boolean = true,
+        val notifyMutedLogins: List<String> = emptyList(),
+        val closeToTray: Boolean = false,
+        val startWithWindows: Boolean = false,
+        val trayHintShown: Boolean = false,
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -190,6 +195,11 @@ class DesktopSettingsStore(
         compactMode = compactMode,
         upscalingMode = parseUpscalingMode(upscalingMode),
         playbackBackend = parsePlaybackBackend(playbackBackend),
+        liveNotifications = liveNotifications,
+        notifyMutedLogins = notifyMutedLogins.mapTo(LinkedHashSet()) { it.lowercase() },
+        closeToTray = closeToTray,
+        startWithWindows = startWithWindows,
+        trayHintShown = trayHintShown,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -213,6 +223,11 @@ class DesktopSettingsStore(
         compactMode = compactMode,
         upscalingMode = upscalingMode.name.lowercase(),
         playbackBackend = playbackBackend.name.lowercase(),
+        liveNotifications = liveNotifications,
+        notifyMutedLogins = notifyMutedLogins.sorted(),
+        closeToTray = closeToTray,
+        startWithWindows = startWithWindows,
+        trayHintShown = trayHintShown,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

@@ -13,6 +13,7 @@ import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.BadgeRepository
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
@@ -536,73 +537,92 @@ class StreamViewModel(
             selfLogin = saved?.login
             _state.update { it.copy(canChat = saved?.accessToken != null && saved.login != null, selfLogin = saved?.login) }
             chatClient.connect(channelLogin, saved?.accessToken, saved?.login)
-            chatClient.events.collect { event ->
-                when (event) {
-                    is ChatEvent.Message -> _state.update { current ->
-                        val mapped = event.message.copy(
-                            parsedParts = applyThirdPartyEmotes(event.message.parsedParts, emoteIndex),
-                            mentionsSelf = mentionsSelf(event.message.message),
+            // A busy chat arrives in batches (about ten a second), each applied in one
+            // state update, so 30+ messages a second no longer recompose the stream
+            // screen 30+ times. Rows are built here, outside the update lambda, which
+            // may run more than once.
+            chatClient.events.batchedEvery().collect { batch ->
+                val changes = ArrayList<ChatChange>(batch.size)
+                for (event in batch) {
+                    when (event) {
+                        is ChatEvent.Message -> changes += ChatChange.Add(
+                            event.message.copy(
+                                parsedParts = applyThirdPartyEmotes(event.message.parsedParts, emoteIndex),
+                                mentionsSelf = mentionsSelf(event.message.message),
+                            ),
                         )
-                        current.copy(
-                            chatMessages = current.chatMessages.appendCapped(mapped),
-                            mentionMessages = if (mapped.mentionsSelf) {
-                                current.mentionMessages.appendCapped(mapped)
-                            } else current.mentionMessages,
-                        )
-                    }
-                    is ChatEvent.SelfState -> {
-                        event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                        selfColor = event.color
-                        selfBadges = event.badges
-                    }
-                    // Moderator timed out/banned a user (targetUser set) or cleared the
-                    // whole room (targetUser null). Twitch removes the affected history,
-                    // so tombstone matching messages rather than deleting the rows —
-                    // Chatterino-style "<message deleted>" keeps the conversation legible.
-                    is ChatEvent.ClearChat -> _state.update { current ->
-                        val target = event.targetUser
-                        if (target == null) {
-                            current.copy(
-                                chatMessages = current.chatMessages
-                                    .appendCapped(systemMessage("Chat cleared by a moderator")),
-                            )
-                        } else {
-                            current.copy(chatMessages = ChatModeration.markUserDeleted(current.chatMessages, target))
+                        is ChatEvent.SelfState -> {
+                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                            selfColor = event.color
+                            selfBadges = event.badges
                         }
-                    }
-                    is ChatEvent.ClearMessage -> _state.update { current ->
-                        current.copy(chatMessages = ChatModeration.markMessageDeleted(current.chatMessages, event.targetMessageId))
-                    }
-                    // Subs, resubs, raids, gifts: Twitch hands us a ready-made
-                    // human-readable system line. Render it as a centred system row.
-                    // Announcements and resub messages also carry the viewer's own words
-                    // in `raw`; show those under the system line, as Twitch does, instead
-                    // of dropping them. Newer notice types with no system text still show
-                    // their message rather than nothing.
-                    is ChatEvent.UserNotice -> _state.update { current ->
-                        var messages = current.chatMessages
-                        event.systemMessage.ifBlank { null }?.let { messages = messages.appendCapped(systemMessage(it)) }
-                        event.raw?.takeIf { it.message.isNotBlank() }?.let { raw ->
-                            messages = messages.appendCapped(
-                                raw.copy(
-                                    parsedParts = applyThirdPartyEmotes(raw.parsedParts, emoteIndex),
-                                    mentionsSelf = mentionsSelf(raw.message),
-                                ),
-                            )
+                        // Moderator timed out/banned a user (targetUser set) or cleared the
+                        // whole room (targetUser null). Twitch removes the affected history,
+                        // so tombstone matching messages rather than deleting the rows:
+                        // Chatterino-style "<message deleted>" keeps the conversation legible.
+                        is ChatEvent.ClearChat -> changes += event.targetUser
+                            ?.let { ChatChange.DeleteUser(it) }
+                            ?: ChatChange.Add(systemMessage("Chat cleared by a moderator"))
+                        is ChatEvent.ClearMessage -> changes += ChatChange.DeleteMessage(event.targetMessageId)
+                        // Subs, resubs, raids, gifts: Twitch hands us a ready-made
+                        // human-readable system line. Render it as a centred system row.
+                        // Announcements and resub messages also carry the viewer's own words
+                        // in `raw`; show those under the system line, as Twitch does, instead
+                        // of dropping them. Newer notice types with no system text still show
+                        // their message rather than nothing.
+                        is ChatEvent.UserNotice -> {
+                            event.systemMessage.ifBlank { null }?.let { changes += ChatChange.Add(systemMessage(it)) }
+                            event.raw?.takeIf { it.message.isNotBlank() }?.let { raw ->
+                                changes += ChatChange.Add(
+                                    raw.copy(
+                                        parsedParts = applyThirdPartyEmotes(raw.parsedParts, emoteIndex),
+                                        mentionsSelf = mentionsSelf(raw.message),
+                                    ),
+                                )
+                            }
                         }
-                        current.copy(chatMessages = messages)
+                        // Twitch telling the viewer why a send did not go through (or a room
+                        // mode they ran into): show it, instead of the message just vanishing.
+                        is ChatEvent.Notice -> changes += ChatChange.Add(systemMessage(event.text))
+                        // RoomState/ConnectionState are parsed in core but not surfaced in
+                        // this panel yet (no slow-mode / connection banner). Intentionally ignored.
+                        is ChatEvent.RoomState, is ChatEvent.ConnectionState -> {}
                     }
-                    // Twitch telling the viewer why a send did not go through (or a room
-                    // mode they ran into): show it, instead of the message just vanishing.
-                    is ChatEvent.Notice -> _state.update {
-                        it.copy(chatMessages = it.chatMessages.appendCapped(systemMessage(event.text)))
-                    }
-                    // RoomState/ConnectionState are parsed in core but not surfaced in
-                    // this panel yet (no slow-mode / connection banner). Intentionally ignored.
-                    is ChatEvent.RoomState, is ChatEvent.ConnectionState -> {}
                 }
+                if (changes.isNotEmpty()) _state.update { it.withChatChanges(changes) }
             }
         }
+    }
+
+    /** One batch's effect on the chat rows, in arrival order (see [withChatChanges]). */
+    private sealed class ChatChange {
+        data class Add(val message: ChatMessage) : ChatChange()
+        data class DeleteUser(val login: String) : ChatChange()
+        data class DeleteMessage(val id: String) : ChatChange()
+    }
+
+    /**
+     * Applies a batch in order, so a deletion that lands in the same batch as the
+     * message it targets still finds it, then caps the buffers once instead of
+     * copying 200 rows per message.
+     */
+    private fun StreamUiState.withChatChanges(changes: List<ChatChange>, max: Int = 200): StreamUiState {
+        var rows: MutableList<ChatMessage> = ArrayList<ChatMessage>(chatMessages.size + changes.size).apply { addAll(chatMessages) }
+        val mentions = ArrayList<ChatMessage>()
+        for (change in changes) {
+            when (change) {
+                is ChatChange.Add -> {
+                    rows.add(change.message)
+                    if (change.message.mentionsSelf) mentions.add(change.message)
+                }
+                is ChatChange.DeleteUser -> rows = ChatModeration.markUserDeleted(rows, change.login).toMutableList()
+                is ChatChange.DeleteMessage -> rows = ChatModeration.markMessageDeleted(rows, change.id).toMutableList()
+            }
+        }
+        return copy(
+            chatMessages = rows.takeLast(max),
+            mentionMessages = if (mentions.isEmpty()) mentionMessages else (mentionMessages + mentions).takeLast(max),
+        )
     }
 
     private fun playAt(quality: StreamQuality) {

@@ -1,5 +1,6 @@
 package com.puretv.twitch.android.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -127,8 +128,16 @@ fun ChatPanel(
     // Key on the newest message id, not messages.size: the list is capped at 200
     // (takeLast(200) in the VM), so size saturates and a size-keyed effect would
     // stop firing, freezing auto-scroll in any busy channel.
+    // A quiet chat glides to each new line. A busy one snaps: its batches land
+    // about ten times a second, and a scroll animation restarted on every batch
+    // never settles, so the list would never stop moving.
+    val lastScrollAt = remember { longArrayOf(0L) }
     LaunchedEffect(messages.lastOrNull()?.id) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+        if (messages.isEmpty()) return@LaunchedEffect
+        val now = SystemClock.uptimeMillis()
+        val busy = now - lastScrollAt[0] < GLIDE_MIN_GAP_MS
+        lastScrollAt[0] = now
+        if (busy) listState.scrollToItem(messages.lastIndex) else listState.animateScrollToItem(messages.lastIndex)
     }
 
     // Trimmed like desktop's submit(): a completion leaves a trailing space.
@@ -557,3 +566,6 @@ private fun parseChatColor(hex: String, fallback: Color): Color =
     } else {
         runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrDefault(fallback)
     }
+
+/** New lines closer together than this snap into view instead of gliding. */
+private const val GLIDE_MIN_GAP_MS = 500L

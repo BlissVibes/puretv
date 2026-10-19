@@ -22,6 +22,7 @@ import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
@@ -467,18 +468,24 @@ class StreamViewModel(
             selfLogin = username
             _state.update { it.copy(isLoggedIn = token != null, selfLogin = username) }
             chatClient.connect(channelLogin, token, username)
-            chatClient.events.collect { event ->
-                when (event) {
-                    is ChatEvent.Message -> _state.update { current ->
-                        current.copy(chatMessages = (current.chatMessages + event.message).takeLast(200))
+            // A busy chat arrives in batches (about ten a second), each applied in
+            // one state update instead of one per message.
+            chatClient.events.batchedEvery().collect { batch ->
+                val incoming = ArrayList<ChatMessage>(batch.size)
+                for (event in batch) {
+                    when (event) {
+                        is ChatEvent.Message -> incoming += event.message
+                        // Our own name/color/badges, used to dress the self-echo.
+                        is ChatEvent.SelfState -> {
+                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                            selfColor = event.color
+                            selfBadges = event.badges
+                        }
+                        else -> {}
                     }
-                    // Our own name/color/badges, used to dress the self-echo.
-                    is ChatEvent.SelfState -> {
-                        event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                        selfColor = event.color
-                        selfBadges = event.badges
-                    }
-                    else -> {}
+                }
+                if (incoming.isNotEmpty()) {
+                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
                 }
             }
         }

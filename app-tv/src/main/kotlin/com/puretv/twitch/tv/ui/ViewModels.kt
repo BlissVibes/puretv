@@ -8,6 +8,7 @@ import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
@@ -410,11 +411,12 @@ class StreamViewModel(
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             val username = settings.username.takeIf { it.isNotBlank() }
             chatClient.connect(channelLogin, token, username)
-            chatClient.events.collect { event ->
-                if (event is ChatEvent.Message) {
-                    _state.update { current ->
-                        current.copy(chatMessages = (current.chatMessages + event.message).takeLast(200))
-                    }
+            // A busy chat arrives in batches (about ten a second), each applied in
+            // one state update instead of one per message.
+            chatClient.events.batchedEvery().collect { batch ->
+                val incoming = batch.filterIsInstance<ChatEvent.Message>().map { it.message }
+                if (incoming.isNotEmpty()) {
+                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
                 }
             }
         }

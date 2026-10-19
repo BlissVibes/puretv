@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.components
 
+import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
@@ -58,8 +59,17 @@ fun TvChatOverlay(
     val shapes = PureTvTvTheme.shapes
     val listState = rememberLazyListState()
 
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    // Key on the newest message id, not messages.size: the list is capped at 200,
+    // so its size stops changing and a size-keyed effect stopped scrolling as soon
+    // as a busy chat filled up. A quiet chat glides to each new line; a busy one
+    // snaps, because an animation restarted on every batch never settles.
+    val lastScrollAt = remember { longArrayOf(0L) }
+    LaunchedEffect(messages.lastOrNull()?.id) {
+        if (messages.isEmpty()) return@LaunchedEffect
+        val now = SystemClock.uptimeMillis()
+        val busy = now - lastScrollAt[0] < GLIDE_MIN_GAP_MS
+        lastScrollAt[0] = now
+        if (busy) listState.scrollToItem(messages.lastIndex) else listState.animateScrollToItem(messages.lastIndex)
     }
 
     AnimatedVisibility(
@@ -142,3 +152,6 @@ private fun TvChatMessageRow(message: ChatMessage) {
         )
     }
 }
+
+/** New lines closer together than this snap into view instead of gliding. */
+private const val GLIDE_MIN_GAP_MS = 500L

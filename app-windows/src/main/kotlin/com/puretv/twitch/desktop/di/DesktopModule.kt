@@ -3,6 +3,12 @@ package com.puretv.twitch.desktop.di
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.FollowStore
+import com.puretv.twitch.desktop.data.LiveNotifyFileStore
+import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
+import com.puretv.twitch.desktop.ui.NavigationRequests
+import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import androidx.compose.ui.window.TrayState
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.core.model.PlaybackBackend
@@ -64,8 +70,32 @@ val desktopModule = module {
     single { DesktopSettingsStore(get()) }
     // Local "Following" list (the in-app library) — see FollowStore.
     single { FollowStore() }
-    // Followed-rail data: real Twitch follows (paginated) ∪ local pins.
-    single<FollowedChannelsSource> { FollowedChannelsService(get()) }
+    // Go-live alerts. The monitor is the app's one asker of "which follows are live"
+    // (see LiveFollowsMonitor): the rail reads through it, the alert timer in main.kt
+    // polls it, and whatever just went live becomes a tray notification.
+    single { TrayState() }
+    single { NavigationRequests() }
+    single { DesktopLiveNotifier(get()) }
+    single { LiveNotifyFileStore() }
+    single {
+        val store = get<DesktopSettingsStore>()
+        val api = get<TwitchApiClient>()
+        val notifier = get<DesktopLiveNotifier>()
+        LiveFollowsMonitor(
+            fetchLive = { userId -> api.getFollowedStreams(userId) },
+            store = get<LiveNotifyFileStore>(),
+            settings = { store.settings.value },
+            userId = { if (store.isLoggedIn) store.sessionUserId else null },
+            clock = System::currentTimeMillis,
+            onGoLive = { streams -> notifier.show(streams) },
+        )
+    }
+    // Followed-rail data: real Twitch follows (paginated) plus local pins, with live
+    // status from the shared monitor.
+    single<FollowedChannelsSource> {
+        val monitor = get<LiveFollowsMonitor>()
+        FollowedChannelsService(get(), followedLive = { userId -> monitor.followedLive(userId) })
+    }
     // Per-VOD playback positions ("continue watching") — see WatchProgressStore.
     single { WatchProgressStore() }
     // Locally-persisted viewer-count history for the channel stats panel — see ViewerHistoryStore.

@@ -26,9 +26,11 @@ object LiveNotifyStateCodec {
     fun encode(state: LiveNotifyState): String = json.encodeToString(LiveNotifyState.serializer(), state)
 
     /** Corrupt or missing input degrades to an empty state, which simply re-seeds silently. */
-    fun decode(text: String?): LiveNotifyState =
-        text?.let { runCatching { json.decodeFromString(LiveNotifyState.serializer(), it) }.getOrNull() }
-            ?: LiveNotifyState()
+    fun decode(text: String?): LiveNotifyState = text?.let(::decodeOrNull) ?: LiveNotifyState()
+
+    /** Null when [text] is not a saved state, so a store can set the bad file aside. */
+    fun decodeOrNull(text: String): LiveNotifyState? =
+        runCatching { json.decodeFromString(LiveNotifyState.serializer(), text) }.getOrNull()
 }
 
 /** Where each app keeps [LiveNotifyState]: a JSON file on Windows, DataStore on phone and TV. */

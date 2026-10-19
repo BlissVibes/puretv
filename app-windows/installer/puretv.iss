@@ -50,6 +50,12 @@ Source: "..\build\compose\binaries\main-release\app\PureTV for Twitch\app\PureTV
 Name: "{group}\PureTV"; Filename: "{app}\{#MyAppExe}"
 Name: "{autodesktop}\PureTV"; Filename: "{app}\{#MyAppExe}"
 
+[Registry]
+; "Start PureTV with Windows" (Settings > Notifications) writes this value itself;
+; the installer never creates it, only removes it on uninstall so nothing is left
+; trying to start a PureTV that is gone.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "PureTV"; ValueType: none; Flags: uninsdeletevalue
+
 [Run]
 ; postinstall  -> offered as a (checked) final-page action after a normal install
 ; nowait       -> the installer closes without waiting for the app

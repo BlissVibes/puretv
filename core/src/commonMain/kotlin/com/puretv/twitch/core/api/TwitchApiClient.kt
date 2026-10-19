@@ -65,6 +65,31 @@ class TwitchApiClient(
         return resp.data
     }
 
+    /**
+     * GET /streams/followed: every live stream [userId] follows, following the
+     * pagination cursor. One call usually covers it, where checking each follow
+     * costs one /streams call per 100 follows. Uses the user:read:follows scope
+     * PureTV already asks for, so no one has to sign in again.
+     */
+    suspend fun getFollowedStreams(userId: String): List<StreamInfo> {
+        val all = mutableListOf<StreamInfo>()
+        var cursor: String? = null
+        do {
+            val resp: HelixPagedEnvelope<StreamInfo> = withRateLimitRetry {
+                authedClient().get("${TwitchConfig.API_BASE}/streams/followed") {
+                    header("Client-Id", TwitchConfig.CLIENT_ID)
+                    tokenProvider()?.let { header("Authorization", "Bearer $it") }
+                    parameter("user_id", userId)
+                    parameter("first", "100")
+                    if (cursor != null) parameter("after", cursor)
+                }.body()
+            }
+            all += resp.data
+            cursor = resp.pagination.cursor?.takeIf { it.isNotBlank() && resp.data.isNotEmpty() }
+        } while (cursor != null && all.size < MAX_FOLLOWED_STREAMS)
+        return all
+    }
+
     /** Convenience: is a single channel currently live? Returns the StreamInfo if so. */
     suspend fun getLiveStream(userLogin: String): StreamInfo? = getStreams(userLogins = listOf(userLogin)).firstOrNull()
 
@@ -378,3 +403,6 @@ fun configureCommonDefaults(client: HttpClient) {
     // Hook point for Koin's `single { buildKtorClient() }` — kept here so both
     // platforms share identical default-request configuration.
 }
+
+/** Safety stop for [TwitchApiClient.getFollowedStreams]'s pagination: no one follows this many live channels. */
+private const val MAX_FOLLOWED_STREAMS = 2_000

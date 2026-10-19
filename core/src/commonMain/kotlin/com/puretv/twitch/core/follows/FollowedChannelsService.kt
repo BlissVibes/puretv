@@ -6,6 +6,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /** Loads the followed rail. Interface so desktop ViewModels can fake it in tests. */
 interface FollowedChannelsSource {
@@ -36,9 +40,13 @@ interface FollowedChannelsSource {
 
 /**
  * Real implementation over Helix. On [load]:
- *  1. fetch ALL follows (paginated) and normalize to [FollowedRef], union local pins,
- *  2. fetch live status (GET /streams) and missing profiles (GET /users) as parallel
- *     chunks of 100 (Helix caps both at 100 ids per call),
+ *  1. fetch ALL follows (paginated, kept for [followsTtl] because the list rarely
+ *     changes while the rail polls every minute) and union local pins,
+ *  2. fetch live status with GET /streams/followed (one call for everything the
+ *     user follows), plus GET /streams chunks only for local pins the user does
+ *     not follow on Twitch, and missing profiles (GET /users) in parallel chunks
+ *     of 100. If /streams/followed fails, live status falls back to /streams
+ *     chunks for every follow, as before,
  *  3. emit a fast live-only result via [load]'s onLive the moment live status is in
  *     (cached profiles applied; the rest render as initials),
  *  4. once profiles resolve, return the fully enriched [FollowedList].
@@ -47,18 +55,23 @@ interface FollowedChannelsSource {
  * the only writes happen sequentially after the parallel fetches complete, so there is
  * no concurrent mutation.
  */
-class FollowedChannelsService(private val api: TwitchApiClient) : FollowedChannelsSource {
+class FollowedChannelsService(
+    private val api: TwitchApiClient,
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val followsTtl: Duration = 10.minutes,
+) : FollowedChannelsSource {
     private val profileCache = mutableMapOf<String, Profile>()
+
+    private class CachedFollows(val userId: String, val refs: List<FollowedRef>, val fetchedAt: TimeMark)
+    @Volatile private var cachedFollows: CachedFollows? = null
 
     override suspend fun load(
         userId: String,
         localPins: List<FollowedRef>,
         onLive: (FollowedList) -> Unit,
     ): FollowedList = coroutineScope {
-        val remote = api.getAllFollowedChannels(userId).map {
-            FollowedRef(it.broadcaster_id, it.broadcaster_login, it.broadcaster_name)
-        }
-        val refs = (remote + localPins).distinctBy { it.login.lowercase() }
+        val remote = followsFor(userId)
+        val followedLive = async { followedLiveOrNull(userId) }
 
         // Live status and profiles are independent once we have the follow list, so kick
         // off both as parallel chunks rather than one slow sequential pass. Each chunk is
@@ -66,7 +79,17 @@ class FollowedChannelsService(private val api: TwitchApiClient) : FollowedChanne
         // being missing, instead of an unguarded awaitAll() discarding ALL siblings and
         // emptying the rail. (We still hard-fail above if the follow LIST itself can't be
         // fetched — that genuinely-errored case should surface, not look empty.)
-        val streamChunks = refs.map { it.login }.chunked(100)
+        // Something followed on twitch.tv after the cached list was fetched still shows
+        // up the moment it goes live: /streams/followed already knows about it.
+        val liveFollows = followedLive.await()
+        val newlyFollowed = liveFollows.orEmpty()
+            .map { FollowedRef(it.userId, it.userLogin, it.userName) }
+        val refs = (remote + newlyFollowed + localPins).distinctBy { it.login.lowercase() }
+        val remoteLogins = remote.mapTo(HashSet()) { it.login.lowercase() }
+        // With /streams/followed in hand only local pins the user does not follow on
+        // Twitch still need a per-channel check; without it, every ref does.
+        val toCheck = if (liveFollows == null) refs else localPins.filter { it.login.lowercase() !in remoteLogins }
+        val streamChunks = toCheck.map { it.login }.chunked(100)
             .map { chunk -> async { resilientChunk { api.getStreams(userLogins = chunk, first = 100) } } }
         // Only resolve profiles we don't already have. Blank-id refs (e.g. legacy local
         // pins saved without an id) are skipped; they render with the initial fallback.
@@ -76,7 +99,8 @@ class FollowedChannelsService(private val api: TwitchApiClient) : FollowedChanne
 
         // Show the list as soon as live status is in, using whatever profiles are already
         // cached. Remaining avatars fill in after enrichment below.
-        val live: List<StreamInfo> = streamChunks.awaitAll().flatten()
+        val live: List<StreamInfo> = (liveFollows.orEmpty() + streamChunks.awaitAll().flatten())
+            .distinctBy { it.userLogin.lowercase() }
         onLive(buildFollowedList(refs, live, profileCache.toMap()))
 
         // Best-effort enrichment. A failed /users chunk leaves that chunk's avatars as
@@ -90,7 +114,28 @@ class FollowedChannelsService(private val api: TwitchApiClient) : FollowedChanne
 
     override fun clear() {
         profileCache.clear()
+        cachedFollows = null
     }
+
+    /** The follow list, refetched only when older than [followsTtl] or for another account. */
+    private suspend fun followsFor(userId: String): List<FollowedRef> {
+        cachedFollows?.takeIf { it.userId == userId && it.fetchedAt.elapsedNow() < followsTtl }?.let { return it.refs }
+        val fresh = api.getAllFollowedChannels(userId).map {
+            FollowedRef(it.broadcaster_id, it.broadcaster_login, it.broadcaster_name)
+        }
+        cachedFollows = CachedFollows(userId, fresh, timeSource.markNow())
+        return fresh
+    }
+
+    /** Live follows from /streams/followed, or null if that call failed (callers fall back). */
+    private suspend fun followedLiveOrNull(userId: String): List<StreamInfo>? =
+        try {
+            api.getFollowedStreams(userId)
+        } catch (c: CancellationException) {
+            throw c
+        } catch (e: Throwable) {
+            null
+        }
 
     /**
      * Run one fan-out chunk, degrading a genuine failure to an empty result so a single

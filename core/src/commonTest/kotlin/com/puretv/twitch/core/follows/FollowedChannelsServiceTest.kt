@@ -252,4 +252,81 @@ class FollowedChannelsServiceTest {
         // The final result has the avatar enriched.
         assertEquals("http://a/c0.png", full.live.first().avatarUrl)
     }
+
+    private class Counts {
+        val follows = CallCounter()
+        val followed = CallCounter()
+        val streams = CallCounter()
+    }
+
+    /** Helix with /streams/followed available; [extraLive] is live and followed but not in the follow pages yet. */
+    private fun followedStreamsClient(counts: Counts, extraLive: String? = null) = HttpClient(MockEngine { request ->
+        val url = request.url
+        when {
+            url.encodedPath.endsWith("/channels/followed") -> {
+                counts.follows.incrementAndGet()
+                val after = url.parameters["after"]
+                if (after == null) respond(followsPage(followLogins.take(100), "P2"), HttpStatusCode.OK, jsonHeaders)
+                else respond(followsPage(followLogins.drop(100), null), HttpStatusCode.OK, jsonHeaders)
+            }
+            url.encodedPath.endsWith("/streams/followed") -> {
+                counts.followed.incrementAndGet()
+                val live = liveLogins + listOfNotNull(extraLive)
+                val data = live.joinToString(",") {
+                    """{"id":"s_$it","user_id":"id_$it","user_login":"$it","user_name":"Name_$it","viewer_count":50}"""
+                }
+                respond("""{"data":[$data],"pagination":{}}""", HttpStatusCode.OK, jsonHeaders)
+            }
+            url.encodedPath.endsWith("/streams") -> {
+                counts.streams.incrementAndGet()
+                respond(streamsFor(url.parameters.getAll("user_login").orEmpty()), HttpStatusCode.OK, jsonHeaders)
+            }
+            url.encodedPath.endsWith("/users") -> respond(usersFor(url.parameters.getAll("id").orEmpty()), HttpStatusCode.OK, jsonHeaders)
+            else -> respond("", HttpStatusCode.NotFound)
+        }
+    }) { install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true }) } }
+
+    @Test fun liveStatusComesFromOneFollowedStreamsCall() = runTest {
+        val counts = Counts()
+        val service = FollowedChannelsService(TwitchApiClient(followedStreamsClient(counts)) { "token" })
+
+        val result = service.load("user123", localPins = emptyList()) {}
+
+        assertEquals(setOf("c0", "c1", "c2"), result.live.map { it.login }.toSet())
+        assertEquals(117, result.offline.size)
+        assertEquals(1, counts.followed.get())
+        assertEquals(0, counts.streams.get(), "no per-channel /streams calls when /streams/followed answers")
+    }
+
+    @Test fun onlyLocalPinsTheUserDoesNotFollowAreCheckedOneByOne() = runTest {
+        val counts = Counts()
+        val service = FollowedChannelsService(TwitchApiClient(followedStreamsClient(counts)) { "token" })
+
+        service.load("user123", localPins = listOf(FollowedRef("id_pinned", "pinned", "Pinned"), FollowedRef("id_c5", "c5", "Name_c5"))) {}
+
+        assertEquals(1, counts.streams.get(), "one /streams call for the single pin not followed on Twitch")
+    }
+
+    @Test fun theFollowListIsReusedWhileFresh() = runTest {
+        val counts = Counts()
+        val clock = kotlin.time.TestTimeSource()
+        val service = FollowedChannelsService(TwitchApiClient(followedStreamsClient(counts)) { "token" }, timeSource = clock)
+
+        service.load("user123", localPins = emptyList()) {}
+        service.load("user123", localPins = emptyList()) {}
+        assertEquals(2, counts.follows.get(), "two follow pages, fetched once")
+        assertEquals(2, counts.followed.get(), "live status is still checked every time")
+
+        clock += kotlin.time.Duration.parse("11m")
+        service.load("user123", localPins = emptyList()) {}
+        assertEquals(4, counts.follows.get(), "an old list is fetched again")
+    }
+
+    @Test fun aChannelFollowedSinceTheListWasCachedShowsUpWhenLive() = runTest {
+        val service = FollowedChannelsService(TwitchApiClient(followedStreamsClient(Counts(), extraLive = "newfave")) { "token" })
+
+        val result = service.load("user123", localPins = emptyList()) {}
+
+        assertEquals(true, result.live.any { it.login == "newfave" })
+    }
 }

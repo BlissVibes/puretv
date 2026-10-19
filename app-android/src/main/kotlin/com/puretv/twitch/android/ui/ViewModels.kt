@@ -140,23 +140,33 @@ class HomeViewModel(
                 when (session) {
                     is SessionState.LoggedOut ->
                         _state.update { it.copy(isLoggedIn = false, isLoading = it.topStreams.isEmpty(), error = null) }
-                    is SessionState.LoggedIn ->
+                    is SessionState.LoggedIn -> {
+                        userId = session.userId
                         loadLoggedInHome()
+                    }
                 }
-            }
-        }
-        // Followed "Live now": re-fetch whenever the follow set changes.
-        viewModelScope.launch {
-            userRepository.followedLogins.collect { follows ->
-                val live = if (follows.isEmpty()) emptyList()
-                else runCatching { streamRepository.streamsForChannels(follows) }.getOrDefault(emptyList())
-                _state.update { it.copy(followedLive = live) }
             }
         }
     }
 
+    /** The signed-in viewer's id, for "Live now"; set by the session collector. */
+    @Volatile private var userId: String = ""
+
+    /**
+     * Followed "Live now", asked of Twitch directly (one /streams/followed call)
+     * on every load and refresh. It used to be recomputed only when the follow
+     * list changed, so live status went stale while every refresh still
+     * re-downloaded the whole follow list.
+     */
+    private suspend fun refreshFollowedLive() {
+        val id = userId.ifBlank { return }
+        runCatching { streamRepository.followedLiveStreams(id) }
+            .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+    }
+
     private suspend fun loadLoggedInHome() {
         _state.update { it.copy(isLoggedIn = true, isLoading = it.topStreams.isEmpty(), error = null) }
+        refreshFollowedLive()
         val games = runCatching { channelRepository.topGames() }
             .onSuccess { g -> _state.update { it.copy(games = g) } }
         val top = runCatching { streamRepository.refreshTopStreams() }
@@ -176,6 +186,7 @@ class HomeViewModel(
             _state.update { it.copy(isLoading = true, error = null) }
             val top = runCatching { streamRepository.refreshTopStreams() }
             runCatching { channelRepository.topGames() }.onSuccess { g -> _state.update { it.copy(games = g) } }
+            refreshFollowedLive()
             _state.update {
                 it.copy(
                     isLoading = false,

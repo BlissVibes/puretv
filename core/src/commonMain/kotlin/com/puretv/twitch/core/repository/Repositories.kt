@@ -57,6 +57,9 @@ class StreamRepository(
      * unlike [refreshTopStreams], this is a one-off read so Home's cached top
      * list is never overwritten when the user drills into a category.
      */
+    /** Everything [userId] follows that is live right now, in one Helix call (see TwitchApiClient.getFollowedStreams). */
+    suspend fun followedLiveStreams(userId: String): List<StreamInfo> = apiClient.getFollowedStreams(userId)
+
     suspend fun streamsForGame(gameId: String, first: Int = 40): List<StreamInfo> =
         if (gameId.isBlank()) emptyList() else apiClient.getStreams(gameIds = listOf(gameId), first = first)
 

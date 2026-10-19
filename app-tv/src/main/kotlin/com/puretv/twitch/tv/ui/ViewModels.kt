@@ -115,20 +115,6 @@ class HomeViewModel(
                 _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank()) }
             }
         }
-        // "Following — Live now": query live status directly for the followed
-        // channels, recomputed whenever the follow set changes. Previously this
-        // filtered the global top-streams set for followed logins, so a followed
-        // channel that wasn't one of the biggest streams on all of Twitch never
-        // showed up here even while live, matching the "followed channels aren't
-        // showing" report. streamsForChannels handles Helix's 100-login/20-result
-        // caps internally.
-        viewModelScope.launch {
-            userRepository.followedLogins.collect { follows ->
-                val live = if (follows.isEmpty()) emptyList()
-                    else runCatching { streamRepository.streamsForChannels(follows) }.getOrDefault(emptyList())
-                _state.update { it.copy(followedLive = live) }
-            }
-        }
         refresh()
     }
 
@@ -137,7 +123,13 @@ class HomeViewModel(
         refreshJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = it.topStreams.isEmpty(), error = null) }
             val prefs = settings.flow.first()
-            if (prefs.userId.isNotBlank()) runCatching { userRepository.loadFollows(prefs.userId) }
+            // Live status straight from Twitch on every refresh (resume and the 90s
+            // poll): one /streams/followed call instead of re-downloading the whole
+            // follow list and then checking it.
+            if (prefs.userId.isNotBlank()) {
+                runCatching { streamRepository.followedLiveStreams(prefs.userId) }
+                    .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+            }
             val ok = loadTopStreamsResilient()
             _state.update {
                 it.copy(
@@ -329,17 +321,29 @@ class SearchViewModel(private val channelRepository: ChannelRepository) : ViewMo
     private val _state = MutableStateFlow(SearchUiState())
     val state: StateFlow<SearchUiState> = _state.asStateFlow()
 
+    // Cancel-and-replace: every keystroke used to start its own search and none
+    // were cancelled, so a slow answer for "xq" could land after, and overwrite,
+    // the answer for "xqc". Typing on a remote is slow, so a short pause also
+    // keeps each letter from costing a Helix call.
+    private var searchJob: Job? = null
+
     fun onQueryChange(query: String) {
         _state.update { it.copy(query = query) }
+        searchJob?.cancel()
         if (query.length < 2) {
             _state.update { it.copy(results = emptyList(), isSearching = false) }
             return
         }
-        viewModelScope.launch {
+        searchJob = viewModelScope.launch {
             _state.update { it.copy(isSearching = true) }
+            delay(SEARCH_DEBOUNCE_MS)
             val results = runCatching { channelRepository.search(query) }.getOrDefault(emptyList())
             _state.update { it.copy(results = results, isSearching = false) }
         }
+    }
+
+    private companion object {
+        const val SEARCH_DEBOUNCE_MS = 350L
     }
 }
 

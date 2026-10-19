@@ -103,6 +103,14 @@ fun TvStreamScreen(
         isPlaying = true
     }
 
+    // Local time-to-first-frame mark. Cleared on leave so a released screen's
+    // view model is never called back.
+    DisposableEffect(viewModel) {
+        val listener = { viewModel.onFirstFrame() }
+        tvPlayer.onFirstFrame = listener
+        onDispose { if (tvPlayer.onFirstFrame === listener) tvPlayer.onFirstFrame = null }
+    }
+
     // Apply the selected quality to the player whenever it changes (the quality
     // chips and FAST_FORWARD/REWIND both update `quality`). Runs on first
     // composition too, so the initial SOURCE selection clears any stale cap the

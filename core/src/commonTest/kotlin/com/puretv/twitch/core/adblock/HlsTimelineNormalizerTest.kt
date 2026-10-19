@@ -1,4 +1,4 @@
-package com.puretv.twitch.desktop.player
+package com.puretv.twitch.core.adblock
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

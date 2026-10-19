@@ -13,7 +13,10 @@ import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.puretv.twitch.core.adblock.AdBlockEngine
-import com.puretv.twitch.core.adblock.AdMarkers
+import okhttp3.Protocol
+import io.ktor.client.HttpClient
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.adblock.MediaPlaylistCleaner
 import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.adblock.BackupStreamResolver
 import com.puretv.twitch.core.adblock.PlaylistAction
@@ -41,12 +44,33 @@ import java.util.concurrent.ConcurrentHashMap
 @UnstableApi
 class TvPlayer(
     private val context: Context,
-    private val adBlockEngine: AdBlockEngine,
-    private val backupStreamResolver: BackupStreamResolver,
+    adBlockEngine: AdBlockEngine,
+    backupStreamResolver: BackupStreamResolver,
+    httpClient: HttpClient,
+    playableStreamCache: PlayableStreamCache,
 ) {
     private val okHttpClient = OkHttpClient.Builder()
-        .addInterceptor(TvAdBlockInterceptor(adBlockEngine, backupStreamResolver))
+        .addInterceptor(
+            TvAdBlockInterceptor(
+                adBlockEngine = adBlockEngine,
+                cleaner = MediaPlaylistCleaner(
+                    adBlockEngine = adBlockEngine,
+                    backupStreamResolver = backupStreamResolver,
+                    httpClient = httpClient,
+                    nowMs = System::currentTimeMillis,
+                    // ExoPlayer cannot play an empty window (issue #22); wait for content instead.
+                    holdEmptyWindows = true,
+                ),
+                playableStreamCache = playableStreamCache,
+            ),
+        )
         .build()
+
+    /**
+     * Called when the first video frame of a stream is on screen. Feeds the local
+     * time-to-first-frame mark; the stream view model sets and clears it.
+     */
+    @Volatile var onFirstFrame: (() -> Unit)? = null
 
     /**
      * Backing player. Held lazily and nulled on [release] so this app-wide
@@ -130,6 +154,10 @@ class TvPlayer(
         override fun onPlaybackStateChanged(playbackState: Int) {
             if (playbackState == Player.STATE_READY) errorRetries = 0
         }
+
+        override fun onRenderedFirstFrame() {
+            onFirstFrame?.invoke()
+        }
     }
 
     /**
@@ -199,37 +227,55 @@ class TvPlayer(
 }
 
 /**
- * Removes Twitch ad pods from HLS playlist responses, seamless-first. Ported 1:1
- * from the phone app's `AdBlockInterceptor` (Section 4.2 / 6.3):
- *   1. BACKUP SWAP (primary, seamless), when a media playlist contains a
- *      stitched ad, mint a fresh manifest under an alternate player type
- *      (embed/popout), which Twitch usually serves ad-free for the same live
- *      stream, and serve that quality's CLEAN media playlist. No gap. (Green
- *      pill: AD BLOCKED.)
- *   2. STRIP (fallback), only if every backup player type is ALSO ad-showing,
- *      cut the pod out; the player briefly stalls at the splice. (Yellow pill:
- *      AD FILTERED.)
+ * Removes Twitch ad pods from HLS playlist responses. The decision is made from
+ * the RESPONSE, not the URL: obvious media segments (.ts/.m4s/.mp4/.aac) pass
+ * through untouched and unbuffered; everything else is peeked, and any HLS
+ * playlist (Content-Type mpegurl, or a body starting with #EXTM3U) is handled.
  *
- * The channel + the ad-bearing variant's quality are learned from the master
- * playlist as it passes through (the master URL carries the channel; each
- * #EXT-X-STREAM-INF carries the variant's resolution/frame-rate), keyed by the
- * variant URL path so the media refreshes that follow can look themselves up.
+ * The ad-blocking rules live in core's [MediaPlaylistCleaner], shared by all
+ * three apps: the backup player-type swap first (seamless, green pill), then
+ * stripping (yellow pill), holding an all-ad window instead of handing ExoPlayer
+ * an empty playlist (issue #22), and keeping the timeline continuous across
+ * swaps. This class only adapts OkHttp to it.
+ *
+ * The backup swap needs the channel + the ad-bearing variant's quality; both
+ * are learned from the master playlist as it passes through (the master request
+ * URL carries the channel; its #EXT-X-STREAM-INF lines carry each variant's
+ * resolution/frame-rate), keyed by the variant URL path so the media refreshes
+ * that follow can look themselves up.
  */
 @UnstableApi
 class TvAdBlockInterceptor(
     private val adBlockEngine: AdBlockEngine,
-    private val backupStreamResolver: BackupStreamResolver,
+    private val cleaner: MediaPlaylistCleaner,
+    private val playableStreamCache: PlayableStreamCache,
 ) : Interceptor {
 
-    private data class VariantMeta(val resolution: String, val frameRate: Double)
-
+    // Learned from the master. channelLogin is @Volatile (written on the master
+    // fetch, read on media fetches, possibly different OkHttp threads); the map is
+    // concurrent for the same reason. Keyed by the variant media-playlist URL path.
     @Volatile private var channelLogin: String? = null
-    private val variantByPath = ConcurrentHashMap<String, VariantMeta>()
+    private val variantByPath = ConcurrentHashMap<String, MediaPlaylistCleaner.VariantQuality>()
 
     override fun intercept(chain: Interceptor.Chain): Response {
         val request = chain.request()
 
-        // Honour the user's "Enable ad block" switch: when off, do no filtering.
+        // The view model resolved (and validated) this exact master moments ago:
+        // serve that copy instead of asking usher a second time. A master carries
+        // no ad segments, so this is safe whether ad blocking is on or off.
+        playableStreamCache.masterBody(request.url.toString())?.let { master ->
+            learnFromMaster(request.url, master)
+            return Response.Builder()
+                .request(request)
+                .protocol(Protocol.HTTP_1_1)
+                .code(200)
+                .message("OK")
+                .body(master.toResponseBody(HLS_MEDIA_TYPE))
+                .build()
+        }
+
+        // Honour the user's "Enable ad block" switch: when off, do no filtering at
+        // all (and the engine has already flipped the pill to DISABLED).
         if (!adBlockEngine.isEnabled) {
             return chain.proceed(request)
         }
@@ -261,7 +307,7 @@ class TvAdBlockInterceptor(
         if (rawBody.contains("#EXT-X-STREAM-INF")) {
             learnFromMaster(request.url, rawBody)
             return response.newBuilder()
-                .body(rawBody.toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+                .body(rawBody.toResponseBody(HLS_MEDIA_TYPE))
                 .removeHeader("Content-Length")
                 .build()
         }
@@ -269,10 +315,18 @@ class TvAdBlockInterceptor(
         // Media playlist: AdSimulator only makes sense here (a media playlist with
         // #EXTINF/#EXT-X-MEDIA-SEQUENCE), not on the master.
         val raw = AdSimulator.inject(rawBody)
-        val cleaned = resolveCleanMedia(request.url, raw)
+        val cleaned = runBlocking {
+            cleaner.clean(
+                variantUrl = request.url.toString(),
+                raw = raw,
+                channelLogin = channelLogin,
+                quality = variantByPath[request.url.encodedPath],
+                isCancelled = { chain.call().isCanceled() },
+            )
+        }
 
         return response.newBuilder()
-            .body(cleaned.toResponseBody("application/vnd.apple.mpegurl".toMediaType()))
+            .body(cleaned.content.toResponseBody(HLS_MEDIA_TYPE))
             .removeHeader("Content-Length")
             .build()
     }
@@ -284,53 +338,19 @@ class TvAdBlockInterceptor(
             ?.removeSuffix(".m3u8")
             ?.takeIf { it.isNotBlank() }
         if (channel != null && channel != channelLogin) {
+            // New stream: drop the previous channel's variant map so it can't
+            // grow unbounded across a channel-surfing session.
             variantByPath.clear()
             channelLogin = channel
         }
         runCatching { HlsMasterParser.parseVariants(master) }.getOrNull()?.forEach { variant ->
             variant.url.toHttpUrlOrNull()?.let { url ->
-                variantByPath[url.encodedPath] = VariantMeta(variant.resolution, variant.frameRate)
+                variantByPath[url.encodedPath] = MediaPlaylistCleaner.VariantQuality(variant.resolution, variant.frameRate)
             }
         }
     }
 
-    private fun resolveCleanMedia(requestUrl: HttpUrl, raw: String): String {
-        if (!AdMarkers.containsAds(raw)) {
-            adBlockEngine.reportAdBlocked() // clean refresh, no ad
-            return raw
-        }
-
-        // Tier 1: seamless backup player-type swap (real content, no stall).
-        val channel = channelLogin
-        val meta = variantByPath[requestUrl.encodedPath]
-        if (channel != null && meta != null) {
-            val backup = runCatching {
-                runBlocking {
-                    backupStreamResolver.resolveAdFreeMediaPlaylist(
-                        channelLogin = channel,
-                        targetResolution = meta.resolution,
-                        targetFrameRate = meta.frameRate,
-                        nowMs = System.currentTimeMillis(),
-                    )
-                }
-            }.getOrNull()
-            if (backup != null) {
-                adBlockEngine.reportAdBlocked() // swapped to a clean manifest, no gap
-                return backup.mediaPlaylist
-            }
-        }
-
-        // Tier 2: no clean backup available; strip the pod (brief stall).
-        return try {
-            val filtered = adBlockEngine.filterPlaylist(raw)
-            adBlockEngine.reportFiltered(filtered)
-            filtered.content
-        } catch (t: Throwable) {
-            // Never silently pass ads as success: report the failure so the pill
-            // goes AD_BLOCK_OFF, then return the RAW playlist so playback keeps
-            // running instead of dead-ending.
-            adBlockEngine.reportResolutionFailure()
-            raw
-        }
+    private companion object {
+        val HLS_MEDIA_TYPE = "application/vnd.apple.mpegurl".toMediaType()
     }
 }

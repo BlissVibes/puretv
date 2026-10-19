@@ -19,6 +19,8 @@ import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
+import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.data.TokenRefresher
 import com.puretv.twitch.tv.data.db.CachedStreamDao
@@ -26,6 +28,7 @@ import com.puretv.twitch.tv.data.db.toCachedStream
 import com.puretv.twitch.tv.data.db.toStreamInfo
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -362,19 +365,25 @@ class StreamViewModel(
     private val emoteRepository: EmoteRepository,
     private val adBlockEngine: AdBlockEngine,
     private val settingsStore: AppSettingsStore,
+    private val playableStreamCache: PlayableStreamCache,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
 
-    init {
-        viewModelScope.launch {
-            val channel = runCatching { channelRepository.getChannel(channelLogin) }.getOrNull()
-            val liveInfo = runCatching {
-                streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull()
-            }.getOrNull()
-            _state.update { it.copy(channel = channel, streamInfo = liveInfo, isLoading = false) }
+    private val openTiming = StreamOpenTiming(channelLogin)
 
-            resolvePlayable()
+    init {
+        adBlockEngine.resetForNewStream()
+        // Playback first: resolving the stream does not need the channel info
+        // below, so the picture starts while the metadata loads.
+        viewModelScope.launch { resolvePlayable() }
+        viewModelScope.launch {
+            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
+            val liveLookup = async {
+                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
+            }
+            val channel = channelLookup.await()
+            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
             runCatching { emoteRepository.loadGlobalEmotes() }
             channel?.let { runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) } }
@@ -412,8 +421,9 @@ class StreamViewModel(
      */
     private suspend fun resolvePlayable() {
         _state.update { it.copy(playbackError = null) }
-        runCatching { streamRepository.resolvePlayableStream(channelLogin) }
+        runCatching { playableStreamCache.get(channelLogin) }
             .onSuccess { playable ->
+                openTiming.mark("playable_url")
                 _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) }
             }
             .onFailure { e ->
@@ -428,8 +438,14 @@ class StreamViewModel(
             }
     }
 
-    /** Re-run resolution after a failure (OK on the remote). */
-    fun retry() = viewModelScope.launch { resolvePlayable() }
+    /** Re-run resolution after a failure (OK on the remote), with a fresh session. */
+    fun retry() = viewModelScope.launch {
+        playableStreamCache.invalidate(channelLogin)
+        resolvePlayable()
+    }
+
+    /** The player put this stream's first frame on screen (local timing only). */
+    fun onFirstFrame() = openTiming.mark("first_frame")
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
         chatClient.sendMessage(channelLogin, text)

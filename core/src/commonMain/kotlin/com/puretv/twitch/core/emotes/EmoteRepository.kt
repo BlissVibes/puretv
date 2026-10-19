@@ -5,10 +5,14 @@ import com.puretv.twitch.core.model.EmoteProvider
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import com.puretv.twitch.core.storage.TextStore
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -18,31 +22,65 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.TimeMark
+import kotlin.time.TimeSource
 
 /**
- * SECTION 05.3 — fetches & caches third-party emotes from BTTV, FFZ, and 7TV.
+ * SECTION 05.3: fetches and caches third-party emotes from BTTV, FFZ and 7TV.
  *
- * Cache strategy (per the spec):
- *   - persist emote metadata in Room (Android/TV) / SQLite (Desktop) — see
- *     [EmoteCache] for the storage-agnostic interface this repo writes through
+ * Cache strategy:
+ *   - emote lists persist across restarts through [EmoteCache] (a
+ *     [PersistentEmoteCache] on every app), so chat can show emotes on its very
+ *     first lines; [thirdPartyEmotes] hands out that cached copy first and the
+ *     fresh one when it arrives
+ *   - a provider that fails keeps its cached emotes instead of dropping them
  *   - emote *images* are cached by Coil's disk cache, not here
- *   - channel emotes refresh on every channel join; globals refresh once/session
+ *   - globals refresh once per session; a channel's set refreshes on each join,
+ *     except a re-join within [channelRefreshInterval]
  */
 class EmoteRepository(
     private val httpClient: HttpClient,
     private val cache: EmoteCache,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val timeSource: TimeSource = TimeSource.Monotonic,
+    private val channelRefreshInterval: Duration = 10.minutes,
 ) {
     private var globalsLoadedThisSession = false
+    private val channelFetchLock = Mutex()
+    private val channelFetchedAt = HashMap<String, TimeMark>()
+
+    /**
+     * Everyone's globals plus [channelId]'s own emotes: the copy cached on disk
+     * first (when there is one), then the fresh copy once the providers answer.
+     * Without a channel (the channel lookup failed) only globals are loaded.
+     */
+    fun thirdPartyEmotes(channelId: String?, channelLogin: String?): Flow<ThirdPartyEmotes> = flow {
+        val cached = ThirdPartyEmotes(
+            global = runCatching { cache.globalEmotes() }.getOrNull().orEmpty(),
+            channel = channelId?.let { runCatching { cache.channelEmotes(it) }.getOrNull() }.orEmpty(),
+        )
+        if (cached.global.isNotEmpty() || cached.channel.isNotEmpty()) emit(cached)
+        val fresh = coroutineScope {
+            val global = async { loadGlobalEmotes() }
+            val channel = async {
+                if (channelId != null && channelLogin != null) loadChannelEmotes(channelId, channelLogin) else emptyList()
+            }
+            ThirdPartyEmotes(global.await(), channel.await())
+        }
+        if (fresh != cached) emit(fresh)
+    }
 
     suspend fun loadGlobalEmotes(): List<ChannelEmote> {
-        if (globalsLoadedThisSession) cache.globalEmotes()?.let { return it }
+        val cached = runCatching { cache.globalEmotes() }.getOrNull()
+        if (globalsLoadedThisSession && cached != null) return cached
         return coroutineScope {
             val bttvResult = async { runCatching { fetchBttvGlobal() } }
             val seventvResult = async { runCatching { fetchSevenTvGlobal() } }
             val bttv = bttvResult.await()
             val seventv = seventvResult.await()
-            val all = bttv.getOrDefault(emptyList()) + seventv.getOrDefault(emptyList())
+            val all = bttv.orCached(cached, EmoteProvider.BTTV) + seventv.orCached(cached, EmoteProvider.SEVENTV)
             if (bttv.isSuccess && seventv.isSuccess) {
                 cache.putGlobalEmotes(all)
                 globalsLoadedThisSession = true
@@ -51,26 +89,37 @@ class EmoteRepository(
         }
     }
 
-    suspend fun loadChannelEmotes(channelId: String, channelLogin: String): List<ChannelEmote> = coroutineScope {
-        val bttv = async { runCatching { fetchBttvChannel(channelId) } }
-        val ffz = async { runCatching { fetchFfzChannel(channelLogin) } }
-        val seventv = async { runCatching { fetchSevenTvChannel(channelId) } }
-        val bttvResult = bttv.await()
-        val ffzResult = ffz.await()
-        val seventvResult = seventv.await()
-        val all = bttvResult.getOrDefault(emptyList()) +
-            ffzResult.getOrDefault(emptyList()) +
-            seventvResult.getOrDefault(emptyList())
-        // Only persist when every provider fetch succeeded (audit M3). Mirrors
-        // loadGlobalEmotes: caching a partial/all-failed combined set would
-        // clobber a good cached set with a degraded or empty one on a transient
-        // outage (offline, provider 5xx). The live (possibly partial) `all` is
-        // still returned to the caller for this session.
-        if (bttvResult.isSuccess && ffzResult.isSuccess && seventvResult.isSuccess) {
-            cache.putChannelEmotes(channelId, all)
+    suspend fun loadChannelEmotes(channelId: String, channelLogin: String): List<ChannelEmote> {
+        val cached = runCatching { cache.channelEmotes(channelId) }.getOrNull()
+        val recentlyFetched = channelFetchLock.withLock {
+            channelFetchedAt[channelId]?.let { it.elapsedNow() < channelRefreshInterval } == true
         }
-        all
+        if (recentlyFetched && cached != null) return cached
+        return coroutineScope {
+            val bttv = async { runCatching { fetchBttvChannel(channelId) } }
+            val ffz = async { runCatching { fetchFfzChannel(channelLogin) } }
+            val seventv = async { runCatching { fetchSevenTvChannel(channelId) } }
+            val bttvResult = bttv.await()
+            val ffzResult = ffz.await()
+            val seventvResult = seventv.await()
+            val all = bttvResult.orCached(cached, EmoteProvider.BTTV) +
+                ffzResult.orCached(cached, EmoteProvider.FFZ) +
+                seventvResult.orCached(cached, EmoteProvider.SEVENTV)
+            // Only persist when every provider fetch succeeded (audit M3): caching
+            // a partial set would clobber a good cached one on a transient outage
+            // (offline, provider 5xx). The live set, with the failed providers
+            // filled from the cache, is still returned for this session.
+            if (bttvResult.isSuccess && ffzResult.isSuccess && seventvResult.isSuccess) {
+                cache.putChannelEmotes(channelId, all)
+                channelFetchLock.withLock { channelFetchedAt[channelId] = timeSource.markNow() }
+            }
+            all
+        }
     }
+
+    /** This provider's fresh emotes, or its emotes from [cached] when the fetch failed. */
+    private fun Result<List<ChannelEmote>>.orCached(cached: List<ChannelEmote>?, provider: EmoteProvider): List<ChannelEmote> =
+        getOrNull() ?: cached.orEmpty().filter { it.provider == provider }
 
     // ---- BTTV ----
 
@@ -161,9 +210,12 @@ internal fun JsonObject.toSevenTvEmote(): ChannelEmote {
     )
 }
 
+/** Everyone's global third-party emotes plus one channel's own. */
+data class ThirdPartyEmotes(val global: List<ChannelEmote>, val channel: List<ChannelEmote>)
+
 /**
- * Storage-agnostic cache contract. Implemented by `RoomEmoteCache` on
- * Android/TV and `SqliteEmoteCache` on Desktop (see androidMain/desktopMain).
+ * Storage-agnostic cache contract. Every app uses [PersistentEmoteCache];
+ * [InMemoryEmoteCache] is for tests.
  */
 interface EmoteCache {
     suspend fun globalEmotes(): List<ChannelEmote>?
@@ -188,4 +240,40 @@ class InMemoryEmoteCache : EmoteCache {
     override suspend fun channelEmotes(channelId: String): List<ChannelEmote>? = lock.withLock { channels[channelId] }
     override suspend fun putChannelEmotes(channelId: String, emotes: List<ChannelEmote>) =
         lock.withLock { channels[channelId] = emotes }
+}
+
+/**
+ * [EmoteCache] that survives restarts: each list is kept in memory and written
+ * through to [store] as JSON (one entry for the globals, one per channel), so a
+ * cold start shows emotes before any provider has answered. A corrupt or
+ * unreadable entry is just a miss.
+ */
+class PersistentEmoteCache(private val store: TextStore) : EmoteCache {
+    private val json = Json { ignoreUnknownKeys = true }
+    private val lock = Mutex()
+    private val memory = HashMap<String, List<ChannelEmote>>()
+    private val serializer = ListSerializer(ChannelEmote.serializer())
+
+    override suspend fun globalEmotes(): List<ChannelEmote>? = get(GLOBAL)
+    override suspend fun putGlobalEmotes(emotes: List<ChannelEmote>) = put(GLOBAL, emotes)
+    override suspend fun channelEmotes(channelId: String): List<ChannelEmote>? = get(CHANNEL_PREFIX + channelId)
+    override suspend fun putChannelEmotes(channelId: String, emotes: List<ChannelEmote>) = put(CHANNEL_PREFIX + channelId, emotes)
+
+    private suspend fun get(name: String): List<ChannelEmote>? {
+        lock.withLock { memory[name] }?.let { return it }
+        val text = store.read(name) ?: return null
+        val emotes = runCatching { json.decodeFromString(serializer, text) }.getOrNull() ?: return null
+        lock.withLock { memory[name] = emotes }
+        return emotes
+    }
+
+    private suspend fun put(name: String, emotes: List<ChannelEmote>) {
+        lock.withLock { memory[name] = emotes }
+        store.write(name, json.encodeToString(serializer, emotes))
+    }
+
+    private companion object {
+        const val GLOBAL = "emotes-global.json"
+        const val CHANNEL_PREFIX = "emotes-channel-"
+    }
 }

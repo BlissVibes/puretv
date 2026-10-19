@@ -3,6 +3,9 @@ package com.puretv.twitch.tv.di
 import androidx.media3.common.util.UnstableApi
 import androidx.room.Room
 import com.puretv.twitch.core.di.TokenHolder
+import com.puretv.twitch.core.emotes.EmoteCache
+import com.puretv.twitch.core.emotes.PersistentEmoteCache
+import com.puretv.twitch.core.storage.FileTextStore
 import com.puretv.twitch.core.follows.FollowedChannelsService
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.tv.data.AppSettingsStore
@@ -22,8 +25,10 @@ import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.TvFollowingViewModel
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
+import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
+import java.io.File
 
 /**
  * SECTION 11 / 12.2 — TV-specific Koin bindings layered on top of
@@ -50,6 +55,8 @@ val tvModule = module {
     single { get<PureTvTvDatabase>().cachedStreamDao() }
     single { get<PureTvTvDatabase>().cachedChannelDao() }
     single { get<PureTvTvDatabase>().cachedEmoteDao() }
+    // Emote lists survive restarts so chat shows emotes on its first lines.
+    single<EmoteCache> { PersistentEmoteCache(FileTextStore(File(androidContext().cacheDir, "emotes"))) }
     single { get<PureTvTvDatabase>().watchHistoryDao() }
     single { get<PureTvTvDatabase>().searchHistoryDao() }
 
@@ -69,9 +76,10 @@ val tvModule = module {
     // Singleton: Section 7.4's immersive fullscreen stream screen is the only
     // consumer, but keeping it a Koin singleton (rather than per-screen) keeps
     // the wiring identical to the phone app and avoids re-creating ExoPlayer
-    // on configuration changes. TvPlayer(context, adBlockEngine, backupStreamResolver):
-    // the last one powers the seamless ad-free backup player-type swap.
-    single { TvPlayer(get(), get(), get()) }
+    // on configuration changes. TvPlayer(context, adBlockEngine, backupStreamResolver,
+    // httpClient, playableStreamCache): the backup resolver powers the seamless
+    // ad-free player-type swap; the cache serves the master it already fetched.
+    single { TvPlayer(get(), get(), get(), get(), get()) }
 
     // --- ViewModels --------------------------------------------------------
     // HomeViewModel(streamRepo, userRepo, settings, cachedStreamDao, tokenRefresher):
@@ -86,7 +94,7 @@ val tvModule = module {
     viewModel { BrowseViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { SearchViewModel(get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get()) }
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
     viewModel { SettingsViewModel(get()) }
     // Device Code Grant flow: (httpClient, settingsStore, userRepository).

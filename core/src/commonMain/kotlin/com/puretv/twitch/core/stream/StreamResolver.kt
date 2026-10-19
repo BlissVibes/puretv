@@ -20,6 +20,15 @@ class StreamResolver(
     private val httpClient: HttpClient,
     private val gqlClient: TwitchGqlClient,
 ) {
+    companion object {
+        /**
+         * Player type every app uses for the PRIMARY stream. Twitch targets
+         * `popout` with far fewer ads than the default `site` web player (the
+         * reference userscript forces it for every request), so most streams come
+         * back ad-free before the backup swap is ever needed.
+         */
+        const val PRIMARY_PLAYER_TYPE = "popout"
+    }
 
     suspend fun fetchToken(
         channelLogin: String,

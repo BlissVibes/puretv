@@ -86,15 +86,24 @@ class TwitchApiClient(
      * No extra OAuth scope required (an app/user token works). Best-effort:
      * any failure yields an empty list so the picker degrades gracefully.
      */
-    suspend fun getGlobalEmotes(): List<ChannelEmote> = runCatching {
-        val resp: HelixEnvelope<TwitchEmoteDto> = withRateLimitRetry {
-            authedClient().get("${TwitchConfig.API_BASE}/chat/emotes/global") {
-                header("Client-Id", TwitchConfig.CLIENT_ID)
-                tokenProvider()?.let { header("Authorization", "Bearer $it") }
-            }.body()
-        }
-        parseTwitchEmotes(resp)
-    }.getOrDefault(emptyList())
+    suspend fun getGlobalEmotes(): List<ChannelEmote> {
+        // Twitch's global set rarely changes and every stream open asks for it,
+        // so the first real answer is kept for the session.
+        globalEmotesCache?.let { return it }
+        val fresh = runCatching {
+            val resp: HelixEnvelope<TwitchEmoteDto> = withRateLimitRetry {
+                authedClient().get("${TwitchConfig.API_BASE}/chat/emotes/global") {
+                    header("Client-Id", TwitchConfig.CLIENT_ID)
+                    tokenProvider()?.let { header("Authorization", "Bearer $it") }
+                }.body()
+            }
+            parseTwitchEmotes(resp)
+        }.getOrDefault(emptyList())
+        if (fresh.isNotEmpty()) globalEmotesCache = fresh
+        return fresh
+    }
+
+    @Volatile private var globalEmotesCache: List<ChannelEmote>? = null
 
     /**
      * GET /chat/emotes?broadcaster_id= — a channel's first-party Twitch emotes

@@ -16,7 +16,7 @@ import com.puretv.twitch.core.perf.TimingLog
 import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.player.LocalStreamProxy
-import com.puretv.twitch.desktop.player.DesktopPlayer
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.ui.App
 import io.ktor.client.HttpClient
 import javax.swing.SwingUtilities
@@ -53,7 +53,7 @@ fun main() {
         }
     }
 
-    val vlcPlayer = koinApp.koin.get<DesktopPlayer>()
+    val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()
     val localStreamProxy = koinApp.koin.get<LocalStreamProxy>()
     Runtime.getRuntime().addShutdownHook(Thread {
         // The stores now persist off the UI thread via a conflated async writer; flush
@@ -63,7 +63,7 @@ fun main() {
         runCatching { koinApp.koin.get<WatchProgressStore>().flush() }
         runCatching { koinApp.koin.get<ViewerHistoryStore>().flush() }
         runCatching { runBlocking { localStreamProxy.stop() } }
-        runCatching { vlcPlayer.release() }
+        runCatching { playerProvider.releaseIfCreated() }
     })
 
     // Create icon once before the Compose application loop so it isn't
@@ -85,6 +85,9 @@ fun main() {
             // where the HWND isn't bound yet at first composition.
             LaunchedEffect(Unit) {
                 TimingLog.log("app.first_window", TimingFileSink.sinceProcessStartMs())
+                // The window is up: now build the player in the background, so the
+                // first stream open finds it ready without having delayed startup.
+                launch(Dispatchers.IO) { runCatching { playerProvider.warmUp() } }
                 if (!WindowsNative.enableBorderlessSnap(window)) {
                     SwingUtilities.invokeLater { WindowsNative.enableBorderlessSnap(window) }
                 }
@@ -107,7 +110,7 @@ fun main() {
     // the player, then hard-exit. exitProcess still runs the shutdown hook above,
     // which flushes the persistence stores.
     runCatching { runBlocking { withTimeoutOrNull(3_000) { localStreamProxy.stop() } } }
-    runCatching { vlcPlayer.release() }
+    runCatching { playerProvider.releaseIfCreated() }
     exitProcess(0)
 }
 

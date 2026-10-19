@@ -39,6 +39,7 @@ import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
@@ -52,6 +53,7 @@ import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.ui.chat.ChatModeration
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -328,6 +330,7 @@ class StreamViewModel(
     private val apiClient: TwitchApiClient,
     private val sevenTvEventClient: SevenTvEventClient,
     private val badgeRepository: BadgeRepository,
+    private val playableStreamCache: PlayableStreamCache,
 ) : DesktopViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -374,6 +377,7 @@ class StreamViewModel(
         .stateIn(scope, SharingStarted.Eagerly, followStore.isFollowed(channelLogin))
 
     init {
+        adBlockEngine.resetForNewStream()
         scope.launch {
             // SECTION 08.3 — VLC talks to our local proxy (port 7979), never
             // straight to Twitch's CDN: that's the choke point where every
@@ -392,54 +396,53 @@ class StreamViewModel(
                 return@launch
             }
 
-            val channel = runCatching { channelRepository.getChannel(channelLogin) }.getOrNull()
-            val liveInfo = runCatching {
-                streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull()
-            }.getOrNull()
             val preferredQuality = runCatching {
                 StreamQuality.valueOf(settingsStore.settings.value.preferredQuality.uppercase())
             }.getOrDefault(StreamQuality.AUTO)
 
-            _state.update {
-                it.copy(channel = channel, streamInfo = liveInfo, currentQuality = preferredQuality, isLoading = false)
+            // Playback first: VLC only needs the local proxy URL, and the proxy
+            // resolves the stream itself, so nothing below holds up the picture.
+            playAt(preferredQuality)
+
+            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
+            val liveLookup = async {
+                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
             }
+            // Twitch's own globals need no channel id, so ask for them right away.
+            val twitchGlobalLookup = async { runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList()) }
+            val channel = channelLookup.await()
+            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
             // Badge art only needs the channel id, not the emote lists below, so fetch it
-            // on its own coroutine instead of waiting behind the sequential emote-loading
-            // chain. That way early chat messages don't render the "MOD"/"SUB" text-chip
-            // fallback for longer than necessary. Best-effort: failure keeps the chips.
+            // on its own coroutine. That way early chat messages don't render the
+            // "MOD"/"SUB" text-chip fallback for longer than necessary. Best-effort:
+            // failure keeps the chips.
             channel?.let { ch ->
                 scope.launch {
                     val badgeIndex = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
                     _state.update { it.copy(badges = badgeIndex) }
                 }
             }
+            val twitchChannelLookup = async {
+                channel?.let { runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList()) }
+                    ?: emptyList()
+            }
 
-            playAt(preferredQuality)
-
-            // Assemble the unified pickable-emote list: third-party (BTTV/FFZ/7TV)
-            // globals + first-party Twitch globals, then the channel-specific sets.
-            // Each fetch is best-effort so one provider failing doesn't sink the rest.
-            tpGlobalEmotes = runCatching { emoteRepository.loadGlobalEmotes() }.getOrDefault(emptyList())
-            twitchGlobalEmotes = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
-            // Resolve globals immediately (before channel emotes load): incoming gets
-            // third-party globals; self-echo additionally gets first-party Twitch
-            // globals so a typed emote in your own message renders right away. Honor the
-            // provider toggles/priority here too so a disabled provider never flashes in.
-            val globEnabled = enabledThirdPartyProviders()
-            val tpGlobFiltered = prioritizeThirdParty(tpGlobalEmotes, globEnabled)
-            emoteIndex = buildEmoteIndex(emptyList(), tpGlobFiltered)
-            selfEchoIndex = buildEmoteIndex(emptyList(), tpGlobFiltered, emptyList(), twitchGlobalEmotes)
-            channel?.let { ch ->
-                tpChannelEmotes = runCatching { emoteRepository.loadChannelEmotes(ch.id, ch.login) }.getOrDefault(emptyList())
-                twitchChannelEmotes = runCatching { apiClient.getChannelTwitchEmotes(ch.id) }.getOrDefault(emptyList())
-                // Build indices + picker from the now-complete source lists and re-map
-                // any messages that arrived before emotes finished loading.
+            // Third-party (BTTV/FFZ/7TV) emotes: the copy cached from the last visit
+            // first, so the first chat lines already render, then the fresh set. Each
+            // pass rebuilds the indices and picker (honoring the provider toggles and
+            // priority) and re-maps messages that arrived before emotes loaded.
+            twitchGlobalEmotes = twitchGlobalLookup.await()
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpGlobalEmotes = emotes.global
+                tpChannelEmotes = emotes.channel
                 rebuildEmoteIndicesAndPublish()
                 openTiming.mark("emotes_ready")
-                // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
-                sevenTvEventClient.connect(ch.id)
             }
+            twitchChannelEmotes = twitchChannelLookup.await()
+            rebuildEmoteIndicesAndPublish()
+            // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
+            channel?.let { sevenTvEventClient.connect(it.id) }
         }
         // Live 7TV emote updates: fold each delta into the channel set and rebuild.
         scope.launch {
@@ -475,6 +478,8 @@ class StreamViewModel(
                     continue
                 }
                 if (playbackStallWatchdog.sample(vlcPlayer.status.value, System.currentTimeMillis())) {
+                    // A stalled session should not be reused: mint a fresh one.
+                    playableStreamCache.invalidate(channelLogin)
                     vlcPlayer.play(url)
                 }
             }

@@ -63,7 +63,7 @@ class StreamRepository(
     suspend fun resolvePlayableStream(
         channelLogin: String,
         oauthToken: String? = null,
-        playerType: String = "site",
+        playerType: String = StreamResolver.PRIMARY_PLAYER_TYPE,
     ) = streamResolver.resolveMasterPlaylist(channelLogin, oauthToken, playerType)
 }
 

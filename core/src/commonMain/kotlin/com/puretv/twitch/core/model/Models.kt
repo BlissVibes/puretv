@@ -164,6 +164,7 @@ sealed class ChatEvent {
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
 }
 
+@Serializable
 data class ChannelEmote(
     val id: String,
     val name: String,

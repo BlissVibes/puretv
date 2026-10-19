@@ -36,15 +36,19 @@ import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.ChannelEmote
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
+import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.session.SessionState
 import io.ktor.client.HttpClient
 import kotlin.jvm.Volatile
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -324,6 +328,7 @@ class StreamViewModel(
     private val twitchPlayer: TwitchPlayer,
     private val apiClient: TwitchApiClient,
     private val backgroundPlayback: BackgroundPlayback,
+    private val playableStreamCache: PlayableStreamCache,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -344,53 +349,70 @@ class StreamViewModel(
     // third-party-only [StreamUiState.emotes] map.
     private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
 
+    private val openTiming = StreamOpenTiming(channelLogin)
+    private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
+
     init {
+        adBlockEngine.resetForNewStream()
+        twitchPlayer.onFirstFrame = firstFrameListener
+        // Playback first: resolving the stream does not need the channel info
+        // below, so the player starts while the metadata and emotes load.
+        viewModelScope.launch { resolvePlayable() }
         viewModelScope.launch {
-            val channel = runCatching { channelRepository.getChannel(channelLogin) }.getOrNull()
-            val liveInfo = runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
-            _state.update { it.copy(channel = channel, streamInfo = liveInfo, isLoading = false) }
+            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
+            val liveLookup = async {
+                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
+            }
+            // Twitch's own globals need no channel id, so ask for them right away.
+            val twitchGlobalLookup = async { runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList()) }
+            val channel = channelLookup.await()
+            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
             // Record this open for the Home "Continue watching" rail.
             channel?.let { ch ->
-                runCatching {
-                    watchHistoryDao.upsert(
-                        WatchHistoryEntry(
-                            channelLogin = ch.login,
-                            channelDisplayName = ch.displayName,
-                            lastWatchedEpochMs = System.currentTimeMillis(),
-                            totalWatchTimeMs = 0L,
-                        ),
-                    )
+                launch {
+                    runCatching {
+                        watchHistoryDao.upsert(
+                            WatchHistoryEntry(
+                                channelLogin = ch.login,
+                                channelDisplayName = ch.displayName,
+                                lastWatchedEpochMs = System.currentTimeMillis(),
+                                totalWatchTimeMs = 0L,
+                            ),
+                        )
+                    }
                 }
             }
 
-            resolvePlayable()
+            val twitchChannelLookup = async {
+                channel?.let { runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList()) }
+                    ?: emptyList()
+            }
 
-            val global = runCatching { emoteRepository.loadGlobalEmotes() }.getOrDefault(emptyList())
-            val channelEmotes = channel?.let {
-                runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) }.getOrDefault(emptyList())
-            } ?: emptyList()
-            // Android has no per-provider toggles in its settings UI, so every
-            // provider is on; prioritizeThirdParty still applies the 7TV > BTTV > FFZ
-            // collision order the desktop uses. The picker and echo get the
-            // third-party sets right away, so a slow Helix call can't leave the
-            // picker empty.
-            val tpChannel = prioritizeThirdParty(channelEmotes, ALL_THIRD_PARTY)
-            val tpGlobal = prioritizeThirdParty(global, ALL_THIRD_PARTY)
-            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
-            _state.update { s ->
-                s.copy(
-                    emotes = (global + channelEmotes).associate { it.name to it.url },
-                    pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
-                )
+            // Third-party emotes: the copy cached from the last visit first, so the
+            // first chat lines already render, then the fresh set. Android has no
+            // per-provider toggles in its settings UI, so every provider is on;
+            // prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision
+            // order the desktop uses.
+            var tpChannel = emptyList<ChannelEmote>()
+            var tpGlobal = emptyList<ChannelEmote>()
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannel = prioritizeThirdParty(emotes.channel, ALL_THIRD_PARTY)
+                tpGlobal = prioritizeThirdParty(emotes.global, ALL_THIRD_PARTY)
+                selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
+                _state.update { s ->
+                    s.copy(
+                        emotes = (emotes.global + emotes.channel).associate { it.name to it.url },
+                        pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
+                    )
+                }
+                openTiming.mark("emotes_ready")
             }
 
             // First-party Twitch emotes (Helix; best-effort, empty without a token)
             // then join the picker, autocomplete and self-echo only, never incoming rows.
-            val twitchGlobal = runCatching { apiClient.getGlobalEmotes() }.getOrDefault(emptyList())
-            val twitchChannel = channel?.let {
-                runCatching { apiClient.getChannelTwitchEmotes(it.id) }.getOrDefault(emptyList())
-            } ?: emptyList()
+            val twitchGlobal = twitchGlobalLookup.await()
+            val twitchChannel = twitchChannelLookup.await()
             selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
             _state.update { s ->
                 s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))
@@ -436,12 +458,19 @@ class StreamViewModel(
      */
     private suspend fun resolvePlayable() {
         _state.update { it.copy(playbackError = null) }
-        runCatching { streamRepository.resolvePlayableStream(channelLogin) }
-            .onSuccess { playable -> _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) } }
+        runCatching { playableStreamCache.get(channelLogin) }
+            .onSuccess { playable ->
+                openTiming.mark("playable_url")
+                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) }
+            }
             .onFailure { e -> _state.update { it.copy(playbackError = e.message ?: "Could not load this stream. It may be offline.") } }
     }
 
-    fun retry() = viewModelScope.launch { resolvePlayable() }
+    fun retry() = viewModelScope.launch {
+        // A retry follows a failure, so never reuse the cached session.
+        playableStreamCache.invalidate(channelLogin)
+        resolvePlayable()
+    }
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
         chatClient.sendMessage(channelLogin, text)
@@ -478,6 +507,8 @@ class StreamViewModel(
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
         twitchPlayer.stop()
+        // A stream opened on top of this one may already own the callback.
+        if (twitchPlayer.onFirstFrame === firstFrameListener) twitchPlayer.onFirstFrame = null
         // In-app Back means done watching, not "keep playing in the background":
         // the media notification goes with the stream.
         backgroundPlayback.onStreamClosed()

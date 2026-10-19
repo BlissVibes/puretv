@@ -668,7 +668,12 @@ class LoginViewModel(
                         // then look up the account identity (Helix /users with no
                         // params returns the current user) and persist it so chat
                         // sends under the right name and Settings shows the username.
-                        settingsStore.setSession(accessToken = token.accessToken, refreshToken = token.refreshToken)
+                        // The expiry lets TokenRefresher renew it before it lapses.
+                        settingsStore.setSession(
+                            accessToken = token.accessToken,
+                            refreshToken = token.refreshToken,
+                            expiresAtEpochSeconds = System.currentTimeMillis() / 1_000 + token.expiresInSeconds,
+                        )
                         val me = runCatching { userRepository.getCurrentUser() }.getOrNull()
                         if (me != null) {
                             settingsStore.setSession(
@@ -779,8 +784,11 @@ class FollowingViewModel(
  * session's cached streams (empty on a true first launch, where Welcome falls
  * back to a branded gradient). Connect itself is handled by LoginViewModel.
  */
-class WelcomeViewModel(cachedStreamDao: CachedStreamDao) : ViewModel() {
+class WelcomeViewModel(cachedStreamDao: CachedStreamDao, settingsStore: AppSettingsStore) : ViewModel() {
     val thumbnails: StateFlow<List<String>> = cachedStreamDao.observeAll()
         .map { rows -> rows.mapNotNull { it.thumbnailUrl.ifBlank { null } }.take(9) }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** True when Twitch, not the viewer, ended the session (see TokenRefresher). */
+    val signedOutByTwitch: StateFlow<Boolean> = settingsStore.signedOutByTwitch
 }

@@ -15,6 +15,8 @@ import com.puretv.twitch.core.session.SessionState
 import com.puretv.twitch.core.session.deriveSessionState
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
@@ -166,20 +168,44 @@ class AppSettingsStore(
         }
     }
 
-    /** Persists a fresh OAuth session (post token-exchange) to encrypted storage. */
-    fun setSession(accessToken: String, refreshToken: String?, username: String = "", userId: String = "") {
-        secureTokenStore.save(accessToken, refreshToken, username, userId)
+    /**
+     * Persists a fresh OAuth session (post token-exchange) to encrypted storage.
+     * [expiresAtEpochSeconds] null keeps the stored expiry, for writes that only
+     * fill in the identity.
+     */
+    fun setSession(
+        accessToken: String,
+        refreshToken: String?,
+        username: String = "",
+        userId: String = "",
+        expiresAtEpochSeconds: Long? = null,
+    ) {
+        val expiry = expiresAtEpochSeconds ?: secureTokenStore.expiresAtEpochSeconds()
+        secureTokenStore.save(accessToken, refreshToken, username, userId, expiry)
         tokenHolder.update(accessToken)
         tokenState.value = TokenSnapshot(accessToken, username, userId)
+        _signedOutByTwitch.value = false
     }
 
-    fun clearSession() {
+    /**
+     * Signs out. [revokedByTwitch] marks a sign-out the viewer did not ask for
+     * (Twitch rejected the saved sign-in, for example after a password change or
+     * "disconnect" on twitch.tv), so the Welcome screen can say why instead of
+     * the app just looking logged out for no reason.
+     */
+    fun clearSession(revokedByTwitch: Boolean = false) {
         secureTokenStore.clear()
         tokenHolder.update(null)
         tokenState.value = TokenSnapshot("", "", "")
+        _signedOutByTwitch.value = revokedByTwitch
     }
 
+    private val _signedOutByTwitch = MutableStateFlow(false)
+    val signedOutByTwitch: StateFlow<Boolean> = _signedOutByTwitch.asStateFlow()
+
     fun currentRefreshToken(): String? = secureTokenStore.refreshToken()
+
+    fun tokenExpiresAtEpochSeconds(): Long = secureTokenStore.expiresAtEpochSeconds()
 
     private companion object {
         const val TAG = "AppSettingsStore"

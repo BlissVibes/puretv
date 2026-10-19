@@ -90,7 +90,7 @@ val androidModule = module {
     // not matter as long as every type is bound above (the DAOs are).
     viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
     viewModel { FollowingViewModel(get(), get()) }
-    viewModel { WelcomeViewModel(get()) }
+    viewModel { WelcomeViewModel(get(), get()) }
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }

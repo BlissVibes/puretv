@@ -110,13 +110,23 @@ class SecureTokenStore(context: Context) {
     fun username(): String? = read(KEY_USERNAME)
     fun userId(): String? = read(KEY_USER_ID)
 
-    fun save(accessToken: String?, refreshToken: String?, username: String = "", userId: String = "") {
+    /** When the access token expires (epoch seconds), or 0 when unknown (saved by an older version). */
+    fun expiresAtEpochSeconds(): Long = read(KEY_EXPIRES_AT)?.toLongOrNull() ?: 0L
+
+    fun save(
+        accessToken: String?,
+        refreshToken: String?,
+        username: String = "",
+        userId: String = "",
+        expiresAtEpochSeconds: Long = 0L,
+    ) {
         val store = prefs
         if (store == null) {
             memory[KEY_ACCESS] = accessToken
             memory[KEY_REFRESH] = refreshToken
             memory[KEY_USERNAME] = username
             memory[KEY_USER_ID] = userId
+            memory[KEY_EXPIRES_AT] = expiresAtEpochSeconds.toString()
             return
         }
         store.edit()
@@ -124,6 +134,7 @@ class SecureTokenStore(context: Context) {
             .putString(KEY_REFRESH, refreshToken)
             .putString(KEY_USERNAME, username)
             .putString(KEY_USER_ID, userId)
+            .putString(KEY_EXPIRES_AT, expiresAtEpochSeconds.toString())
             .apply()
     }
 
@@ -163,5 +174,6 @@ class SecureTokenStore(context: Context) {
         const val KEY_REFRESH = "refresh_token"
         const val KEY_USERNAME = "username"
         const val KEY_USER_ID = "user_id"
+        const val KEY_EXPIRES_AT = "expires_at_epoch_seconds"
     }
 }

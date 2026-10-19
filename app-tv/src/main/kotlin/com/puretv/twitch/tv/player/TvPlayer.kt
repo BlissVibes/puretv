@@ -71,6 +71,9 @@ class TvPlayer(
                 playableStreamCache = playableStreamCache,
                 audioOnly = { audioOnly },
                 lowLatency = { lowLatency },
+                // Source is forced to the top rendition and audio only has one:
+                // no automatic quality to mislead with prefetch downloads.
+                singleRendition = { pickedSource || audioOnly },
             ),
         )
         .build()
@@ -233,6 +236,9 @@ class TvPlayer(
      */
     @Volatile private var audioOnly = false
 
+    // Source forces the top rendition, so the player never picks by bandwidth.
+    @Volatile private var pickedSource = false
+
     /**
      * SECTION 7.4: pick a quality on the live HLS ladder (FAST_FORWARD/REWIND and
      * the quality chips drive this). AUTO lets ABR pick what the link sustains;
@@ -244,6 +250,7 @@ class TvPlayer(
         val builder = exoPlayer.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_VIDEO, false)
             .setForceHighestSupportedBitrate(quality == StreamQuality.SOURCE)
+        pickedSource = quality == StreamQuality.SOURCE
         when (quality) {
             StreamQuality.SOURCE, StreamQuality.AUTO, StreamQuality.AUDIO_ONLY -> builder.clearVideoSizeConstraints()
             StreamQuality.P1080P60 -> builder.setMaxVideoSize(1920, 1080)
@@ -279,6 +286,9 @@ class TvPlayer(
     fun stop() {
         mainHandler.removeCallbacks(retryRunnable)
         mainHandler.removeCallbacks(latencySample)
+        // The next stream applies its own quality; it must not open as audio
+        // only because this one was.
+        audioOnly = false
         _exoPlayer?.run {
             stop()
             clearMediaItems()
@@ -334,6 +344,8 @@ class TvAdBlockInterceptor(
     private val audioOnly: () -> Boolean,
     /** The playing stream's low-latency choice, for playlists that skip the cleaner. */
     private val lowLatency: () -> Boolean,
+    /** True while the player plays one rendition only (see [MediaPlaylistCleaner.clean]). */
+    private val singleRendition: () -> Boolean,
 ) : Interceptor {
 
     // Learned from the master. channelLogin is @Volatile (written on the master
@@ -397,7 +409,11 @@ class TvAdBlockInterceptor(
         // pass through unfiltered (and the engine has already flipped the pill to
         // DISABLED). Low latency still applies while no ad is showing.
         if (!adBlockEngine.isEnabled) {
-            val passed = if (lowLatency() && !AdMarkers.containsAds(rawBody)) TwitchPrefetch.promote(rawBody) else rawBody
+            val passed = if (lowLatency() && !AdMarkers.containsAds(rawBody)) {
+                TwitchPrefetch.liveEdge(rawBody, promotePrefetch = singleRendition())
+            } else {
+                rawBody
+            }
             return response.newBuilder()
                 .body(passed.toResponseBody(HLS_MEDIA_TYPE))
                 .removeHeader("Content-Length")
@@ -414,6 +430,7 @@ class TvAdBlockInterceptor(
                 channelLogin = channelLogin,
                 quality = variantByPath[request.url.encodedPath],
                 isCancelled = { chain.call().isCanceled() },
+                singleRendition = singleRendition(),
             )
         }
 

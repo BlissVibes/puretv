@@ -114,9 +114,11 @@ fun PlayerSurface(
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> {
-                    val inPip =
-                        (context as? android.app.Activity)?.isInPictureInPictureMode == true
-                    backgroundPlayback.onAppStopped(inPip)
+                    val activity = context as? android.app.Activity
+                    backgroundPlayback.onAppStopped(
+                        inPip = activity?.isInPictureInPictureMode == true,
+                        changingConfigurations = activity?.isChangingConfigurations == true,
+                    )
                 }
                 Lifecycle.Event.ON_RESUME -> backgroundPlayback.onAppResumed()
                 else -> Unit

@@ -57,6 +57,32 @@ class TwitchPrefetchTest {
         assertEquals(listOf("seg-7231", "seg-7232", "seg-7233", "seg-7234"), uris(stripped))
     }
 
+    @Test
+    fun theTargetDurationDropsToTheSegmentLength() {
+        val tight = TwitchPrefetch.tightenTargetDuration(FIRST)
+        assertTrue("#EXT-X-TARGETDURATION:2\n" in tight, tight)
+        assertEquals(FIRST.replace("#EXT-X-TARGETDURATION:6", "#EXT-X-TARGETDURATION:2"), tight)
+    }
+
+    @Test
+    fun theTargetDurationIsNeverRaisedAndRoundsHalfUp() {
+        val already = FIRST.replace("#EXT-X-TARGETDURATION:6", "#EXT-X-TARGETDURATION:2")
+        assertEquals(already, TwitchPrefetch.tightenTargetDuration(already))
+        val longer = FIRST.replaceFirst("#EXTINF:2.000,live", "#EXTINF:2.500,live")
+        assertTrue("#EXT-X-TARGETDURATION:3\n" in TwitchPrefetch.tightenTargetDuration(longer))
+        val noSegments = "#EXTM3U\n#EXT-X-TARGETDURATION:6\n"
+        assertEquals(noSegments, TwitchPrefetch.tightenTargetDuration(noSegments))
+    }
+
+    @Test
+    fun liveEdgePromotesOnlyWhenAsked() {
+        assertEquals(6, uris(TwitchPrefetch.liveEdge(FIRST, promotePrefetch = true)).size)
+        val auto = TwitchPrefetch.liveEdge(FIRST, promotePrefetch = false)
+        assertEquals(4, uris(auto).size)
+        assertFalse("#EXT-X-TWITCH-PREFETCH" in auto)
+        assertTrue("#EXT-X-TARGETDURATION:2\n" in auto)
+    }
+
     private fun uris(playlist: String) =
         playlist.lines().filter { it.isNotBlank() && !it.startsWith("#") }.map { it.substringAfterLast('/') }
 

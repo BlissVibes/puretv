@@ -137,27 +137,42 @@ class MediaPlaylistCleanerTest {
     }
 
     @Test
-    fun lowLatencyPromotesPrefetchHintsOnACleanPlaylist() = runTest {
+    fun lowLatencyPromotesPrefetchHintsOnlyForASingleRendition() = runTest {
         val raw = contentWindow(firstSequence = 100) + "#EXT-X-TWITCH-PREFETCH:https://cdn.invalid/v1/segment/content-104\n"
         val http = client { respond("", HttpStatusCode.OK) }
-        val on = cleaner(http, engine(), lowLatency = true).clean(variantUrl, raw, channelLogin = null, quality = null)
-        assertEquals(5, MediaPlaylistCleaner.segmentCount(on.content))
-        assertFalse("#EXT-X-TWITCH-PREFETCH" in on.content)
 
-        val off = cleaner(http, engine(), lowLatency = false).clean(variantUrl, raw, channelLogin = null, quality = null)
+        val single = cleaner(http, engine(), lowLatency = true)
+            .clean(variantUrl, raw, channelLogin = null, quality = null, singleRendition = true)
+        assertEquals(5, MediaPlaylistCleaner.segmentCount(single.content))
+        assertFalse("#EXT-X-TWITCH-PREFETCH" in single.content)
+        assertTrue("#EXT-X-TARGETDURATION:2" in single.content, single.content)
+
+        // A player choosing quality by download speed would read a segment still
+        // being written as a slow link, so it only gets the faster refresh.
+        val auto = cleaner(http, engine(), lowLatency = true)
+            .clean(variantUrl, raw, channelLogin = null, quality = null, singleRendition = false)
+        assertEquals(4, MediaPlaylistCleaner.segmentCount(auto.content))
+        assertTrue("#EXT-X-TARGETDURATION:2" in auto.content, auto.content)
+
+        val off = cleaner(http, engine(), lowLatency = false)
+            .clean(variantUrl, raw, channelLogin = null, quality = null, singleRendition = true)
         assertEquals(4, MediaPlaylistCleaner.segmentCount(off.content))
+        assertTrue("#EXT-X-TARGETDURATION:5" in off.content, off.content)
     }
 
     @Test
     fun aStrippedAdWindowNeverKeepsPrefetchHints() = runTest {
         // Ads, no backup to swap to: the pod is stripped, and the hints (which can
-        // be ad segments) go too, even with low latency on.
+        // be ad segments) go too, even with low latency on. Twitch's own target
+        // duration stays, so the player's stuck-playlist timeout is unchanged.
         val raw = PrerollWindowTest.REAL_PREROLL_WINDOW + "\n#EXT-X-TWITCH-PREFETCH:https://cdn.invalid/v1/segment/next\n"
         val result = cleaner(client { respond("", HttpStatusCode.OK) }, engine(), hold = false, lowLatency = true)
-            .clean(variantUrl, raw, channelLogin = null, quality = null)
+            .clean(variantUrl, raw, channelLogin = null, quality = null, singleRendition = true)
         assertEquals(MediaPlaylistCleaner.Strategy.STRIP, result.strategy)
         assertFalse("#EXT-X-TWITCH-PREFETCH" in result.content)
         assertFalse("cdn.invalid/v1/segment/next" in result.content)
+        val declared = raw.lines().first { it.startsWith("#EXT-X-TARGETDURATION:") }
+        assertTrue(declared in result.content, result.content)
     }
 
     @Test

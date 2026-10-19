@@ -213,7 +213,8 @@ class LocalStreamProxy(
                                 }
                                 // CRITICAL: rewrite variant URLs so VLC fetches each per-quality
                                 // media playlist through us (ad-block choke point).
-                                val rewrittenMaster = rewriteVariantUrls(qualityFiltered, channel)
+                                val singleRendition = HlsMasterParser.parseVariants(qualityFiltered).size == 1
+                                val rewrittenMaster = rewriteVariantUrls(qualityFiltered, channel, singleRendition)
                                 lastSuccess.set(snapshot(channel, result, rewrittenMaster))
                                 call.respondText(
                                     text = rewrittenMaster,
@@ -311,6 +312,7 @@ class LocalStreamProxy(
                             channelLogin = channel.ifBlank { null },
                             quality = MediaPlaylistCleaner.VariantQuality(resolution, frameRate),
                             forceAd = simulateAds.get(),
+                            singleRendition = call.request.queryParameters["single"] == "1",
                         )
                         when (cleaned.strategy) {
                             MediaPlaylistCleaner.Strategy.BACKUP -> variantBackupSwaps.incrementAndGet()
@@ -491,7 +493,8 @@ class LocalStreamProxy(
      * playlist) reference and rewritten to point at our `/variant` route,
      * carrying the [channel] plus the variant's RESOLUTION/FRAME-RATE (read
      * from the preceding `#EXT-X-STREAM-INF`) so `/variant` can request the
-     * same quality from a backup player type. Comment/tag lines are preserved
+     * same quality from a backup player type, and whether it is the only
+     * rendition VLC was given ([singleRendition]). Comment/tag lines are preserved
      * verbatim — only URI lines change.
      *
      * Twitch's master playlists use absolute URLs exclusively (verified
@@ -500,7 +503,7 @@ class LocalStreamProxy(
      * that ever changes a stream will fail loudly (VLC can't fetch a
      * relative URL with no base) rather than silently leak ads.
      */
-    private fun rewriteVariantUrls(masterPlaylist: String, channel: String): String {
+    private fun rewriteVariantUrls(masterPlaylist: String, channel: String, singleRendition: Boolean): String {
         val out = StringBuilder(masterPlaylist.length + 512)
         var pendingResolution = ""
         var pendingFrameRate = ""
@@ -525,6 +528,9 @@ class LocalStreamProxy(
                     if (pendingFrameRate.isNotBlank()) {
                         out.append("&fps=").append(URLEncoder.encode(pendingFrameRate, StandardCharsets.UTF_8))
                     }
+                    // VLC has no other rendition to switch to, so low latency may
+                    // promote prefetch hints (see TwitchPrefetch).
+                    if (singleRendition) out.append("&single=1")
                     out.append('\n')
                     pendingResolution = ""
                     pendingFrameRate = ""

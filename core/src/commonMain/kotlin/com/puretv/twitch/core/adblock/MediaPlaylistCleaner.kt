@@ -27,10 +27,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *      ad. Only ExoPlayer turns this on; VLC handles the empty window itself
  *      and Windows has its own stall watchdog.
  *
- * Ad-free results (1 and 2) end at the live edge: with [lowLatency] on, Twitch's
- * prefetch hints become ordinary segments ([TwitchPrefetch]), which puts the
- * player a few seconds closer to live. Results that still had ads (3, or a
- * failure) never keep prefetch hints, since those can be ad segments.
+ * Ad-free results (1 and 2) end at the live edge when [lowLatency] is on: the
+ * playlist refreshes every segment, and for a player on one rendition Twitch's
+ * prefetch hints become ordinary segments ([TwitchPrefetch.liveEdge]). Results
+ * that still had ads (3, or a failure) keep Twitch's own target duration and
+ * never keep prefetch hints, since those can be ad segments.
  *
  * Every result then goes through [HlsTimelineNormalizer], because a backup
  * session numbers its segments differently from the primary one and the
@@ -46,7 +47,7 @@ class MediaPlaylistCleaner(
     private val holdPollMs: Long = 2_000,
     private val holdMaxMs: Long = 40_000,
     private val pause: suspend (Long) -> Unit = { delay(it) },
-    /** Read on every refresh, so the Settings switch applies to the stream that is playing. */
+    /** The low-latency setting, read on every refresh. */
     private val lowLatency: () -> Boolean = { false },
 ) {
     private val timeline = HlsTimelineNormalizer()
@@ -73,6 +74,8 @@ class MediaPlaylistCleaner(
      * [channelLogin] and [quality] there is nothing to mint a backup for, so ads
      * go straight to stripping. [forceAd] is the Windows ad-simulation test hook.
      * [isCancelled] lets a hold end early when the player gives up on the request.
+     * [singleRendition] says the player plays only this rendition (no automatic
+     * quality), the one case where prefetch hints are safe to promote.
      */
     suspend fun clean(
         variantUrl: String,
@@ -81,10 +84,11 @@ class MediaPlaylistCleaner(
         quality: VariantQuality?,
         forceAd: Boolean = false,
         isCancelled: () -> Boolean = { false },
+        singleRendition: Boolean = false,
     ): Result {
-        var result = cleanOnce(raw, channelLogin, quality, forceAd)
+        var result = cleanOnce(raw, channelLogin, quality, forceAd, singleRendition)
         if (holdEmptyWindows && result.strategy == Strategy.STRIP && segmentCount(result.content) == 0) {
-            result = hold(variantUrl, result, channelLogin, quality, forceAd, isCancelled)
+            result = hold(variantUrl, result, channelLogin, quality, forceAd, isCancelled, singleRendition)
         }
         val normalized = timeline.normalize(variantUrl, result.content)
         return result.copy(
@@ -99,10 +103,11 @@ class MediaPlaylistCleaner(
         channelLogin: String?,
         quality: VariantQuality?,
         forceAd: Boolean,
+        singleRendition: Boolean,
     ): Result {
         if (!forceAd && !AdMarkers.containsAds(raw)) {
             adBlockEngine.reportAdBlocked()
-            return Result(atLiveEdge(raw), Strategy.CLEAN)
+            return Result(atLiveEdge(raw, singleRendition), Strategy.CLEAN)
         }
 
         if (!channelLogin.isNullOrBlank() && quality != null) {
@@ -118,7 +123,11 @@ class MediaPlaylistCleaner(
             }
             if (backup != null) {
                 adBlockEngine.reportAdBlocked()
-                return Result(atLiveEdge(backup.mediaPlaylist), Strategy.BACKUP, backupPlayerType = backup.playerType)
+                return Result(
+                    atLiveEdge(backup.mediaPlaylist, singleRendition),
+                    Strategy.BACKUP,
+                    backupPlayerType = backup.playerType,
+                )
             }
         }
 
@@ -135,8 +144,8 @@ class MediaPlaylistCleaner(
     }
 
     /** An ad-free playlist, reaching as close to live as the low-latency setting allows. */
-    private fun atLiveEdge(playlist: String): String =
-        if (lowLatency()) TwitchPrefetch.promote(playlist) else playlist
+    private fun atLiveEdge(playlist: String, singleRendition: Boolean): String =
+        if (lowLatency()) TwitchPrefetch.liveEdge(playlist, promotePrefetch = singleRendition) else playlist
 
     private suspend fun hold(
         variantUrl: String,
@@ -145,6 +154,7 @@ class MediaPlaylistCleaner(
         quality: VariantQuality?,
         forceAd: Boolean,
         isCancelled: () -> Boolean,
+        singleRendition: Boolean,
     ): Result {
         val startedAt = nowMs()
         var latest = emptyWindow
@@ -156,7 +166,7 @@ class MediaPlaylistCleaner(
             // holding and let the player's own error handling take over.
             if (!response.status.isSuccess()) break
             val fresh = runCatching { response.bodyAsText() }.getOrNull() ?: continue
-            latest = cleanOnce(fresh, channelLogin, quality, forceAd)
+            latest = cleanOnce(fresh, channelLogin, quality, forceAd, singleRendition)
             if (segmentCount(latest.content) > 0) break
         }
         return latest.copy(heldMs = nowMs() - startedAt)

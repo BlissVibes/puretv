@@ -102,10 +102,15 @@ class BackgroundPlayback(
      * background play on the stream keeps going; otherwise pause, as before.
      * [inPip] keeps today's rule that a visible PiP window is never paused.
      */
-    fun onAppStopped(inPip: Boolean) {
+    fun onAppStopped(inPip: Boolean, changingConfigurations: Boolean = false) {
         if (shouldPauseOnLeave(backgroundPlay = enabled, inPip = inPip)) {
             pauseForLeave()
-        } else if (shouldDropVideo(backgroundPlay = enabled, audioOnlyInBackground = audioOnlyInBackground, inPip = inPip)) {
+        } else if (
+            !changingConfigurations &&
+            shouldDropVideo(backgroundPlay = enabled, audioOnlyInBackground = audioOnlyInBackground, inPip = inPip)
+        ) {
+            // A configuration change stops and restarts the Activity at once:
+            // switching to audio and straight back would only rebuffer twice.
             dropVideoWhilePlaying()
         }
     }

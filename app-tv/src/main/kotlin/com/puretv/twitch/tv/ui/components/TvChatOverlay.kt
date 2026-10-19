@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -26,11 +28,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
@@ -54,6 +60,8 @@ fun TvChatOverlay(
     modifier: Modifier = Modifier,
     /** Settings > Chat text size, as a scale for the message list. */
     textScale: Float = 1f,
+    /** The room's chat modes, shown under the header while any is on. */
+    roomModes: ChatRoomModes = ChatRoomModes(),
 ) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
@@ -98,6 +106,7 @@ fun TvChatOverlay(
                         color = c.onSurface,
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
+                    TvRoomModeChips(roomModes)
                     val density = LocalDensity.current
                     CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
                         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -111,6 +120,32 @@ fun TvChatOverlay(
 }
 
 /**
+ * Slow, emote-only, followers-only and sub-only as muted pills under the header,
+ * so a quiet or emote-only chat explains itself. Nothing when the room is open.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TvRoomModeChips(modes: ChatRoomModes) {
+    val labels = remember(modes) { modes.labels() }
+    if (labels.isEmpty()) return
+    val c = PureTvTvTheme.colors
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        labels.forEach { label ->
+            Text(
+                text = label,
+                style = PureTvTvType.dataSmall,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(PureTvTvTheme.shapes.pillShape)
+                    .background(c.surfaceHigh)
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/**
  * One chat line, its own rounded card at [shapes.mdShape]. A fast-moving feed
  * reads as distinct rows from three metres away this way, rather than a
  * run-on wall of same-weight text with no boundary between messages.
@@ -118,6 +153,18 @@ fun TvChatOverlay(
 @Composable
 private fun TvChatMessageRow(message: ChatMessage) {
     val c = PureTvTvTheme.colors
+    // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
+    // centred, muted line instead of a card with a name.
+    if (message.isSystem) {
+        Text(
+            text = message.message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = c.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+        )
+        return
+    }
     val shapes = PureTvTvTheme.shapes
     val nameColor = remember(message.color, c.primary) {
         runCatching { Color(android.graphics.Color.parseColor(message.color)) }.getOrDefault(c.primary)
@@ -132,7 +179,8 @@ private fun TvChatMessageRow(message: ChatMessage) {
         modifier = Modifier
             .fillMaxWidth()
             .clip(shapes.mdShape)
-            .background(c.surfaceHigh)
+            // A line that @-mentions the viewer stands out from across the room.
+            .background(if (message.mentionsSelf) c.primaryContainer else c.surfaceHigh)
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -145,11 +193,22 @@ private fun TvChatMessageRow(message: ChatMessage) {
             )
             Text(text = timestamp, style = PureTvTvType.dataSmall, color = c.onSurfaceVariant)
         }
-        Text(
-            text = message.message,
-            style = MaterialTheme.typography.bodyLarge,
-            color = c.onSurface,
-        )
+        if (message.deleted) {
+            // A moderator removed this (timeout, ban or delete). The row stays as a
+            // tombstone so the conversation around it still reads.
+            Text(
+                text = "<message deleted>",
+                style = MaterialTheme.typography.bodyLarge,
+                fontStyle = FontStyle.Italic,
+                color = c.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = message.message,
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.onSurface,
+            )
+        }
     }
 }
 

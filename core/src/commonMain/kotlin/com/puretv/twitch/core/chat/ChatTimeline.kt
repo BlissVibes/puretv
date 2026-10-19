@@ -27,6 +27,30 @@ data class ChatRoomModes(
     )
 }
 
+/**
+ * Short, plain labels for the modes that are on ("Slow mode: 30s", "Emote-only
+ * chat"), in a fixed order, for the chip row every app shows near chat. Empty
+ * when the room is open, so the row can simply hide.
+ */
+fun ChatRoomModes.labels(): List<String> = buildList {
+    if (slowSeconds > 0) {
+        add("Slow mode: " + if (slowSeconds >= 60 && slowSeconds % 60 == 0) "${slowSeconds / 60} min" else "${slowSeconds}s")
+    }
+    if (emoteOnly) add("Emote-only chat")
+    when {
+        followersOnlyMinutes == 0 -> add("Followers-only chat")
+        followersOnlyMinutes > 0 -> add("Followers-only chat (${followDuration(followersOnlyMinutes)})")
+    }
+    if (subsOnly) add("Subscriber-only chat")
+}
+
+/** 10 -> "10 min", 60 -> "1 hour", 10080 -> "7 days"; anything uneven stays in minutes. */
+private fun followDuration(minutes: Int): String = when {
+    minutes % 1_440 == 0 -> (minutes / 1_440).let { if (it == 1) "1 day" else "$it days" }
+    minutes % 60 == 0 -> (minutes / 60).let { if (it == 1) "1 hour" else "$it hours" }
+    else -> "$minutes min"
+}
+
 /** What a chat panel shows: the rows, the rows that ping the viewer, and the room's modes. */
 data class ChatTimelineState(
     val messages: List<ChatMessage> = emptyList(),

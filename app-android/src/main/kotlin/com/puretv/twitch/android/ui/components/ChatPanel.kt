@@ -74,8 +74,10 @@ import coil3.compose.AsyncImage
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
+import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ComposerSuggestion
 import com.puretv.twitch.core.chat.completeWord
+import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.chat.composerSuggestions
 import com.puretv.twitch.core.chat.insertAtCursor
 import com.puretv.twitch.core.chat.recentChatters
@@ -115,6 +117,8 @@ fun ChatPanel(
     canSend: Boolean = true,
     /** Settings > Chat > Text size. Scales the whole message list, emotes included. */
     textScale: Float = 1f,
+    /** The room's chat modes, shown as a chip row above the composer while any is on. */
+    roomModes: ChatRoomModes = ChatRoomModes(),
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -181,6 +185,8 @@ fun ChatPanel(
                     }
                 }
             }
+
+            RoomModeChips(roomModes, Modifier.fillMaxWidth().padding(top = 6.dp))
 
             if (canSend) {
                 if (pickerOpen) {
@@ -376,6 +382,35 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
                 inlineContent = bodyInline,
                 style = MaterialTheme.typography.bodyLarge,
                 color = c.onSurface,
+            )
+        }
+    }
+}
+
+/**
+ * Slow, emote-only, followers-only and sub-only as muted pills, so a message that
+ * will not go through is explained before it is typed. Nothing when the room is open.
+ */
+@Composable
+private fun RoomModeChips(modes: ChatRoomModes, modifier: Modifier = Modifier) {
+    val labels = remember(modes) { modes.labels() }
+    if (labels.isEmpty()) return
+    val c = PureTvTheme.colors
+    LazyRow(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(labels, key = { it }) { label ->
+            Text(
+                label,
+                style = PureTvType.dataSmall,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(PureTvTheme.shapes.pillShape)
+                    .background(c.surfaceHigh)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
             )
         }
     }

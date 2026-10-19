@@ -7,13 +7,17 @@ import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
+import com.puretv.twitch.core.chat.ChatChange
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.ChatTimeline
+import com.puretv.twitch.core.chat.ChatTimelineState
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
-import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
@@ -355,6 +359,8 @@ data class StreamUiState(
     val playableUrl: String? = null,
     val adBlockStatus: AdBlockStatus = AdBlockStatus.UNKNOWN,
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** Slow, emote-only, followers-only and sub-only, shown in the chat header. */
+    val roomModes: ChatRoomModes = ChatRoomModes(),
     val isLoading: Boolean = true,
     /**
      * Why playback could not start, or null while it is fine. Stream resolution
@@ -392,6 +398,11 @@ class StreamViewModel(
 
     private val openTiming = StreamOpenTiming(channelLogin)
 
+    // The signed-in viewer's login (null when watching anonymously), so a line
+    // that @-mentions them is highlighted. Written once, before chat connects.
+    private var selfLogin: String? = null
+    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
+
     init {
         adBlockEngine.resetForNewStream()
         // Playback first: resolving the stream does not need the channel info
@@ -424,16 +435,25 @@ class StreamViewModel(
             }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             val username = settings.username.takeIf { it.isNotBlank() }
+            selfLogin = username
             chatClient.connect(channelLogin, token, username)
             // A busy chat arrives in batches (about ten a second), each applied in
-            // one state update instead of one per message.
+            // one state update instead of one per message. Core's ChatTimeline holds
+            // the chat rules every app shares (moderation tombstones, sub and raid
+            // rows, mentions, room modes); the batch is prepared out here because
+            // the update lambda may run more than once.
             chatClient.events.batchedEvery().collect { batch ->
-                val incoming = batch.filterIsInstance<ChatEvent.Message>().map { it.message }
-                if (incoming.isNotEmpty()) {
-                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
-                }
+                val changes = chatTimeline.changesFor(batch)
+                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
+    }
+
+    /** [changes] applied to the chat rows and room modes (see [applying]). */
+    private fun StreamUiState.withChat(changes: List<ChatChange>): StreamUiState {
+        val before = ChatTimelineState(messages = chatMessages, modes = roomModes)
+        val after = before.applying(changes)
+        return if (after === before) this else copy(chatMessages = after.messages, roomModes = after.modes)
     }
 
     /**

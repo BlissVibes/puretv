@@ -79,8 +79,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.adblock.AdBlockStatus
+import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ComposerSuggestion
 import com.puretv.twitch.core.chat.completeWord
+import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.chat.composerSuggestions
 import com.puretv.twitch.core.chat.insertAtCursor
 import com.puretv.twitch.core.chat.recentChatters
@@ -507,6 +509,8 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                         }
                     }
 
+                    RoomModeChips(state.roomModes)
+
                     ChatInputBar(
                         canChat = state.canChat,
                         emotes = state.emotes,
@@ -520,6 +524,35 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * The room's chat modes (slow, emote-only, followers-only, sub-only) as a slim
+ * row of muted pills above the composer, so a message that will not go through
+ * is explained before it is typed. Takes no space when the room is open.
+ */
+@Composable
+private fun RoomModeChips(modes: ChatRoomModes) {
+    val labels = remember(modes) { modes.labels() }
+    if (labels.isEmpty()) return
+    val c = PureTvTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        labels.forEach { label ->
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(PureTvTheme.shapes.pillShape)
+                    .background(c.surfaceHigh)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
         }
     }
 }

@@ -203,6 +203,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                         selfLogin = state.selfLogin,
                         canSend = state.isLoggedIn,
                         textScale = state.chatTextScale,
+                        roomModes = state.roomModes,
                         modifier = Modifier.weight(chatFraction).fillMaxHeight(),
                     )
                 }
@@ -238,6 +239,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     selfLogin = state.selfLogin,
                     canSend = state.isLoggedIn,
                     textScale = state.chatTextScale,
+                    roomModes = state.roomModes,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }

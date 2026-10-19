@@ -297,6 +297,7 @@ fun TvStreamScreen(
             messages = state.chatMessages,
             modifier = Modifier.fillMaxSize(),
             textScale = state.chatTextScale,
+            roomModes = state.roomModes,
         )
     }
 }

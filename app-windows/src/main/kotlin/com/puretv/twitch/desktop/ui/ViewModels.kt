@@ -575,8 +575,27 @@ class StreamViewModel(
                     }
                     // Subs, resubs, raids, gifts: Twitch hands us a ready-made
                     // human-readable system line. Render it as a centred system row.
-                    is ChatEvent.UserNotice -> event.systemMessage.ifBlank { null }?.let { sys ->
-                        _state.update { it.copy(chatMessages = it.chatMessages.appendCapped(systemMessage(sys))) }
+                    // Announcements and resub messages also carry the viewer's own words
+                    // in `raw`; show those under the system line, as Twitch does, instead
+                    // of dropping them. Newer notice types with no system text still show
+                    // their message rather than nothing.
+                    is ChatEvent.UserNotice -> _state.update { current ->
+                        var messages = current.chatMessages
+                        event.systemMessage.ifBlank { null }?.let { messages = messages.appendCapped(systemMessage(it)) }
+                        event.raw?.takeIf { it.message.isNotBlank() }?.let { raw ->
+                            messages = messages.appendCapped(
+                                raw.copy(
+                                    parsedParts = applyThirdPartyEmotes(raw.parsedParts, emoteIndex),
+                                    mentionsSelf = mentionsSelf(raw.message),
+                                ),
+                            )
+                        }
+                        current.copy(chatMessages = messages)
+                    }
+                    // Twitch telling the viewer why a send did not go through (or a room
+                    // mode they ran into): show it, instead of the message just vanishing.
+                    is ChatEvent.Notice -> _state.update {
+                        it.copy(chatMessages = it.chatMessages.appendCapped(systemMessage(event.text)))
                     }
                     // RoomState/ConnectionState are parsed in core but not surfaced in
                     // this panel yet (no slow-mode / connection banner). Intentionally ignored.

@@ -162,6 +162,13 @@ sealed class ChatEvent {
     data class RoomState(val slowModeSeconds: Int?, val emoteOnly: Boolean) : ChatEvent()
     data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
+    /**
+     * A NOTICE from Twitch addressed to this viewer, usually about a message they
+     * just tried to send ("This room is in subscribers-only mode", "You are
+     * permanently banned from talking in this channel"). [msgId] is Twitch's code
+     * for it; [text] is already written for people.
+     */
+    data class Notice(val msgId: String, val text: String) : ChatEvent()
 }
 
 @Serializable

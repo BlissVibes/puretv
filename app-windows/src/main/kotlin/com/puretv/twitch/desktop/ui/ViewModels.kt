@@ -12,7 +12,12 @@ import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.core.chat.BadgeRepository
+import com.puretv.twitch.core.chat.ChatChange
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.ChatTimeline
+import com.puretv.twitch.core.chat.ChatTimelineState
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.emotes.EmoteRepository
@@ -31,9 +36,7 @@ import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChannelInfo
-import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
-import com.puretv.twitch.core.model.MessagePart
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
@@ -54,7 +57,6 @@ import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
 import com.puretv.twitch.desktop.player.DesktopPlayer
-import com.puretv.twitch.desktop.ui.chat.ChatModeration
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -309,6 +311,8 @@ data class StreamUiState(
     /** Messages that @-mention the local viewer, kept in their own buffer so the
      *  Mentions tab survives the main chat buffer churning past its cap. */
     val mentionMessages: List<ChatMessage> = emptyList(),
+    /** Slow, emote-only, followers-only and sub-only, shown above the composer. */
+    val roomModes: ChatRoomModes = ChatRoomModes(),
     val emotes: List<PickableEmote> = emptyList(),
     /** Resolved chat badge art (global ∪ channel) for rendering real badge icons. */
     val badges: BadgeIndex = BadgeIndex.EMPTY,
@@ -356,7 +360,7 @@ class StreamViewModel(
     private var selfColor: String? = null
     private var selfBadges: List<Badge> = emptyList()
     private var echoCounter = 0
-    private var systemCounter = 0
+    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
     private val playbackStallWatchdog = PlaybackStallWatchdog()
     private val openTiming = StreamOpenTiming(channelLogin)
     // Automatic retries after a player error; reset once the stream plays again.
@@ -537,90 +541,30 @@ class StreamViewModel(
             chatClient.connect(channelLogin, saved?.accessToken, saved?.login)
             // A busy chat arrives in batches (about ten a second), each applied in one
             // state update, so 30+ messages a second no longer recompose the stream
-            // screen 30+ times. Rows are built here, outside the update lambda, which
-            // may run more than once.
+            // screen 30+ times. Core's ChatTimeline holds the chat rules every app
+            // shares; rows are built here, outside the update lambda, which may run
+            // more than once.
             chatClient.events.batchedEvery().collect { batch ->
-                val changes = ArrayList<ChatChange>(batch.size)
-                for (event in batch) {
-                    when (event) {
-                        is ChatEvent.Message -> changes += ChatChange.Add(
-                            event.message.copy(
-                                parsedParts = applyThirdPartyEmotes(event.message.parsedParts, emoteIndex),
-                                mentionsSelf = mentionsSelf(event.message.message),
-                            ),
-                        )
-                        is ChatEvent.SelfState -> {
-                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                            selfColor = event.color
-                            selfBadges = event.badges
-                        }
-                        // Moderator timed out/banned a user (targetUser set) or cleared the
-                        // whole room (targetUser null). Twitch removes the affected history,
-                        // so tombstone matching messages rather than deleting the rows:
-                        // Chatterino-style "<message deleted>" keeps the conversation legible.
-                        is ChatEvent.ClearChat -> changes += event.targetUser
-                            ?.let { ChatChange.DeleteUser(it) }
-                            ?: ChatChange.Add(systemMessage("Chat cleared by a moderator"))
-                        is ChatEvent.ClearMessage -> changes += ChatChange.DeleteMessage(event.targetMessageId)
-                        // Subs, resubs, raids, gifts: Twitch hands us a ready-made
-                        // human-readable system line. Render it as a centred system row.
-                        // Announcements and resub messages also carry the viewer's own words
-                        // in `raw`; show those under the system line, as Twitch does, instead
-                        // of dropping them. Newer notice types with no system text still show
-                        // their message rather than nothing.
-                        is ChatEvent.UserNotice -> {
-                            event.systemMessage.ifBlank { null }?.let { changes += ChatChange.Add(systemMessage(it)) }
-                            event.raw?.takeIf { it.message.isNotBlank() }?.let { raw ->
-                                changes += ChatChange.Add(
-                                    raw.copy(
-                                        parsedParts = applyThirdPartyEmotes(raw.parsedParts, emoteIndex),
-                                        mentionsSelf = mentionsSelf(raw.message),
-                                    ),
-                                )
-                            }
-                        }
-                        // Twitch telling the viewer why a send did not go through (or a room
-                        // mode they ran into): show it, instead of the message just vanishing.
-                        is ChatEvent.Notice -> changes += ChatChange.Add(systemMessage(event.text))
-                        // RoomState/ConnectionState are parsed in core but not surfaced in
-                        // this panel yet (no slow-mode / connection banner). Intentionally ignored.
-                        is ChatEvent.RoomState, is ChatEvent.ConnectionState -> {}
-                    }
-                }
-                if (changes.isNotEmpty()) _state.update { it.withChatChanges(changes) }
+                val changes = chatTimeline.changesFor(
+                    batch,
+                    onSelfState = { self ->
+                        self.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                        selfColor = self.color
+                        selfBadges = self.badges
+                    },
+                    decorate = { it.copy(parsedParts = applyThirdPartyEmotes(it.parsedParts, emoteIndex)) },
+                )
+                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
     }
 
-    /** One batch's effect on the chat rows, in arrival order (see [withChatChanges]). */
-    private sealed class ChatChange {
-        data class Add(val message: ChatMessage) : ChatChange()
-        data class DeleteUser(val login: String) : ChatChange()
-        data class DeleteMessage(val id: String) : ChatChange()
-    }
-
-    /**
-     * Applies a batch in order, so a deletion that lands in the same batch as the
-     * message it targets still finds it, then caps the buffers once instead of
-     * copying 200 rows per message.
-     */
-    private fun StreamUiState.withChatChanges(changes: List<ChatChange>, max: Int = 200): StreamUiState {
-        var rows: MutableList<ChatMessage> = ArrayList<ChatMessage>(chatMessages.size + changes.size).apply { addAll(chatMessages) }
-        val mentions = ArrayList<ChatMessage>()
-        for (change in changes) {
-            when (change) {
-                is ChatChange.Add -> {
-                    rows.add(change.message)
-                    if (change.message.mentionsSelf) mentions.add(change.message)
-                }
-                is ChatChange.DeleteUser -> rows = ChatModeration.markUserDeleted(rows, change.login).toMutableList()
-                is ChatChange.DeleteMessage -> rows = ChatModeration.markMessageDeleted(rows, change.id).toMutableList()
-            }
-        }
-        return copy(
-            chatMessages = rows.takeLast(max),
-            mentionMessages = if (mentions.isEmpty()) mentionMessages else (mentionMessages + mentions).takeLast(max),
-        )
+    /** [changes] applied to the chat rows, mentions and room modes (see [applying]). */
+    private fun StreamUiState.withChat(changes: List<ChatChange>): StreamUiState {
+        val before = ChatTimelineState(chatMessages, mentionMessages, roomModes)
+        val after = before.applying(changes)
+        return if (after === before) this
+        else copy(chatMessages = after.messages, mentionMessages = after.mentions, roomModes = after.modes)
     }
 
     private fun playAt(quality: StreamQuality) {
@@ -699,16 +643,10 @@ class StreamViewModel(
             replyParent = replyParent,
             emoteIndex = selfEchoIndex,
         )
-        _state.update {
-            it.copy(chatMessages = it.chatMessages.appendCapped(echo), replyingTo = null)
-        }
+        val echoed = listOf(ChatChange.Add(echo))
+        _state.update { it.withChat(echoed).copy(replyingTo = null) }
     }
 
-    /**
-     * Append [msg] keeping the newest [max] messages. At steady state (list already at cap)
-     * this allocates ONE list of [max] rather than the `(list + msg).takeLast(max)` pattern's
-     * two (an n+1 temp, then the capped copy) — less per-message GC churn in a fast chat.
-     */
     /** Rebuild both emote indices + the picker list from the current source lists and
      *  re-tokenize the visible buffer. Called after channel emotes load and on every
      *  live 7TV delta. Cheap enough to run wholesale: deltas are infrequent and the
@@ -767,34 +705,6 @@ class StreamViewModel(
         tpChannelEmotes = afterRemoval + additions
         rebuildEmoteIndicesAndPublish()
     }
-
-    /** True when [body] @-mentions the local viewer. Viewer-relative, so it is
-     *  evaluated here where [selfLogin] is known rather than in the row. */
-    private fun mentionsSelf(body: String): Boolean = ChatModeration.mentionsSelf(body, selfLogin)
-
-    /** Build a synthetic, non-user system row (sub/raid notices, "chat cleared"). */
-    private fun systemMessage(text: String): ChatMessage = ChatMessage(
-        id = "sys-" + (systemCounter++).toString(),
-        channel = channelLogin,
-        username = "",
-        displayName = "",
-        color = "",
-        message = text,
-        parsedParts = listOf(MessagePart.Text(text)),
-        badges = emptyList(),
-        timestamp = System.currentTimeMillis(),
-        isSubscriber = false,
-        isModerator = false,
-        isBroadcaster = false,
-        isSystem = true,
-    )
-
-    private fun List<ChatMessage>.appendCapped(msg: ChatMessage, max: Int = 200): List<ChatMessage> =
-        if (size < max) this + msg
-        else ArrayList<ChatMessage>(max).also {
-            it.addAll(subList(size - (max - 1), size))
-            it.add(msg)
-        }
 
     /** Adds/removes this channel from the local Following list (see [FollowStore]). */
     fun toggleFollow() {

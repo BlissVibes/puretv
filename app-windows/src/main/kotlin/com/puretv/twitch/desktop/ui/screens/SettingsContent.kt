@@ -25,16 +25,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.platform.Diagnostics
 import com.puretv.twitch.desktop.platform.openInBrowser
+import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
@@ -121,8 +127,20 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
 
+        val clipboard = LocalClipboardManager.current
         AboutPanel(
             version = updateManager.currentVersion,
+            onCopyDiagnostics = {
+                val report = Diagnostics.report(
+                    listOf(
+                        "App" to "PureTV ${updateManager.currentVersion}, player ${state.settings.playbackBackend}, " +
+                            "signed in: ${if (state.isLoggedIn) "yes" else "no"}",
+                        "Stream proxy" to runCatching { koin.get<LocalStreamProxy>().diagnosticsSummary() }
+                            .getOrDefault("(not started)"),
+                    ),
+                )
+                clipboard.setText(AnnotatedString(report))
+            },
             updateState = updateState,
             onCheckForUpdates = { updateManager.checkForUpdates(force = true) },
             onDownloadAndInstall = { info -> updateManager.downloadAndInstall(info, onExit) },
@@ -404,6 +422,7 @@ private fun AccountPanel(isLoggedIn: Boolean, username: String?, onLogOut: () ->
 @Composable
 private fun AboutPanel(
     version: String,
+    onCopyDiagnostics: () -> Unit,
     updateState: UpdateState,
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstall: (UpdateInfo) -> Unit,
@@ -428,6 +447,28 @@ private fun AboutPanel(
                         style = ExpressiveButtonStyle.Outlined,
                     )
                 }
+            }
+            Spacer(Modifier.height(20.dp))
+            ExpressiveDivider()
+            Spacer(Modifier.height(20.dp))
+            var copied by remember { mutableStateOf(false) }
+            SettingsRow(
+                label = "Diagnostics",
+                description = if (copied) {
+                    "Copied. Paste it into your bug report. It stays on this PC until you do."
+                } else {
+                    "Copies versions, recent errors and logs for a bug report. Sign-in details are left out " +
+                        "and nothing is sent anywhere."
+                },
+            ) {
+                ExpressiveButton(
+                    text = "Copy diagnostics",
+                    onClick = {
+                        onCopyDiagnostics()
+                        copied = true
+                    },
+                    style = ExpressiveButtonStyle.Outlined,
+                )
             }
             when (updateState) {
                 is UpdateState.Idle -> Unit

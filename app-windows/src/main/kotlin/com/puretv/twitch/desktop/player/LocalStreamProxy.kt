@@ -403,6 +403,22 @@ class LocalStreamProxy(
         engine = null
     }
 
+    /**
+     * Counters and the last results for "Copy diagnostics". Unlike /diag it leaves
+     * out playlist samples: those quote signed media URLs, and this text is meant
+     * to be pasted into a bug report.
+     */
+    fun diagnosticsSummary(): String = buildString {
+        appendLine("master requests ${totalRequests.get()}, failures ${failures.get()}, rewriter ${rewriterFallbacks.get()}")
+        appendLine(
+            "variant fetches ${variantFetches.get()}, backup swaps ${variantBackupSwaps.get()}, " +
+                "ad segments stripped ${variantAdSegmentsStripped.get()}, variant failures ${variantFailures.get()}",
+        )
+        lastFailure.get()?.let { appendLine("last failure: ${it.channel} ${it.strategy} ${it.errorMessage.orEmpty()}") }
+        lastVariant.get()?.let { appendLine("last variant: ${it.channel} ${it.strategy}, ad marker ${it.containsStitchedAdMarker}") }
+        streamFailures.forEach { (channel, failure) -> appendLine("classified: $channel ${failure.kind}") }
+    }
+
     private fun snapshot(channel: String, result: CleanStreamResult.Success, deliveredContent: String): FetchSnapshot {
         // The "delivered" content is what VLC actually got — i.e. after we
         // rewrote variant URLs through localhost:7979. Marker detection runs

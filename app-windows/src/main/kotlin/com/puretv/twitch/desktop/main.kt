@@ -13,6 +13,7 @@ import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.di.desktopModule
 import com.puretv.twitch.core.perf.TimingLog
+import com.puretv.twitch.desktop.platform.Diagnostics
 import com.puretv.twitch.desktop.platform.SingleInstance
 import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
@@ -35,6 +36,7 @@ import org.koin.dsl.koinApplication
 
 fun main() {
     TimingFileSink.install()
+    Diagnostics.installCrashLog()
     // One running copy only: a second launch brings the open window forward and exits.
     val guard = SingleInstance(
         lockFile = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/instance.lock"),

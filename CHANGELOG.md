@@ -30,8 +30,35 @@ Streams start sooner and ads get skipped more cleanly, on Windows, phone and TV.
   makes the video jump or freeze.
 - **Animated emotes download once on Windows,** instead of again every time
   you start PureTV.
+- **Errors say what actually happened.** Instead of "Check your connection"
+  for everything, PureTV now tells you when a channel is offline, limited to
+  subscribers, blocked in your region, when Twitch itself is having trouble,
+  when your sign-in expired, or when you're actually offline.
+- **Streams fix themselves.** If a stream drops, PureTV retries with a short
+  pause and then reconnects with a fresh link, instead of leaving a black
+  screen until you reopen it. If it really can't, it says so with a Try again
+  button.
+- **Pick your chat text size** in Settings, on Windows, phone and TV. Emotes
+  grow with the text. On Windows you can also turn timestamps and badges on or
+  off and make chat more compact. Timestamps are now off unless you turn them
+  on.
+- **"Live now" stays current** on phone and TV, and the follows list loads
+  with far fewer requests.
+- **Copy diagnostics (Windows).** Settings has a button that copies versions,
+  recent errors and logs for a bug report. Sign-in details are left out, and
+  nothing is sent anywhere.
+- **Chat explains itself (Windows).** If Twitch won't post your message (for
+  example a subscribers-only room), chat now tells you why, and resub and
+  announcement messages show the person's own words too.
 
 ### Fixed
+- **The phone app stays signed in.** It only renewed your sign-in when it
+  started, so with background play, follows and chat stopped working after a
+  few hours. It now renews whenever it needs to, and if Twitch signs you out,
+  the app tells you so instead of looking broken.
+- **Only one PureTV runs at a time on Windows.** Opening it again brings the
+  window you already have to the front.
+- **TV search no longer shows results for what you typed earlier.**
 - **Black screen when a stream opens straight into an ad (phone and TV).**
   PureTV now waits for the ad to finish and then starts the stream, instead of
   leaving you on a black screen. You still never see the ad.

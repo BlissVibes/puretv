@@ -13,7 +13,21 @@ release notes automatically.
 
 ## Unreleased
 
-Streams start sooner and ads get skipped more cleanly, on Windows, phone and TV.
+Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
+
+### New
+- **Low latency.** Streams now play several seconds closer to live, so what
+  you see keeps up with chat. It's on for Windows and phone. On TV it's off
+  to start with, because TV sticks on Wi-Fi are more likely to pause and
+  buffer; switch it on in Settings if your connection is solid. Turn it off
+  anywhere if streams keep buffering.
+- **Real audio only.** Picking Audio only now downloads just the sound,
+  instead of the whole video with the picture hidden. Much less data.
+- **Audio only in the background (phone).** When you're listening with the
+  screen off or another app open, PureTV downloads just the sound and brings
+  the picture back when you return. You can turn this off in Settings.
+- **Quality menu on the phone player.** Pick Auto, Source, a resolution, or
+  Audio only right from the player.
 
 ### Improved
 - **Streams start sooner.** The video starts loading the moment you open a
@@ -50,6 +64,12 @@ Streams start sooner and ads get skipped more cleanly, on Windows, phone and TV.
 - **Chat explains itself (Windows).** If Twitch won't post your message (for
   example a subscribers-only room), chat now tells you why, and resub and
   announcement messages show the person's own words too.
+- **Your quality choice sticks.** The quality you pick in the player is the
+  one the next stream opens at, on every app (Audio only excepted). Phone and
+  TV now open streams at your preferred quality from Settings, and Source
+  really plays the original quality instead of acting like Auto.
+- **Smoother busy chats.** Very fast chats update in small batches instead
+  of redrawing for every message, so the video and chat stay smooth.
 
 ### Fixed
 - **The phone app stays signed in.** It only renewed your sign-in when it
@@ -59,6 +79,8 @@ Streams start sooner and ads get skipped more cleanly, on Windows, phone and TV.
 - **Only one PureTV runs at a time on Windows.** Opening it again brings the
   window you already have to the front.
 - **TV search no longer shows results for what you typed earlier.**
+- **TV chat stopped scrolling in busy channels.** Once a chat filled up, new
+  messages no longer scrolled into view. They now always do.
 - **Black screen when a stream opens straight into an ad (phone and TV).**
   PureTV now waits for the ad to finish and then starts the stream, instead of
   leaving you on a black screen. You still never see the ad.

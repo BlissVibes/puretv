@@ -25,6 +25,7 @@ import com.puretv.twitch.core.adblock.BackupStreamResolver
 import com.puretv.twitch.core.adblock.PlaylistAction
 import com.puretv.twitch.core.adblock.PlaylistDetect
 import com.puretv.twitch.core.adblock.TwitchPrefetch
+import com.puretv.twitch.core.perf.TimingLog
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.stream.HlsMasterParser
 import com.puretv.twitch.core.stream.LiveLatency
@@ -150,6 +151,21 @@ class TvPlayer(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val retryRunnable = Runnable { _exoPlayer?.prepare() }
 
+    // Local-only timing: how far behind live the stream settled, logged twice
+    // after the first frame (TimingLog, logcat tag PureTvTiming), so low latency
+    // on and off can be compared by hand.
+    private var latencySamplesLeft = 0
+    private val latencySample = object : Runnable {
+        override fun run() {
+            val player = _exoPlayer ?: return
+            val offset = player.currentLiveOffset
+            if (offset != C.TIME_UNSET) {
+                TimingLog.log("stream.live_offset", offset, if (lowLatency) "low latency" else "default")
+            }
+            if (--latencySamplesLeft > 0) mainHandler.postDelayed(this, LATENCY_SAMPLE_MS)
+        }
+    }
+
     /**
      * SECTION 06.3 keeps live HLS blips from dead-ending on a black screen.
      * BEHIND_LIVE_WINDOW (we fell off the live edge) is recovered by re-seeking
@@ -181,6 +197,9 @@ class TvPlayer(
 
         override fun onRenderedFirstFrame() {
             onFirstFrame?.invoke()
+            mainHandler.removeCallbacks(latencySample)
+            latencySamplesLeft = LATENCY_SAMPLES
+            mainHandler.postDelayed(latencySample, LATENCY_SAMPLE_MS)
         }
     }
 
@@ -259,6 +278,7 @@ class TvPlayer(
      */
     fun stop() {
         mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
         _exoPlayer?.run {
             stop()
             clearMediaItems()
@@ -272,6 +292,7 @@ class TvPlayer(
      */
     fun release() {
         mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
         _exoPlayer?.release()
         _exoPlayer = null
         errorRetries = 0
@@ -280,6 +301,9 @@ class TvPlayer(
     private companion object {
         /** Pauses before each automatic retry: 1s, then 3s, then 6s. */
         val RETRY_DELAYS_MS = longArrayOf(1_000, 3_000, 6_000)
+
+        const val LATENCY_SAMPLES = 2
+        const val LATENCY_SAMPLE_MS = 30_000L
     }
 }
 

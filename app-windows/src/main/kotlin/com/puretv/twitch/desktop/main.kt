@@ -13,12 +13,14 @@ import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.di.desktopModule
 import com.puretv.twitch.core.perf.TimingLog
+import com.puretv.twitch.desktop.platform.SingleInstance
 import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.ui.App
 import io.ktor.client.HttpClient
+import java.io.File
 import javax.swing.SwingUtilities
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +35,13 @@ import org.koin.dsl.koinApplication
 
 fun main() {
     TimingFileSink.install()
+    // One running copy only: a second launch brings the open window forward and exits.
+    val guard = SingleInstance(
+        lockFile = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/instance.lock"),
+        focusExistingWindow = { SingleInstance.focusWindowTitled(WINDOW_TITLE) },
+    )
+    if (!guard.acquire()) exitProcess(0)
+    instanceGuard = guard
     val koinApp = koinApplication {
         modules(coreModule, desktopModule)
     }
@@ -75,7 +84,7 @@ fun main() {
         Window(
             onCloseRequest = ::exitApplication,
             state = windowState,
-            title = "PureTV for Twitch",
+            title = WINDOW_TITLE,
             icon = appIcon,
             undecorated = true,
         ) {
@@ -113,6 +122,17 @@ fun main() {
     runCatching { playerProvider.releaseIfCreated() }
     exitProcess(0)
 }
+
+/** The main window's title; a second launch finds the running copy by it. */
+private const val WINDOW_TITLE = "PureTV for Twitch"
+
+/**
+ * Held for the life of the process. The lock lives in a file channel, and an
+ * unreachable channel can be closed by the garbage collector, which would quietly
+ * release the lock while PureTV is still running.
+ */
+@Suppress("unused")
+private var instanceGuard: SingleInstance? = null
 
 /** How often the background session check runs (see main). Cheap: one small file decrypt. */
 private const val SESSION_REFRESH_CHECK_MS = 60_000L

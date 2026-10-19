@@ -14,6 +14,7 @@ import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.repository.ChannelRepository
@@ -358,6 +359,8 @@ data class StreamUiState(
      * Mirrors the phone app's `StreamUiState.playbackError`.
      */
     val playbackError: String? = null,
+    /** Settings > Chat text size, as a scale for the chat overlay. */
+    val chatTextScale: Float = 1f,
 )
 
 class StreamViewModel(
@@ -399,6 +402,7 @@ class StreamViewModel(
             // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
             // the phone app when no OAuth session is present (Section 5.1).
             val settings = settingsStore.flow.first()
+            _state.update { it.copy(chatTextScale = ChatTextSize.from(settings.chatFontSize).scale) }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             val username = settings.username.takeIf { it.isNotBlank() }
             chatClient.connect(channelLogin, token, username)
@@ -540,6 +544,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
             }
         }
         mutable.asStateFlow()
+    }
+
+    fun setChatTextSize(size: ChatTextSize) = viewModelScope.launch {
+        settingsStore.update { it.copy(chatFontSize = size.sp) }
     }
 
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {

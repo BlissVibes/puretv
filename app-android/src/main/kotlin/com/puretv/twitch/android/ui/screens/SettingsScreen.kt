@@ -61,6 +61,7 @@ import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.update.AndroidUpdateState
 import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
@@ -126,6 +127,12 @@ fun SettingsScreen(onBack: () -> Unit) {
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        ChatPanel(
+            selected = ChatTextSize.from(state.settings.chatFontSize),
+            onSelect = viewModel::setChatTextSize,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -382,6 +389,30 @@ private fun PlaybackPanel(
  * strategy controls were removed before this pass: they had no effect on
  * Android and are not restored here.
  */
+@Composable
+private fun ChatPanel(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) {
+    val c = PureTvTheme.colors
+    ExpressivePanel {
+        Column {
+            Text("Chat", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            Text("Text size", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "How big chat reads. Emotes grow with the text.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(12.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(ChatTextSize.entries) { size ->
+                    ExpressiveFilterChip(label = size.label, selected = size == selected, onClick = { onSelect(size) })
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun AdBlockPanel(adBlockEnabled: Boolean, onAdBlockEnabledChange: (Boolean) -> Unit) {
     val c = PureTvTheme.colors

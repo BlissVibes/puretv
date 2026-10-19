@@ -37,6 +37,7 @@ import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.ChannelEmote
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.repository.ChannelRepository
@@ -324,6 +325,8 @@ data class StreamUiState(
     val isLoading: Boolean = true,
     val playbackError: String? = null,
     val isLoggedIn: Boolean = false,
+    /** Settings > Chat > Text size, as a scale for the chat list. */
+    val chatTextScale: Float = 1f,
 )
 
 @OptIn(UnstableApi::class)
@@ -440,7 +443,13 @@ class StreamViewModel(
             // `TwitchChatClient` falls back to a `justinfanNNNN` identity for `null`.
             // Sending requires a real OAuth token (see Section 5.1).
             val settings = settingsStore.flow.first()
-            _state.update { it.copy(chatFraction = settings.chatFraction, chatEnabled = settings.chatEnabled) }
+            _state.update {
+                it.copy(
+                    chatFraction = settings.chatFraction,
+                    chatEnabled = settings.chatEnabled,
+                    chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                )
+            }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             // Anonymous IRC can read but not send; gate the composer on a real token.
             val username = settings.username.takeIf { it.isNotBlank() }
@@ -621,6 +630,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
             }
         }
         mutable.asStateFlow()
+    }
+
+    fun setChatTextSize(size: ChatTextSize) = viewModelScope.launch {
+        settingsStore.update { it.copy(chatFontSize = size.sp) }
     }
 
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {

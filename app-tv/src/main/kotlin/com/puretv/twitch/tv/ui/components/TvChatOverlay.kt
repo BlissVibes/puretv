@@ -17,13 +17,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
@@ -44,7 +47,13 @@ private val ClockFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * is rendered (mirrors real Twitch-on-TV apps' chat treatment).
  */
 @Composable
-fun TvChatOverlay(visible: Boolean, messages: List<ChatMessage>, modifier: Modifier = Modifier) {
+fun TvChatOverlay(
+    visible: Boolean,
+    messages: List<ChatMessage>,
+    modifier: Modifier = Modifier,
+    /** Settings > Chat text size, as a scale for the message list. */
+    textScale: Float = 1f,
+) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
     val listState = rememberLazyListState()
@@ -79,8 +88,11 @@ fun TvChatOverlay(visible: Boolean, messages: List<ChatMessage>, modifier: Modif
                         color = c.onSurface,
                         modifier = Modifier.padding(bottom = 4.dp),
                     )
-                    LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(messages, key = { it.id }) { message -> TvChatMessageRow(message) }
+                    val density = LocalDensity.current
+                    CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
+                        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(messages, key = { it.id }) { message -> TvChatMessageRow(message) }
+                        }
                     }
                 }
             }

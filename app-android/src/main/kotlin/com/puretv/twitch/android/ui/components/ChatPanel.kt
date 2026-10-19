@@ -38,6 +38,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +51,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
@@ -62,6 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import coil3.compose.AsyncImage
@@ -107,6 +110,8 @@ fun ChatPanel(
     pickableEmotes: List<PickableEmote> = emptyList(),
     selfLogin: String? = null,
     canSend: Boolean = true,
+    /** Settings > Chat > Text size. Scales the whole message list, emotes included. */
+    textScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -153,13 +158,16 @@ fun ChatPanel(
         val pickerHeight = (maxHeight * 0.5f).coerceAtMost(280.dp)
 
         Column(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                items(messages, key = { it.id }) { message ->
-                    ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxWidth().padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(messages, key = { it.id }) { message ->
+                        ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+                    }
                 }
             }
 

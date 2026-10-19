@@ -295,6 +295,7 @@ fun TvStreamScreen(
             visible = chatVisible,
             messages = state.chatMessages,
             modifier = Modifier.fillMaxSize(),
+            textScale = state.chatTextScale,
         )
     }
 }

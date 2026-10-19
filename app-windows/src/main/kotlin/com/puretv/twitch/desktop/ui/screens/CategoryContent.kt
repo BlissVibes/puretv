@@ -1,6 +1,5 @@
 package com.puretv.twitch.desktop.ui.screens
 
-import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -37,6 +36,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.desktop.ui.CategoryViewModel
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.components.CoverImage
 import com.puretv.twitch.desktop.ui.components.EditorialEmptyState

@@ -32,6 +32,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.platform.openInBrowser
 import com.puretv.twitch.desktop.ui.SettingsViewModel
@@ -95,6 +96,18 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onSelectQuality = viewModel::setPreferredQuality,
             animateEmotes = state.settings.animateEmotes,
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        ChatPanel(
+            textSize = ChatTextSize.from(state.settings.chatFontSize),
+            onTextSize = { size -> settingsStore.updateSettings { it.copy(chatFontSize = size.sp) } },
+            showTimestamps = state.settings.chatTimestamps,
+            onShowTimestamps = { on -> settingsStore.updateSettings { it.copy(chatTimestamps = on) } },
+            showBadges = state.settings.showBadges,
+            onShowBadges = { on -> settingsStore.updateSettings { it.copy(showBadges = on) } },
+            compact = state.settings.compactMode,
+            onCompact = { on -> settingsStore.updateSettings { it.copy(compactMode = on) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -271,6 +284,51 @@ private fun PlaybackPanel(
             }
             // Playback backend + GPU upscaling live in the in-player gear menu
             // (per-stream, applied live) rather than here. See PlayerSettingsMenu.
+        }
+    }
+}
+
+// ── Chat ─────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ChatPanel(
+    textSize: ChatTextSize,
+    onTextSize: (ChatTextSize) -> Unit,
+    showTimestamps: Boolean,
+    onShowTimestamps: (Boolean) -> Unit,
+    showBadges: Boolean,
+    onShowBadges: (Boolean) -> Unit,
+    compact: Boolean,
+    onCompact: (Boolean) -> Unit,
+) {
+    val c = PureTvTheme.colors
+    ExpressivePanel {
+        Column {
+            Text("Chat", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            SettingsRow(
+                label = "Text size",
+                description = "How big chat reads. Emotes and badges grow with the text.",
+            ) {
+                SegmentedToggle(
+                    options = ChatTextSize.entries,
+                    selected = textSize,
+                    label = { it.label },
+                    onSelect = onTextSize,
+                )
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(label = "Timestamps", description = "Show the time each message was sent.") {
+                ExpressiveSwitch(checked = showTimestamps, onCheckedChange = onShowTimestamps)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(label = "Badges", description = "Show subscriber, moderator and other badges next to names.") {
+                ExpressiveSwitch(checked = showBadges, onCheckedChange = onShowBadges)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(label = "Compact chat", description = "Tighter rows, so more messages fit on screen.") {
+                ExpressiveSwitch(checked = compact, onCheckedChange = onCompact)
+            }
         }
     }
 }

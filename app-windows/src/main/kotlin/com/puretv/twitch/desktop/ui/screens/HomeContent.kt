@@ -1,6 +1,5 @@
 package com.puretv.twitch.desktop.ui.screens
 
-import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -67,6 +66,7 @@ import com.puretv.twitch.desktop.ui.components.SplitButton
 import com.puretv.twitch.desktop.ui.components.StreamCardSkeleton
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType

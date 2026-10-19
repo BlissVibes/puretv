@@ -1,7 +1,5 @@
 package com.puretv.twitch.desktop.ui
 
-import com.puretv.twitch.core.stream.PlayableStreamCache
-import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -62,8 +60,10 @@ import coil3.disk.DiskCache
 import coil3.memory.MemoryCache
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.crossfade
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteFrameCache

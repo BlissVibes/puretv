@@ -198,6 +198,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                         pickableEmotes = state.pickableEmotes,
                         selfLogin = state.selfLogin,
                         canSend = state.isLoggedIn,
+                        textScale = state.chatTextScale,
                         modifier = Modifier.weight(chatFraction).fillMaxHeight(),
                     )
                 }
@@ -231,6 +232,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     pickableEmotes = state.pickableEmotes,
                     selfLogin = state.selfLogin,
                     canSend = state.isLoggedIn,
+                    textScale = state.chatTextScale,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                 )
             }

@@ -7,6 +7,7 @@ import com.puretv.twitch.core.adblock.MediaPlaylistCleaner
 import com.puretv.twitch.core.model.AdBlockStrategyResult
 import com.puretv.twitch.core.model.CleanStreamResult
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.stream.HlsMasterParser
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.StreamResolver
 import com.puretv.twitch.core.stream.Failure
@@ -192,14 +193,20 @@ class LocalStreamProxy(
                                     AdBlockStrategyResult.MANIFEST_REWRITE -> rewriterFallbacks.incrementAndGet()
                                     else -> Unit
                                 }
-                                // When the user selects a specific quality, filter the master
-                                // playlist down to only that variant before handing it to VLC.
-                                // Without this VLC always receives the full multi-variant master
-                                // and ignores the quality param, auto-selecting by bandwidth.
-                                val qualityFiltered = if (quality != StreamQuality.AUTO) {
-                                    filterMasterToQuality(result.playlistContent, quality)
+                                // VLC picks renditions by bandwidth, so it never sees the
+                                // audio-only one unless that is what was asked for (then it
+                                // sees nothing else). When the user selects a specific video
+                                // quality, filter the master down to only that variant too.
+                                // Without this VLC always receives the full multi-variant
+                                // master and ignores the quality param.
+                                val playable = HlsMasterParser.forPlayback(
+                                    result.playlistContent,
+                                    audioOnly = quality == StreamQuality.AUDIO_ONLY,
+                                )
+                                val qualityFiltered = if (quality != StreamQuality.AUTO && quality != StreamQuality.AUDIO_ONLY) {
+                                    filterMasterToQuality(playable, quality)
                                 } else {
-                                    result.playlistContent
+                                    playable
                                 }
                                 // CRITICAL: rewrite variant URLs so VLC fetches each per-quality
                                 // media playlist through us (ad-block choke point).
@@ -293,12 +300,13 @@ class LocalStreamProxy(
                         // Backup swap, strip, and the timeline normalization that keeps
                         // VLC's view continuous across player-type sessions (a backup's
                         // MEDIA-SEQUENCE can differ by thousands from the primary's).
+                        // A variant without a resolution is the audio-only rendition;
+                        // its backup is the audio-only rendition of another session.
                         val cleaned = cleaner.clean(
                             variantUrl = originalUrl,
                             raw = raw,
                             channelLogin = channel.ifBlank { null },
-                            quality = resolution.takeIf { it.isNotBlank() }
-                                ?.let { MediaPlaylistCleaner.VariantQuality(it, frameRate) },
+                            quality = MediaPlaylistCleaner.VariantQuality(resolution, frameRate),
                             forceAd = simulateAds.get(),
                         )
                         when (cleaned.strategy) {

@@ -24,6 +24,7 @@ import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.adblock.BackupStreamResolver
 import com.puretv.twitch.core.adblock.PlaylistAction
 import com.puretv.twitch.core.adblock.PlaylistDetect
+import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.stream.HlsMasterParser
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
@@ -61,6 +62,7 @@ class TwitchPlayer(
                     holdEmptyWindows = true,
                 ),
                 playableStreamCache = playableStreamCache,
+                audioOnly = { audioOnly },
             ),
         )
         .build()
@@ -195,6 +197,62 @@ class TwitchPlayer(
         }
     }
 
+    // Audio only, by the viewer's pick or because the app is in the background.
+    // Read by the playlist interceptor on OkHttp threads: while either is set it
+    // hands ExoPlayer the audio-only master, so no video is downloaded at all.
+    @Volatile private var pickedAudioOnly = false
+    @Volatile private var backgroundAudioOnly = false
+    private val audioOnly: Boolean get() = pickedAudioOnly || backgroundAudioOnly
+
+    /**
+     * Picks a quality on the live HLS ladder. AUTO lets ABR pick what the link
+     * sustains; SOURCE always plays the top rendition; a specific resolution caps
+     * the video size; AUDIO_ONLY reloads the stream as audio only. Every branch
+     * resets what the others set, because this singleton carries its parameters
+     * between streams.
+     */
+    fun setQuality(quality: StreamQuality) {
+        val builder = exoPlayer.trackSelectionParameters.buildUpon()
+            .setForceHighestSupportedBitrate(quality == StreamQuality.SOURCE)
+        when (quality) {
+            StreamQuality.SOURCE, StreamQuality.AUTO, StreamQuality.AUDIO_ONLY -> builder.clearVideoSizeConstraints()
+            StreamQuality.P1080P60 -> builder.setMaxVideoSize(1920, 1080)
+            StreamQuality.P720P60 -> builder.setMaxVideoSize(1280, 720)
+            StreamQuality.P480P -> builder.setMaxVideoSize(854, 480)
+            StreamQuality.P360P -> builder.setMaxVideoSize(640, 360)
+        }
+        exoPlayer.trackSelectionParameters = builder.build()
+        updateAudioOnly { pickedAudioOnly = quality == StreamQuality.AUDIO_ONLY }
+    }
+
+    /**
+     * With nobody looking (screen off, another app in front, no PiP window) the
+     * picture is wasted data and battery, so background play switches to the
+     * audio-only rendition and back to video on return. See [BackgroundPlayback].
+     */
+    fun setBackgroundAudioOnly(enabled: Boolean) {
+        updateAudioOnly { backgroundAudioOnly = enabled }
+    }
+
+    private inline fun updateAudioOnly(change: () -> Unit) {
+        val before = audioOnly
+        change()
+        if (audioOnly != before) reloadCurrentStream()
+    }
+
+    /**
+     * Loads the current stream again from its master, which the interceptor now
+     * serves as audio only or as video, and carries on at the live edge. Keeps
+     * the play/pause state: a paused stream stays paused.
+     */
+    private fun reloadCurrentStream() {
+        val player = _exoPlayer ?: return
+        val item = player.currentMediaItem ?: return
+        mainHandler.removeCallbacks(retryRunnable)
+        player.setMediaItem(item)
+        player.prepare()
+    }
+
     /**
      * Stops playback and clears the queue without tearing down the player. No-op
      * if the player was already released, so a stream-leave teardown after the
@@ -264,6 +322,8 @@ class AdBlockInterceptor(
     private val adBlockEngine: AdBlockEngine,
     private val cleaner: MediaPlaylistCleaner,
     private val playableStreamCache: PlayableStreamCache,
+    /** True while the player should get the audio-only rendition instead of video. */
+    private val audioOnly: () -> Boolean,
 ) : Interceptor {
 
     // Learned from the master. channelLogin is @Volatile (written on the master
@@ -285,14 +345,8 @@ class AdBlockInterceptor(
                 .protocol(Protocol.HTTP_1_1)
                 .code(200)
                 .message("OK")
-                .body(master.toResponseBody(HLS_MEDIA_TYPE))
+                .body(HlsMasterParser.forPlayback(master, audioOnly()).toResponseBody(HLS_MEDIA_TYPE))
                 .build()
-        }
-
-        // Honour the user's "Enable ad block" switch: when off, do no filtering at
-        // all (and the engine has already flipped the pill to DISABLED).
-        if (!adBlockEngine.isEnabled) {
-            return chain.proceed(request)
         }
 
         if (PlaylistDetect.classifyRequest(request.url.encodedPath) == PlaylistAction.SKIP_SEGMENT) {
@@ -318,9 +372,21 @@ class AdBlockInterceptor(
         val rawBody = body.string()
 
         // A master playlist (#EXT-X-STREAM-INF) carries no ad segments; we only
-        // learn its channel + variant ladder, then pass it through untouched.
+        // learn its channel + variant ladder, then hand the player the renditions
+        // it should see (never the audio-only one by accident, see forPlayback).
+        // This runs with ad blocking off too.
         if (rawBody.contains("#EXT-X-STREAM-INF")) {
             learnFromMaster(request.url, rawBody)
+            return response.newBuilder()
+                .body(HlsMasterParser.forPlayback(rawBody, audioOnly()).toResponseBody(HLS_MEDIA_TYPE))
+                .removeHeader("Content-Length")
+                .build()
+        }
+
+        // Honour the user's "Enable ad block" switch: when off, media playlists
+        // pass through unfiltered (and the engine has already flipped the pill to
+        // DISABLED).
+        if (!adBlockEngine.isEnabled) {
             return response.newBuilder()
                 .body(rawBody.toResponseBody(HLS_MEDIA_TYPE))
                 .removeHeader("Content-Length")

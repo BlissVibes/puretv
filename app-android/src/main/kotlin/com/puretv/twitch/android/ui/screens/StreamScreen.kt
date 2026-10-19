@@ -32,6 +32,8 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -81,6 +83,7 @@ import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
+import com.puretv.twitch.core.model.StreamQuality
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
@@ -173,6 +176,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     onToggleFill = { fillScreen = !fillScreen },
                     onToggleChat = toggleChat,
                     onRetry = viewModel::retry,
+                    onSelectQuality = viewModel::setQuality,
                     isInPip = isInPip,
                     metadata = metadata,
                     modifier = Modifier.weight(if (showChat) 1f - chatFraction else 1f).fillMaxHeight(),
@@ -217,6 +221,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                 onToggleFill = { fillScreen = !fillScreen },
                 onToggleChat = toggleChat,
                 onRetry = viewModel::retry,
+                onSelectQuality = viewModel::setQuality,
                 isInPip = isInPip,
                 metadata = metadata,
                 modifier = if (isInPip) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
@@ -315,6 +320,7 @@ private fun PlayerArea(
     onToggleFill: () -> Unit,
     onToggleChat: () -> Unit,
     onRetry: () -> Unit,
+    onSelectQuality: (StreamQuality) -> Unit,
     isInPip: Boolean,
     metadata: MediaMetadata,
     modifier: Modifier = Modifier,
@@ -381,6 +387,8 @@ private fun PlayerArea(
                         PlayerBackButton(onClick = onBack, modifier = Modifier.align(Alignment.TopStart).then(topInset).padding(6.dp))
 
                         PlayerControlsGroup(
+                            quality = state.quality,
+                            onSelectQuality = onSelectQuality,
                             chatVisible = chatVisible,
                             fullscreen = fullscreen,
                             fillScreen = fillScreen,
@@ -435,13 +443,15 @@ private fun PlayerBackButton(onClick: () -> Unit, modifier: Modifier = Modifier)
 }
 
 /**
- * The welded chat/fill/fullscreen cluster: one 28dp-radius `surfaceHigh` bar
- * with 1dp `outlineVariant` dividers between square segments, matching the
+ * The welded quality/chat/fill/fullscreen cluster: one 28dp-radius `surfaceHigh`
+ * bar with 1dp `outlineVariant` dividers between square segments, matching the
  * desktop controls bar's `ConnectedControlsGroup`. Fill/Fit only matters once
  * fullscreen owns the whole display, so that segment only appears there.
  */
 @Composable
 private fun PlayerControlsGroup(
+    quality: StreamQuality,
+    onSelectQuality: (StreamQuality) -> Unit,
     chatVisible: Boolean,
     fullscreen: Boolean,
     fillScreen: Boolean,
@@ -457,6 +467,8 @@ private fun PlayerControlsGroup(
             .clip(RoundedCornerShape(28.dp))
             .background(c.surfaceHigh),
     ) {
+        QualityMenuButton(quality = quality, onSelect = onSelectQuality)
+        GroupDivider()
         ControlsGroupButton(
             icon = ExpressiveIcons.Chat,
             contentDescription = if (chatVisible) "Hide chat" else "Show chat",
@@ -478,6 +490,42 @@ private fun PlayerControlsGroup(
             contentDescription = if (fullscreen) "Exit fullscreen" else "Fullscreen",
             onClick = onToggleFullscreen,
         )
+    }
+}
+
+/**
+ * Quality picker: Auto lets the player follow the connection, Source always
+ * plays the original, Audio only drops the picture. The pick is applied at once
+ * and, except Audio only, becomes the quality the next stream opens at.
+ */
+@Composable
+private fun QualityMenuButton(quality: StreamQuality, onSelect: (StreamQuality) -> Unit) {
+    val c = PureTvTheme.colors
+    var open by remember { mutableStateOf(false) }
+    Box {
+        ControlsGroupButton(
+            icon = ExpressiveIcons.Quality,
+            contentDescription = "Quality: ${quality.label}",
+            onClick = { open = true },
+            tint = if (quality != StreamQuality.AUTO) c.primary else null,
+        )
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }, containerColor = c.surfaceHigh) {
+            StreamQuality.entries.sortedBy { it.sortOrder }.forEach { option ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            option.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (option == quality) c.primary else c.onSurface,
+                        )
+                    },
+                    onClick = {
+                        open = false
+                        if (option != quality) onSelect(option)
+                    },
+                )
+            }
+        }
     }
 }
 

@@ -412,9 +412,7 @@ class StreamViewModel(
                 return@launch
             }
 
-            val preferredQuality = runCatching {
-                StreamQuality.valueOf(settingsStore.settings.value.preferredQuality.uppercase())
-            }.getOrDefault(StreamQuality.AUTO)
+            val preferredQuality = StreamQuality.fromSetting(settingsStore.settings.value.preferredQuality)
 
             // Playback first: VLC only needs the local proxy URL, and the proxy
             // resolves the stream itself, so nothing below holds up the picture.
@@ -634,7 +632,13 @@ class StreamViewModel(
         vlcPlayer.play(url)
     }
 
-    fun setQuality(quality: StreamQuality) = playAt(quality)
+    /** A quality picked in the player: played now and kept for next time (see [StreamQuality.preferenceFor]). */
+    fun setQuality(quality: StreamQuality) {
+        playAt(quality)
+        StreamQuality.preferenceFor(quality)?.let { preference ->
+            settingsStore.updateSettings { it.copy(preferredQuality = preference) }
+        }
+    }
 
     /** Live-apply the scaler to the running player AND persist it. The whole point:
      *  it changes the picture mid-stream, not just on restart. */

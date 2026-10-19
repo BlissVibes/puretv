@@ -111,6 +111,13 @@ class PureTvApp : Application() {
                 .distinctUntilChanged()
                 .collect { playback.setPipOnLeave(it) }
         }
+        appScope.launch {
+            val playback = koinApp.koin.get<BackgroundPlayback>()
+            koinApp.koin.get<AppSettingsStore>().flow
+                .map { it.audioOnlyInBackground }
+                .distinctUntilChanged()
+                .collect { playback.setAudioOnlyInBackground(it) }
+        }
     }
 
     private companion object {

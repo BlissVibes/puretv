@@ -15,6 +15,7 @@ import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.GameInfo
@@ -366,6 +367,12 @@ data class StreamUiState(
     val playbackError: String? = null,
     /** Settings > Chat text size, as a scale for the chat overlay. */
     val chatTextScale: Float = 1f,
+    /**
+     * What the player plays at: the saved preference once settings load (null
+     * until then, so the screen never applies a placeholder first), then the
+     * viewer's pick.
+     */
+    val quality: StreamQuality? = null,
 )
 
 class StreamViewModel(
@@ -407,7 +414,12 @@ class StreamViewModel(
             // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
             // the phone app when no OAuth session is present (Section 5.1).
             val settings = settingsStore.flow.first()
-            _state.update { it.copy(chatTextScale = ChatTextSize.from(settings.chatFontSize).scale) }
+            _state.update {
+                it.copy(
+                    chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    quality = StreamQuality.fromSetting(settings.preferredQuality),
+                )
+            }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             val username = settings.username.takeIf { it.isNotBlank() }
             chatClient.connect(channelLogin, token, username)
@@ -486,6 +498,14 @@ class StreamViewModel(
 
     /** The player put this stream's first frame on screen (local timing only). */
     fun onFirstFrame() = openTiming.mark("first_frame")
+
+    /** A quality picked in the player: applied by the screen and kept for next time (see [StreamQuality.preferenceFor]). */
+    fun setQuality(quality: StreamQuality) {
+        _state.update { it.copy(quality = quality) }
+        StreamQuality.preferenceFor(quality)?.let { preference ->
+            viewModelScope.launch { settingsStore.update { it.copy(preferredQuality = preference) } }
+        }
+    }
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
         chatClient.sendMessage(channelLogin, text)

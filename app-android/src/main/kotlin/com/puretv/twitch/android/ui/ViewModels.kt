@@ -37,6 +37,7 @@ import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
 import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChannelEmote
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
@@ -339,6 +340,8 @@ data class StreamUiState(
     val isLoggedIn: Boolean = false,
     /** Settings > Chat > Text size, as a scale for the chat list. */
     val chatTextScale: Float = 1f,
+    /** What the player plays at: the saved preference on open, then the viewer's pick. */
+    val quality: StreamQuality = StreamQuality.AUTO,
 )
 
 @OptIn(UnstableApi::class)
@@ -455,11 +458,14 @@ class StreamViewModel(
             // `TwitchChatClient` falls back to a `justinfanNNNN` identity for `null`.
             // Sending requires a real OAuth token (see Section 5.1).
             val settings = settingsStore.flow.first()
+            val preferred = StreamQuality.fromSetting(settings.preferredQuality)
+            twitchPlayer.setQuality(preferred)
             _state.update {
                 it.copy(
                     chatFraction = settings.chatFraction,
                     chatEnabled = settings.chatEnabled,
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    quality = preferred,
                 )
             }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
@@ -549,6 +555,15 @@ class StreamViewModel(
             emoteIndex = selfEchoIndex,
         )
         _state.update { it.copy(chatMessages = (it.chatMessages + echo).takeLast(200)) }
+    }
+
+    /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */
+    fun setQuality(quality: StreamQuality) {
+        twitchPlayer.setQuality(quality)
+        _state.update { it.copy(quality = quality) }
+        StreamQuality.preferenceFor(quality)?.let { preference ->
+            viewModelScope.launch { settingsStore.update { it.copy(preferredQuality = preference) } }
+        }
     }
 
     fun setChatFraction(fraction: Float) = viewModelScope.launch {
@@ -672,6 +687,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setPipOnLeave(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(pipOnLeave = enabled) }
+    }
+
+    fun setAudioOnlyInBackground(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioOnlyInBackground = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

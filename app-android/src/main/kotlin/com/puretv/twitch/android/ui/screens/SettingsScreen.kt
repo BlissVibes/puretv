@@ -127,6 +127,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
+            onAudioOnlyInBackgroundChange = viewModel::setAudioOnlyInBackground,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -297,6 +298,7 @@ private fun PlaybackPanel(
     onAnimateEmotesChange: (Boolean) -> Unit,
     onBackgroundPlayChange: (Boolean) -> Unit,
     onPipOnLeaveChange: (Boolean) -> Unit,
+    onAudioOnlyInBackgroundChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -357,6 +359,25 @@ private fun PlaybackPanel(
                     )
                 }
                 ExpressiveSwitch(checked = settings.pipOnLeave, onCheckedChange = onPipOnLeaveChange)
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Audio only in the background", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "When you're listening with the screen off or another app open, download just the " +
+                            "sound. Saves a lot of data and battery. The picture comes back when you return.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.audioOnlyInBackground, onCheckedChange = onAudioOnlyInBackgroundChange)
             }
 
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))

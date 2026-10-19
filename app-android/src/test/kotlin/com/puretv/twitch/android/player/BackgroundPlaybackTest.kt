@@ -20,6 +20,17 @@ class BackgroundPlaybackTest {
     }
 
     @Test
+    fun videoIsDroppedOnlyWhenPlayingOnWithNothingOnScreen() {
+        assertTrue(BackgroundPlayback.shouldDropVideo(backgroundPlay = true, audioOnlyInBackground = true, inPip = false))
+        // A PiP window shows the video, so it keeps it.
+        assertFalse(BackgroundPlayback.shouldDropVideo(backgroundPlay = true, audioOnlyInBackground = true, inPip = true))
+        // The setting is off: keep downloading video, as before.
+        assertFalse(BackgroundPlayback.shouldDropVideo(backgroundPlay = true, audioOnlyInBackground = false, inPip = false))
+        // Without background play leaving pauses, so there is nothing to switch.
+        assertFalse(BackgroundPlayback.shouldDropVideo(backgroundPlay = false, audioOnlyInBackground = true, inPip = false))
+    }
+
+    @Test
     fun streamTitleLeadsWithChannelNameUnderneath() {
         val nowPlaying = NowPlaying.of("ninja", channel(displayName = "Ninja"), stream(title = "  Ranked grind  "))
         assertEquals("Ranked grind", nowPlaying.title)

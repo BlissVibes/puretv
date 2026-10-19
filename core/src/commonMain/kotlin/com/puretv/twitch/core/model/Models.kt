@@ -63,6 +63,22 @@ enum class StreamQuality(val label: String, val sortOrder: Int) {
             name.contains("audio", ignoreCase = true) -> AUDIO_ONLY
             else -> AUTO
         }
+
+        /**
+         * The quality saved as `AppSettings.preferredQuality`. Every app stores the
+         * enum name in lower case ("auto", "p1080p60", "audio_only"); anything
+         * unreadable means Auto.
+         */
+        fun fromSetting(value: String?): StreamQuality =
+            entries.firstOrNull { it.name.equals(value?.trim(), ignoreCase = true) } ?: AUTO
+
+        /**
+         * What a quality picked in the player saves as the preference, or null when
+         * it should not stick. Audio only is a choice for this moment (screen off,
+         * saving data); opening the next stream with no picture would look broken.
+         */
+        fun preferenceFor(picked: StreamQuality): String? =
+            if (picked == AUDIO_ONLY) null else picked.name.lowercase()
     }
 }
 
@@ -209,6 +225,9 @@ data class AppSettings(
     // Float the video in a picture-in-picture window on Home. Off sends the
     // stream straight to background play instead. Android phone only.
     val pipOnLeave: Boolean = true,
+    // During background play with nothing on screen, fetch only the audio-only
+    // rendition instead of video nobody sees. Android phone only.
+    val audioOnlyInBackground: Boolean = true,
 
     // Ad Block
     val adBlockEnabled: Boolean = true,

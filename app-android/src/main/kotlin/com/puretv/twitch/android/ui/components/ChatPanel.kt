@@ -61,9 +61,11 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -298,6 +300,18 @@ fun ChatPanel(
 @Composable
 private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
+    // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
+    // centred, muted line instead of the name, badge and emote pipeline.
+    if (message.isSystem) {
+        Text(
+            message.message,
+            style = MaterialTheme.typography.labelMedium,
+            color = c.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+        return
+    }
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -314,7 +328,9 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
     val timestamp = remember(message.timestamp) {
         runCatching { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp)) }.getOrDefault("")
     }
-    val (bodyText, bodyInline) = remember(message.id, emotes) { buildChatBody(message, emotes) }
+    // Keyed on the whole message, not its id: a moderator's delete arrives as a
+    // copy with the same id, and an id key would keep showing the original words.
+    val (bodyText, bodyInline) = remember(message, emotes) { buildChatBody(message, emotes) }
 
     Column(
         modifier = modifier
@@ -345,12 +361,23 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
             )
             Text(timestamp, style = PureTvType.dataSmall, color = c.onSurfaceVariant.copy(alpha = 0.6f))
         }
-        Text(
-            text = bodyText,
-            inlineContent = bodyInline,
-            style = MaterialTheme.typography.bodyLarge,
-            color = c.onSurface,
-        )
+        if (message.deleted) {
+            // A moderator removed this (timeout, ban or delete). The row stays as a
+            // tombstone so the conversation around it still reads.
+            Text(
+                "<message deleted>",
+                style = MaterialTheme.typography.bodyLarge,
+                fontStyle = FontStyle.Italic,
+                color = c.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = bodyText,
+                inlineContent = bodyInline,
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.onSurface,
+            )
+        }
     }
 }
 

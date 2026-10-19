@@ -21,7 +21,12 @@ import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
+import com.puretv.twitch.core.chat.ChatChange
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.ChatTimeline
+import com.puretv.twitch.core.chat.ChatTimelineState
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
@@ -35,7 +40,6 @@ import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
-import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChannelEmote
@@ -324,6 +328,8 @@ data class StreamUiState(
     val playableUrl: String? = null,
     val adBlockStatus: AdBlockStatus = AdBlockStatus.UNKNOWN,
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** Slow, emote-only, followers-only and sub-only, shown above the composer. */
+    val roomModes: ChatRoomModes = ChatRoomModes(),
     val chatFraction: Float = 0.5f,
     val chatEnabled: Boolean = true,
     /** Third-party (7TV/BTTV/FFZ) name-to-url map the chat rows word-match against.
@@ -373,6 +379,7 @@ class StreamViewModel(
     private var selfColor: String? = null
     private var selfBadges: List<Badge> = emptyList()
     private var echoCounter = 0
+    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
 
     // Tokenizes only YOUR OWN echoed message: third-party plus first-party Twitch,
     // because your own message carries no `emotes=` tag, so a typed Kappa or sub
@@ -477,24 +484,21 @@ class StreamViewModel(
             _state.update { it.copy(isLoggedIn = token != null, selfLogin = username) }
             chatClient.connect(channelLogin, token, username)
             // A busy chat arrives in batches (about ten a second), each applied in
-            // one state update instead of one per message.
+            // one state update instead of one per message. Core's ChatTimeline holds
+            // the chat rules every app shares (moderation tombstones, sub and raid
+            // rows, mentions, room modes); the batch is prepared out here because
+            // the update lambda may run more than once.
             chatClient.events.batchedEvery().collect { batch ->
-                val incoming = ArrayList<ChatMessage>(batch.size)
-                for (event in batch) {
-                    when (event) {
-                        is ChatEvent.Message -> incoming += event.message
-                        // Our own name/color/badges, used to dress the self-echo.
-                        is ChatEvent.SelfState -> {
-                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                            selfColor = event.color
-                            selfBadges = event.badges
-                        }
-                        else -> {}
-                    }
-                }
-                if (incoming.isNotEmpty()) {
-                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
-                }
+                val changes = chatTimeline.changesFor(
+                    batch,
+                    // Our own name/color/badges, used to dress the self-echo.
+                    onSelfState = { self ->
+                        self.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                        selfColor = self.color
+                        selfBadges = self.badges
+                    },
+                )
+                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
     }
@@ -557,7 +561,18 @@ class StreamViewModel(
             timestamp = System.currentTimeMillis(),
             emoteIndex = selfEchoIndex,
         )
-        _state.update { it.copy(chatMessages = (it.chatMessages + echo).takeLast(200)) }
+        val echoed = listOf(ChatChange.Add(echo))
+        _state.update { it.withChat(echoed) }
+    }
+
+    /**
+     * [changes] applied to the chat rows and room modes (see [applying]). The phone
+     * has no Mentions tab, so a ping is only highlighted in place.
+     */
+    private fun StreamUiState.withChat(changes: List<ChatChange>): StreamUiState {
+        val before = ChatTimelineState(messages = chatMessages, modes = roomModes)
+        val after = before.applying(changes)
+        return if (after === before) this else copy(chatMessages = after.messages, roomModes = after.modes)
     }
 
     /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */

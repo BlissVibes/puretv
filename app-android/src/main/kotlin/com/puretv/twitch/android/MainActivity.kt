@@ -110,6 +110,18 @@ class MainActivity : ComponentActivity() {
 
         observeTheme()
 
+        // Silent launch update check: surfaces an "Update available" banner on
+        // Home / a prompt in Settings when a newer Android APK is published.
+        // Fully fail-soft (no manifest / offline -> stays idle, no nagging). Here
+        // rather than in PureTvApp so only opening the app checks, never a
+        // background process start (the go-live worker). Once per Activity creation.
+        if (savedInstanceState == null) {
+            uiScope.launch(Dispatchers.IO) {
+                runCatching { getKoin().get<AndroidUpdateManager>().checkForUpdates() }
+                    .onFailure { Log.w(TAG, "Update check failed", it) }
+            }
+        }
+
         setContent {
             val navController = rememberNavController()
 

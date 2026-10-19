@@ -5,7 +5,6 @@ import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.di.androidModule
 import com.puretv.twitch.android.player.BackgroundPlayback
-import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
 import android.util.Log
@@ -61,11 +60,8 @@ class PureTvApp : Application() {
             // visible jank. This also primes the shared core TokenHolder so the
             // first authenticated request has a bearer token.
             koinApp.koin.get<AppSettingsStore>()
-
-            // Silent launch update check: surfaces an "Update available" banner on
-            // Home / a prompt in Settings when a newer Android APK is published.
-            // Fully fail-soft (no manifest / offline -> stays idle, no nagging).
-            koinApp.koin.get<AndroidUpdateManager>().checkForUpdates()
+            // The update check lives in MainActivity: this runs for every process
+            // start, including the go-live worker's, which must never contact GitHub.
         }
 
         // Keep the sign-in alive for as long as the process runs (background play

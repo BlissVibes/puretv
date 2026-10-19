@@ -59,6 +59,9 @@ class FollowedChannelsService(
     private val api: TwitchApiClient,
     private val timeSource: TimeSource = TimeSource.Monotonic,
     private val followsTtl: Duration = 10.minutes,
+    // Each app points this at its LiveFollowsMonitor, so the rail and the go-live
+    // alerts share one /streams/followed request instead of making one each.
+    private val followedLive: suspend (userId: String) -> List<StreamInfo> = { api.getFollowedStreams(it) },
 ) : FollowedChannelsSource {
     private val profileCache = mutableMapOf<String, Profile>()
 
@@ -130,7 +133,7 @@ class FollowedChannelsService(
     /** Live follows from /streams/followed, or null if that call failed (callers fall back). */
     private suspend fun followedLiveOrNull(userId: String): List<StreamInfo>? =
         try {
-            api.getFollowedStreams(userId)
+            followedLive(userId)
         } catch (c: CancellationException) {
             throw c
         } catch (e: Throwable) {

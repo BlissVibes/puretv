@@ -75,6 +75,18 @@ There is no CI workflow watching `android-v*` or `tv-v*`. Cut these by hand.
    over an existing copy. People would have to uninstall and lose their session
    first. Changing the Android key is a one-way door, and this is why it stays.
 
+   Both release builds now refuse to package with any other key. They compare
+   the signing certificate's SHA-256 with the published one (phone
+   `e4ae429a...`, TV `3d19d790...`, pinned in each app's `build.gradle.kts`), and
+   the TV release fails outright without `keystore.properties` instead of
+   producing an unsigned APK. If the check fails, restore the backed-up key; do
+   not edit the pinned value.
+
+   **Back up both keys somewhere other than this PC**: `~/.android/debug.keystore`
+   for the phone, and the TV keystore named in `keystore.properties` together with
+   that file. A new PC or an SDK reinstall silently creates a new debug key, and
+   without the old one no phone update can ever install over an existing copy.
+
 3. **Check the signing key anyway**, because getting it wrong is unrecoverable
    for anyone already running the app:
 

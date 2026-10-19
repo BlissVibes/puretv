@@ -1,3 +1,6 @@
+import java.security.KeyStore
+import java.security.MessageDigest
+
 plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.android.application)
@@ -148,3 +151,41 @@ dependencies {
 
     testImplementation(libs.kotlin.test)
 }
+
+/**
+ * SHA-256 of the certificate under [alias] in [keystore], lowercase hex, or null
+ * if the keystore cannot be read. JKS and PKCS12 both load through the JDK's
+ * compatible keystore type.
+ */
+fun signingCertSha256(keystore: File, password: String, alias: String): String? = runCatching {
+    val ks = KeyStore.getInstance("PKCS12")
+    keystore.inputStream().use { ks.load(it, password.toCharArray()) }
+    val cert = ks.getCertificate(alias) ?: return@runCatching null
+    MessageDigest.getInstance("SHA-256").digest(cert.encoded).joinToString("") { "%02x".format(it) }
+}.getOrNull()
+
+// The certificate every published phone release was signed with (CN=Android
+// Debug, this machine's ~/.android/debug.keystore). Android installs an update
+// over an existing copy only when the certificates match, so a release signed
+// with any other key would make every user uninstall, and sign in again, first.
+// A new PC or an SDK reinstall silently creates a new debug key, so the release
+// build checks the key before packaging. If this fails, restore the backed-up
+// debug.keystore (docs/DEVELOPING.md); never edit the value to make it pass.
+val publishedPhoneSigningSha256 = "e4ae429aae6dda53ed60ad1a1e5749c0bbea6d98d1cb34c7019371f7c85ce3c8"
+
+val verifyReleaseSigningKey by tasks.registering {
+    description = "Fails the release build if it would be signed with a different key than published releases."
+    doLast {
+        val keystore = File(System.getProperty("user.home"), ".android/debug.keystore")
+        val actual = signingCertSha256(keystore, "android", "androiddebugkey")
+        if (actual != publishedPhoneSigningSha256) {
+            throw GradleException(
+                "Refusing to build a phone release: ${keystore.path} is " +
+                    (if (actual == null) "missing or unreadable" else "a different key ($actual)") +
+                    ". Restore the debug.keystore every published release was signed with " +
+                    "(SHA-256 $publishedPhoneSigningSha256), or users will have to uninstall to update.",
+            )
+        }
+    }
+}
+tasks.matching { it.name == "packageRelease" }.configureEach { dependsOn(verifyReleaseSigningKey) }

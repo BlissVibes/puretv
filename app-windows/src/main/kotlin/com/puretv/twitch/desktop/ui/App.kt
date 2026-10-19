@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -155,10 +157,16 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
 
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
+        val streamPrewarm = remember {
+            val cache = koin.get<PlayableStreamCache>()
+            val prewarm: (String) -> Unit = { login -> cache.prewarm(login) }
+            prewarm
+        }
         CompositionLocalProvider(
             LocalAppShell provides shell,
             LocalEmoteAnimation provides settings.animateEmotes,
             LocalEmoteFrameCache provides emoteFrameCache,
+            LocalStreamPrewarm provides streamPrewarm,
         ) {
             var destination by remember { mutableStateOf(Destination.HOME) }
             var route by remember { mutableStateOf<Route>(Route.Top) }

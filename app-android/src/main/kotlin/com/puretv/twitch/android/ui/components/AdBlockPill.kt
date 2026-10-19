@@ -56,7 +56,7 @@ fun AdBlockPill(status: AdBlockStatus, onClick: () -> Unit, modifier: Modifier =
         val c = PureTvTheme.colors
         val label = when (status) {
             AdBlockStatus.AD_BLOCKED -> "AD BLOCKED"
-            AdBlockStatus.AD_FILTERED -> "AD FILTERED"
+            AdBlockStatus.AD_FILTERED -> "SKIPPING AD"
             AdBlockStatus.AD_BLOCK_OFF -> "AD BLOCK OFF"
             AdBlockStatus.DISABLED -> "AD BLOCK OFF"
             AdBlockStatus.UNKNOWN -> ""

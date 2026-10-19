@@ -11,6 +11,34 @@ release notes automatically.
 
 ---
 
+## Unreleased
+
+Streams start sooner and ads get skipped more cleanly, on Windows, phone and TV.
+
+### Improved
+- **Streams start sooner.** The video starts loading the moment you open a
+  channel, instead of waiting for the channel's details, emotes and badges.
+- **A head start before you click.** On Windows, resting the pointer on a live
+  channel (or opening its page) gets the stream ready in the background. On TV,
+  stopping on a channel does the same, so pressing OK plays almost at once.
+- **Emotes from the very first chat line.** PureTV remembers each channel's
+  emotes, so they show right away and quietly update in the background. If an
+  emote service is down, the ones you already had stay.
+- **Fewer ads to skip on phone and TV.** They now ask Twitch for the same kind
+  of stream Windows does, which gets far fewer ads.
+- **Smoother ad skipping on phone and TV.** Switching around an ad no longer
+  makes the video jump or freeze.
+- **Animated emotes download once on Windows,** instead of again every time
+  you start PureTV.
+
+### Fixed
+- **Black screen when a stream opens straight into an ad (phone and TV).**
+  PureTV now waits for the ad to finish and then starts the stream, instead of
+  leaving you on a black screen. You still never see the ad.
+- **The ad-block badge tells the truth.** It no longer carries the last
+  channel's state over to a new one, and on Windows it no longer stays green
+  while an ad is being skipped. It says "SKIPPING AD" while that happens.
+
 ## 1.12.1 - 2026-10-17
 
 Updates install properly again, even if you reopen PureTV while one is running.

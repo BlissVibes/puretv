@@ -53,6 +53,7 @@ fun TvStreamCard(stream: StreamInfo, onClick: () -> Unit, modifier: Modifier = M
         modifier = modifier
             .padding(6.dp)
             .width(220.dp)
+            .prewarmStreamOnFocus(stream.userLogin)
             .tvFocusClickable(
                 interaction = interaction,
                 onClick = onClick,

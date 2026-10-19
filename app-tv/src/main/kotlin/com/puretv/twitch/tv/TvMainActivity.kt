@@ -1,5 +1,8 @@
 package com.puretv.twitch.tv
 
+import androidx.compose.runtime.CompositionLocalProvider
+import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.tv.ui.components.LocalStreamPrewarm
 import android.content.Intent
 import android.os.Bundle
 import android.util.Log
@@ -69,9 +72,13 @@ class TvMainActivity : ComponentActivity() {
         handleAuthRedirect(intent)
         observeTheme()
 
+        val playableStreamCache = getKoin().get<PlayableStreamCache>()
+        val streamPrewarm: (String) -> Unit = { login -> playableStreamCache.prewarm(login) }
         setContent {
             PureTvTvTheme(variant = themeVariant.value) {
-                PureTvTvNavHost()
+                CompositionLocalProvider(LocalStreamPrewarm provides streamPrewarm) {
+                    PureTvTvNavHost()
+                }
             }
         }
     }

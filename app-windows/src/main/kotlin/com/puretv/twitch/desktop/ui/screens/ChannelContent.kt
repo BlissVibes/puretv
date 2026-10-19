@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.runtime.LaunchedEffect
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -78,6 +80,13 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
     val state by viewModel.state.collectAsState()
     val isFollowed by viewModel.isFollowed.collectAsState()
     val c = PureTvTheme.colors
+
+    // Opening a live channel's page is the strongest hint the viewer is about to
+    // press Watch: resolve the stream now so playback starts at once.
+    val prewarm = LocalStreamPrewarm.current
+    LaunchedEffect(state.isLive, channelLogin) {
+        if (state.isLive) prewarm?.invoke(channelLogin)
+    }
 
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin

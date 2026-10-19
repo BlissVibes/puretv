@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -192,7 +193,7 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                                         game = ch.gameName,
                                         title = ch.title,
                                         onClick = { onOpenChannel(ch.login) },
-                                        modifier = Modifier.width(240.dp),
+                                        modifier = Modifier.width(240.dp).prewarmStreamOnHover(ch.login, live = ch.isLive),
                                     )
                                 }
                             }
@@ -214,6 +215,7 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                             game = stream.gameName,
                             title = stream.title,
                             onClick = { onOpenChannel(stream.userLogin) },
+                            modifier = Modifier.prewarmStreamOnHover(stream.userLogin),
                         )
                     }
                 } else if (state.following.isEmpty()) {

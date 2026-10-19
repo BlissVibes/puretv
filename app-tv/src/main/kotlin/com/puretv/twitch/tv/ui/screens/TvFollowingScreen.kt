@@ -60,6 +60,7 @@ import com.puretv.twitch.tv.ui.components.TvPageTitle
 import com.puretv.twitch.tv.ui.components.TvPanel
 import com.puretv.twitch.tv.ui.components.TvSectionHeading
 import com.puretv.twitch.tv.ui.components.formatTvViewerCount
+import com.puretv.twitch.tv.ui.components.prewarmStreamOnFocus
 import com.puretv.twitch.tv.ui.components.tvFocusClickable
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
@@ -307,6 +308,7 @@ private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modi
         modifier = modifier
             .padding(6.dp)
             .width(220.dp)
+            .prewarmStreamOnFocus(row.login, live = row.isLive)
             .tvFocusClickable(
                 interaction = interaction,
                 onClick = onClick,

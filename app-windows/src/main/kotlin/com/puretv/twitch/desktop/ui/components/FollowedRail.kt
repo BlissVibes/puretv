@@ -144,6 +144,7 @@ private fun FollowRowItem(row: FollowRow, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .prewarmStreamOnHover(row.login, live = row.isLive)
             .expressiveClickable(
                 interaction = interaction,
                 onClick = onClick,

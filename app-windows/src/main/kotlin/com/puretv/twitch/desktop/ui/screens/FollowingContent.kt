@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -239,7 +240,11 @@ private fun LiveSectionHeader(count: Int, layout: FollowingLayout, onLayoutChang
 private fun LiveGridRow(rowItems: List<FollowRow>, onOpenChannel: (String) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         rowItems.forEach { row ->
-            LiveFollowCard(row, onClick = { onOpenChannel(row.login) }, modifier = Modifier.weight(1f))
+            LiveFollowCard(
+                row,
+                onClick = { onOpenChannel(row.login) },
+                modifier = Modifier.weight(1f).prewarmStreamOnHover(row.login, live = row.isLive),
+            )
         }
         repeat(4 - rowItems.size) { Spacer(Modifier.weight(1f)) }
     }

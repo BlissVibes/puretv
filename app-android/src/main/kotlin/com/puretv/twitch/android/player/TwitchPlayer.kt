@@ -1,6 +1,8 @@
 package com.puretv.twitch.android.player
 
 import android.content.Context
+import android.os.Looper
+import android.os.Handler
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -133,11 +135,24 @@ class TwitchPlayer(
     private var errorRetries = 0
 
     /**
-     * SECTION 06.3 — keeps live HLS blips from dead-ending on a black screen.
+     * Called on the main thread once the backed-off retries are spent. The stream
+     * view model answers with a fresh stream session (the old signed URL may have
+     * expired, for example after a long pause) or, failing that, a visible error,
+     * so playback never just stays black.
+     */
+    @Volatile var onGaveUp: ((PlaybackException) -> Unit)? = null
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val retryRunnable = Runnable { _exoPlayer?.prepare() }
+
+    /**
+     * SECTION 06.3 keeps live HLS blips from dead-ending on a black screen.
      * BEHIND_LIVE_WINDOW (we fell off the live edge) is recovered by re-seeking
-     * to the default (live) position and re-preparing. Any other error gets a
-     * BOUNDED prepare() retry (max 3) so a flapping segment server cannot spin
-     * the loader forever; once playback reaches STATE_READY the budget resets.
+     * to the default (live) position and re-preparing. Any other error is retried
+     * with growing pauses ([RETRY_DELAYS_MS]), so a brief network drop gets time
+     * to clear instead of three instant retries that all hit the same outage;
+     * once those are spent, [onGaveUp] takes over. Reaching STATE_READY resets
+     * the budget.
      */
     private val recoveryListener = object : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
@@ -146,17 +161,17 @@ class TwitchPlayer(
                 exoPlayer.prepare()
                 return
             }
-            if (errorRetries < MAX_ERROR_RETRIES) {
+            if (errorRetries < RETRY_DELAYS_MS.size) {
+                mainHandler.removeCallbacks(retryRunnable)
+                mainHandler.postDelayed(retryRunnable, RETRY_DELAYS_MS[errorRetries])
                 errorRetries++
-                exoPlayer.prepare()
+            } else {
+                onGaveUp?.invoke(error)
             }
-            // Past the bound we stop: do not loop forever on a hard failure.
         }
 
         override fun onPlaybackStateChanged(playbackState: Int) {
-            if (playbackState == Player.STATE_READY) {
-                errorRetries = 0
-            }
+            if (playbackState == Player.STATE_READY) errorRetries = 0
         }
 
         override fun onRenderedFirstFrame() {
@@ -172,6 +187,7 @@ class TwitchPlayer(
      */
     fun playUrl(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY) {
         errorRetries = 0
+        mainHandler.removeCallbacks(retryRunnable)
         with(exoPlayer) {
             setMediaItem(MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build())
             prepare()
@@ -185,6 +201,7 @@ class TwitchPlayer(
      * Activity finished does not resurrect a fresh idle player via [exoPlayer].
      */
     fun stop() {
+        mainHandler.removeCallbacks(retryRunnable)
         _exoPlayer?.run {
             stop()
             clearMediaItems()
@@ -198,6 +215,7 @@ class TwitchPlayer(
      * tap re-prepares at live instead of leaving an empty, unplayable surface.
      */
     fun stopKeepingStream() {
+        mainHandler.removeCallbacks(retryRunnable)
         _exoPlayer?.run {
             pause()
             stop()
@@ -211,13 +229,15 @@ class TwitchPlayer(
      * never touches a released player.
      */
     fun release() {
+        mainHandler.removeCallbacks(retryRunnable)
         _exoPlayer?.release()
         _exoPlayer = null
         errorRetries = 0
     }
 
     private companion object {
-        const val MAX_ERROR_RETRIES = 3
+        /** Pauses before each automatic retry: 1s, then 3s, then 6s. */
+        val RETRY_DELAYS_MS = longArrayOf(1_000, 3_000, 6_000)
     }
 }
 

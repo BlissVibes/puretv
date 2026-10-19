@@ -21,6 +21,7 @@ import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
 import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.data.TokenRefresher
 import com.puretv.twitch.tv.data.db.CachedStreamDao
@@ -169,6 +170,8 @@ data class TvFollowingUiState(
     val live: List<FollowRow> = emptyList(),
     val offline: List<FollowRow> = emptyList(),
     val errored: Boolean = false,
+    /** Why the last load failed, in words (see StreamFailures); null when it worked. */
+    val errorReason: String? = null,
 )
 
 /**
@@ -226,7 +229,7 @@ class TvFollowingViewModel(
             }
         }
             .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-            .onFailure { _state.update { it.copy(isLoading = false, errored = true) } }
+            .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
     }
 }
 
@@ -428,11 +431,13 @@ class StreamViewModel(
             }
             .onFailure { e ->
                 Log.w(TAG, "Stream resolution failed for $channelLogin", e)
-                val detail = e.message?.takeIf { it.isNotBlank() } ?: e::class.simpleName.orEmpty()
+                val failure = StreamFailures.classify(e)
+                // The technical detail stays on screen in small print: a TV owner
+                // cannot run adb, so a photo of this screen is the bug report.
                 _state.update {
                     it.copy(
-                        playbackError = "Could not load this stream. It may be offline." +
-                            if (detail.isBlank()) "" else "\n\n$detail",
+                        playbackError = failure.message() +
+                            if (failure.detail.isBlank()) "" else "\n\nDetails: ${failure.detail}",
                     )
                 }
             }
@@ -440,8 +445,33 @@ class StreamViewModel(
 
     /** Re-run resolution after a failure (OK on the remote), with a fresh session. */
     fun retry() = viewModelScope.launch {
+        freshSessionRetries = 0
         playableStreamCache.invalidate(channelLogin)
         resolvePlayable()
+    }
+
+    private var freshSessionRetries = 0
+
+    /**
+     * The player spent its backed-off retries. Its signed stream URL may simply
+     * have expired (a long pause, a network change), so ask Twitch for a fresh
+     * session once; if that stream also fails, say so instead of staying black.
+     */
+    fun onPlaybackGaveUp() {
+        viewModelScope.launch {
+            if (freshSessionRetries < MAX_FRESH_SESSION_RETRIES) {
+                freshSessionRetries++
+                playableStreamCache.invalidate(channelLogin)
+                resolvePlayable()
+            } else {
+                _state.update {
+                    it.copy(
+                        playbackError = "This stream stopped playing. PureTV tried to reconnect but couldn't. " +
+                            "Check your connection, then press OK to try again.",
+                    )
+                }
+            }
+        }
     }
 
     /** The player put this stream's first frame on screen (local timing only). */
@@ -458,6 +488,7 @@ class StreamViewModel(
 
     private companion object {
         const val TAG = "StreamViewModel"
+        const val MAX_FRESH_SESSION_RETRIES = 1
     }
 }
 

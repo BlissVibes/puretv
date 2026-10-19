@@ -107,8 +107,13 @@ fun TvStreamScreen(
     // view model is never called back.
     DisposableEffect(viewModel) {
         val listener = { viewModel.onFirstFrame() }
+        val gaveUp: (androidx.media3.common.PlaybackException) -> Unit = { viewModel.onPlaybackGaveUp() }
         tvPlayer.onFirstFrame = listener
-        onDispose { if (tvPlayer.onFirstFrame === listener) tvPlayer.onFirstFrame = null }
+        tvPlayer.onGaveUp = gaveUp
+        onDispose {
+            if (tvPlayer.onFirstFrame === listener) tvPlayer.onFirstFrame = null
+            if (tvPlayer.onGaveUp === gaveUp) tvPlayer.onGaveUp = null
+        }
     }
 
     // Apply the selected quality to the player whenever it changes (the quality

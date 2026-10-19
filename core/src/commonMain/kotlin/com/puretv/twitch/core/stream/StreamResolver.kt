@@ -93,6 +93,9 @@ class StreamResolver(
             throw UsherPlaylistException(
                 "usher refused the master playlist for \"$channelLogin\" (playerType=$playerType): " +
                     "HTTP ${response.status.value} ${response.status.description}. ${raw.summarize()}",
+                status = response.status.value,
+                body = raw.take(2_000),
+                tokenValue = token.value,
             )
         }
         // A 200 is not proof of a playlist: usher answers some rejections with a
@@ -101,6 +104,9 @@ class StreamResolver(
             throw UsherPlaylistException(
                 "usher returned HTTP ${response.status.value} for \"$channelLogin\" but the body is not an " +
                     "HLS playlist. ${raw.summarize()}",
+                status = response.status.value,
+                body = raw.take(2_000),
+                tokenValue = token.value,
             )
         }
 
@@ -232,7 +238,15 @@ object HlsMasterParser {
  * went offline between the mint and the fetch. Distinct from
  * [GqlPlaybackTokenException], which means the token itself was never issued.
  */
-class UsherPlaylistException(message: String) : Exception(message)
+class UsherPlaylistException(
+    message: String,
+    /** usher's HTTP status, when it answered at all. */
+    val status: Int? = null,
+    /** The start of usher's body: its JSON error names the reason (see [StreamFailures]). */
+    val body: String = "",
+    /** The playback token's JSON value, whose `authorization` block can say why too. */
+    val tokenValue: String = "",
+) : Exception(message)
 
 /** First line of a response body, bounded, for putting in an error message. */
 private fun String.summarize(limit: Int = 180): String {

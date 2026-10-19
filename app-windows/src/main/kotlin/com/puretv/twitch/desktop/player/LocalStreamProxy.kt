@@ -9,6 +9,9 @@ import com.puretv.twitch.core.model.CleanStreamResult
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.StreamResolver
+import com.puretv.twitch.core.stream.Failure
+import com.puretv.twitch.core.stream.FailureKind
+import com.puretv.twitch.core.stream.StreamFailures
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
@@ -26,6 +29,7 @@ import kotlinx.coroutines.sync.withLock
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -120,6 +124,14 @@ class LocalStreamProxy(
     private val lastFailure = AtomicReference<FetchSnapshot?>(null)
     private val lastVariant = AtomicReference<FetchSnapshot?>(null)
 
+    // Why the last /stream for each channel failed, classified for the viewer.
+    // VLC only ever sees an HTTP error and reports a generic fault, so the stream
+    // screen asks here what really happened (offline, restricted, region...).
+    private val streamFailures = ConcurrentHashMap<String, Failure>()
+
+    /** The classified reason the last /stream for [channelLogin] failed, or null if it worked. */
+    fun failureFor(channelLogin: String): Failure? = streamFailures[channelLogin.lowercase()]
+
     // Test hook (see GET /simulate): when true, EVERY variant is treated as if
     // it contained an ad, forcing the backup player-type swap so the whole path
     // (embed/popout token mint → master fetch → same-quality match → clean
@@ -167,6 +179,7 @@ class LocalStreamProxy(
                     val quality = runCatching { StreamQuality.valueOf(qualityParam ?: "AUTO") }.getOrDefault(StreamQuality.AUTO)
 
                     totalRequests.incrementAndGet()
+                    streamFailures.remove(channel.lowercase())
                     runCatching {
                         val playable = playableStreamCache.get(channel)
                         // Resolution already fetched and validated the master; reuse it.
@@ -199,6 +212,7 @@ class LocalStreamProxy(
                             }
                             is CleanStreamResult.Failure -> {
                                 failures.incrementAndGet()
+                                streamFailures[channel.lowercase()] = Failure(FailureKind.UNKNOWN, result.reason)
                                 lastFailure.set(
                                     FetchSnapshot(
                                         channel = channel,
@@ -219,6 +233,7 @@ class LocalStreamProxy(
                         }
                     }.onFailure { e ->
                         failures.incrementAndGet()
+                        streamFailures[channel.lowercase()] = StreamFailures.classify(e)
                         // Resolution threw before resolveCleanStream could run (e.g. the
                         // GQL token mint failed). resolveCleanStream never set a status, so
                         // flip the engine off UNKNOWN here — otherwise the pill hangs on

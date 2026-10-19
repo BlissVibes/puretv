@@ -40,6 +40,9 @@ import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.stream.Failure
+import com.puretv.twitch.core.stream.FailureKind
+import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
@@ -206,7 +209,7 @@ class BrowseViewModel(private val channelRepository: ChannelRepository) : Deskto
             _state.update { it.copy(isLoading = true, error = null) }
             runCatching { channelRepository.topGames() }
                 .onSuccess { games -> _state.update { it.copy(games = games, isLoading = false, error = null) } }
-                .onFailure { _state.update { it.copy(isLoading = false, error = "Couldn't load categories. Check your connection and try again.") } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = StreamFailures.classify(e).sentence("Couldn't load categories")) } }
         }
     }
 }
@@ -243,7 +246,7 @@ class CategoryViewModel(
             _state.update { it.copy(isLoading = true, error = null) }
             runCatching { streamRepository.streamsForGame(gameId) }
                 .onSuccess { streams -> _state.update { it.copy(streams = streams, isLoading = false, error = null) } }
-                .onFailure { _state.update { it.copy(isLoading = false, error = "Couldn't load this category. Check your connection and try again.") } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = StreamFailures.classify(e).sentence("Couldn't load this category")) } }
         }
     }
 }
@@ -281,7 +284,11 @@ class SearchViewModel(private val channelRepository: ChannelRepository) : Deskto
             delay(300) // debounce: wait for typing to settle before hitting the network
             runCatching { channelRepository.search(query) }
                 .onSuccess { results -> _state.update { it.copy(results = results, isSearching = false, error = null) } }
-                .onFailure { _state.update { it.copy(results = emptyList(), isSearching = false, error = "Search failed. Check your connection and try again.") } }
+                .onFailure { e ->
+                    _state.update {
+                        it.copy(results = emptyList(), isSearching = false, error = StreamFailures.classify(e).sentence("Search failed"))
+                    }
+                }
         }
     }
 
@@ -316,6 +323,12 @@ data class StreamUiState(
     val fatalError: String? = null,
 )
 
+/** Stream failures no retry can fix: say why straight away. */
+private val FINAL_FAILURES = setOf(FailureKind.OFFLINE, FailureKind.RESTRICTED, FailureKind.REGION_BLOCKED)
+
+/** Pauses before each automatic retry of a failed stream on Windows. */
+private val AUTO_RETRY_DELAYS_MS = longArrayOf(2_000, 5_000, 10_000)
+
 class StreamViewModel(
     private val channelLogin: String,
     private val streamRepository: StreamRepository,
@@ -345,6 +358,8 @@ class StreamViewModel(
     private var systemCounter = 0
     private val playbackStallWatchdog = PlaybackStallWatchdog()
     private val openTiming = StreamOpenTiming(channelLogin)
+    // Automatic retries after a player error; reset once the stream plays again.
+    @Volatile private var autoRetries = 0
 
     // Written on the emote-load coroutine, read on the chat-collect + send paths.
     // Safe as a @Volatile reference because the map is immutable after publish:
@@ -466,6 +481,33 @@ class StreamViewModel(
             openTiming.mark("first_frame")
         }
         scope.launch {
+            // VLC reports every failure as the same generic fault. Ask the local
+            // proxy what really happened: a stream that cannot play (offline,
+            // restricted, blocked in this region) is explained at once; anything
+            // else is retried with a fresh session after a growing pause, and only
+            // then explained, instead of leaving a black pane to re-open by hand.
+            vlcPlayer.status.map { it.error to it.isPlaying }.distinctUntilChanged().collect { (error, playing) ->
+                if (playing) autoRetries = 0
+                val url = _state.value.playableUrl
+                if (error == null || url == null || _state.value.fatalError != null) return@collect
+                val failure = localStreamProxy.failureFor(channelLogin)
+                when {
+                    failure != null && failure.kind in FINAL_FAILURES ->
+                        _state.update { it.copy(fatalError = failure.message()) }
+                    autoRetries < AUTO_RETRY_DELAYS_MS.size -> {
+                        delay(AUTO_RETRY_DELAYS_MS[autoRetries])
+                        autoRetries++
+                        playableStreamCache.invalidate(channelLogin)
+                        playbackStallWatchdog.reset()
+                        vlcPlayer.play(url)
+                    }
+                    else -> _state.update {
+                        it.copy(fatalError = (failure ?: Failure(FailureKind.UNKNOWN, error)).message())
+                    }
+                }
+            }
+        }
+        scope.launch {
             // libVLC can remain in PLAYING after its HLS demuxer has stopped
             // advancing, so no error callback reaches the UI. Detect that exact
             // state and perform the same fresh local-URL load that previously
@@ -547,6 +589,7 @@ class StreamViewModel(
     private fun playAt(quality: StreamQuality) {
         val url = LocalStreamProxy.streamUrl(channelLogin, quality)
         playbackStallWatchdog.reset()
+        autoRetries = 0
         openTiming.mark("play_requested")
         _state.update { it.copy(playableUrl = url, currentQuality = quality) }
         vlcPlayer.play(url)

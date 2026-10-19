@@ -3,6 +3,7 @@ package com.puretv.twitch.desktop.ui
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.follows.FollowedRef
+import com.puretv.twitch.core.stream.StreamFailures
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,8 @@ data class FollowedRailState(
     val offline: List<FollowRow> = emptyList(),
     val offlineExpanded: Boolean = false,
     val errored: Boolean = false,
+    /** Why the last load failed, in words (see StreamFailures); null when it worked. */
+    val errorReason: String? = null,
 )
 
 /**
@@ -66,6 +69,6 @@ class FollowedRailViewModel(
             }
         }
             .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-            .onFailure { _state.update { it.copy(isLoading = false, errored = true) } }
+            .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
     }
 }

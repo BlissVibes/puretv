@@ -110,7 +110,7 @@ fun FollowingScreen(
                     Spacer(Modifier.height(24.dp))
                     MessagePanel(
                         title = "Couldn't load your follows",
-                        message = "The last request failed. Check your connection and try again.",
+                        message = state.errorReason ?: "The last request failed. Check your connection and try again.",
                         actionLabel = "Try again",
                         onAction = { viewModel.refresh() },
                     )

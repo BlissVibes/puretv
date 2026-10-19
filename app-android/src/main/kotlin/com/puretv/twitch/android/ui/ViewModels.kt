@@ -44,6 +44,7 @@ import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
 import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.stream.PlayableStreamCache
+import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.session.SessionState
 import io.ktor.client.HttpClient
 import kotlin.jvm.Volatile
@@ -155,13 +156,16 @@ class HomeViewModel(
 
     private suspend fun loadLoggedInHome() {
         _state.update { it.copy(isLoggedIn = true, isLoading = it.topStreams.isEmpty(), error = null) }
-        val gamesOk = runCatching { channelRepository.topGames() }
-            .onSuccess { g -> _state.update { it.copy(games = g) } }.isSuccess
-        val topOk = runCatching { streamRepository.refreshTopStreams() }.isSuccess
+        val games = runCatching { channelRepository.topGames() }
+            .onSuccess { g -> _state.update { it.copy(games = g) } }
+        val top = runCatching { streamRepository.refreshTopStreams() }
         runCatching { userRepository.loadFollowsForCurrentUser() }
-        val failed = !gamesOk && !topOk && _state.value.topStreams.isEmpty()
+        val failed = games.isFailure && top.isFailure && _state.value.topStreams.isEmpty()
         _state.update {
-            it.copy(isLoading = false, error = if (failed) "Couldn't load. Check your connection and try again." else null)
+            it.copy(
+                isLoading = false,
+                error = if (failed) StreamFailures.classify(top.exceptionOrNull()).sentence("Couldn't load") else null,
+            )
         }
     }
 
@@ -169,10 +173,17 @@ class HomeViewModel(
         refreshJob?.cancel()
         refreshJob = viewModelScope.launch {
             _state.update { it.copy(isLoading = true, error = null) }
-            val ok = runCatching { streamRepository.refreshTopStreams() }.isSuccess
+            val top = runCatching { streamRepository.refreshTopStreams() }
             runCatching { channelRepository.topGames() }.onSuccess { g -> _state.update { it.copy(games = g) } }
             _state.update {
-                it.copy(isLoading = false, error = if (!ok && it.topStreams.isEmpty()) "Couldn't refresh. Check your connection." else null)
+                it.copy(
+                    isLoading = false,
+                    error = if (top.isFailure && it.topStreams.isEmpty()) {
+                        StreamFailures.classify(top.exceptionOrNull()).sentence("Couldn't refresh")
+                    } else {
+                        null
+                    },
+                )
             }
         }
     }
@@ -351,10 +362,13 @@ class StreamViewModel(
 
     private val openTiming = StreamOpenTiming(channelLogin)
     private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
+    private val gaveUpListener: (androidx.media3.common.PlaybackException) -> Unit = { onPlaybackGaveUp() }
+    private var freshSessionRetries = 0
 
     init {
         adBlockEngine.resetForNewStream()
         twitchPlayer.onFirstFrame = firstFrameListener
+        twitchPlayer.onGaveUp = gaveUpListener
         // Playback first: resolving the stream does not need the channel info
         // below, so the player starts while the metadata and emotes load.
         viewModelScope.launch { resolvePlayable() }
@@ -463,13 +477,31 @@ class StreamViewModel(
                 openTiming.mark("playable_url")
                 _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) }
             }
-            .onFailure { e -> _state.update { it.copy(playbackError = e.message ?: "Could not load this stream. It may be offline.") } }
+            .onFailure { e -> _state.update { it.copy(playbackError = StreamFailures.classify(e).message()) } }
     }
 
     fun retry() = viewModelScope.launch {
         // A retry follows a failure, so never reuse the cached session.
+        freshSessionRetries = 0
         playableStreamCache.invalidate(channelLogin)
         resolvePlayable()
+    }
+
+    /**
+     * The player spent its backed-off retries. Its signed stream URL may simply
+     * have expired (a long pause, a network change), so ask Twitch for a fresh
+     * session once; if that stream also fails, say so instead of staying black.
+     */
+    private fun onPlaybackGaveUp() {
+        viewModelScope.launch {
+            if (freshSessionRetries < MAX_FRESH_SESSION_RETRIES) {
+                freshSessionRetries++
+                playableStreamCache.invalidate(channelLogin)
+                resolvePlayable()
+            } else {
+                _state.update { it.copy(playbackError = STOPPED_PLAYING) }
+            }
+        }
     }
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
@@ -507,8 +539,9 @@ class StreamViewModel(
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
         twitchPlayer.stop()
-        // A stream opened on top of this one may already own the callback.
+        // A stream opened on top of this one may already own the callbacks.
         if (twitchPlayer.onFirstFrame === firstFrameListener) twitchPlayer.onFirstFrame = null
+        if (twitchPlayer.onGaveUp === gaveUpListener) twitchPlayer.onGaveUp = null
         // In-app Back means done watching, not "keep playing in the background":
         // the media notification goes with the stream.
         backgroundPlayback.onStreamClosed()
@@ -516,6 +549,9 @@ class StreamViewModel(
 
     private companion object {
         val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
+        const val MAX_FRESH_SESSION_RETRIES = 1
+        const val STOPPED_PLAYING =
+            "This stream stopped playing. PureTV tried to reconnect but couldn't. Check your connection, then try again."
     }
 }
 
@@ -713,6 +749,8 @@ data class FollowingUiState(
     val live: List<FollowRow> = emptyList(),
     val offline: List<FollowRow> = emptyList(),
     val errored: Boolean = false,
+    /** Why the last load failed, in words (see StreamFailures); null when it worked. */
+    val errorReason: String? = null,
 )
 
 /**
@@ -774,7 +812,7 @@ class FollowingViewModel(
                 }
             }
                 .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-                .onFailure { _state.update { it.copy(isLoading = false, errored = true) } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
         }
     }
 }

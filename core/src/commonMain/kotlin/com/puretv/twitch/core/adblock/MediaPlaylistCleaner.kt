@@ -27,6 +27,11 @@ import kotlinx.coroutines.withTimeoutOrNull
  *      ad. Only ExoPlayer turns this on; VLC handles the empty window itself
  *      and Windows has its own stall watchdog.
  *
+ * Ad-free results (1 and 2) end at the live edge: with [lowLatency] on, Twitch's
+ * prefetch hints become ordinary segments ([TwitchPrefetch]), which puts the
+ * player a few seconds closer to live. Results that still had ads (3, or a
+ * failure) never keep prefetch hints, since those can be ad segments.
+ *
  * Every result then goes through [HlsTimelineNormalizer], because a backup
  * session numbers its segments differently from the primary one and the
  * player would otherwise see the live window jump.
@@ -41,6 +46,8 @@ class MediaPlaylistCleaner(
     private val holdPollMs: Long = 2_000,
     private val holdMaxMs: Long = 40_000,
     private val pause: suspend (Long) -> Unit = { delay(it) },
+    /** Read on every refresh, so the Settings switch applies to the stream that is playing. */
+    private val lowLatency: () -> Boolean = { false },
 ) {
     private val timeline = HlsTimelineNormalizer()
 
@@ -95,7 +102,7 @@ class MediaPlaylistCleaner(
     ): Result {
         if (!forceAd && !AdMarkers.containsAds(raw)) {
             adBlockEngine.reportAdBlocked()
-            return Result(raw, Strategy.CLEAN)
+            return Result(atLiveEdge(raw), Strategy.CLEAN)
         }
 
         if (!channelLogin.isNullOrBlank() && quality != null) {
@@ -111,21 +118,25 @@ class MediaPlaylistCleaner(
             }
             if (backup != null) {
                 adBlockEngine.reportAdBlocked()
-                return Result(backup.mediaPlaylist, Strategy.BACKUP, backupPlayerType = backup.playerType)
+                return Result(atLiveEdge(backup.mediaPlaylist), Strategy.BACKUP, backupPlayerType = backup.playerType)
             }
         }
 
         return try {
             val filtered = adBlockEngine.filterPlaylist(raw)
             adBlockEngine.reportFiltered(filtered)
-            Result(filtered.content, Strategy.STRIP, adSegmentsRemoved = filtered.adSegmentsRemoved)
+            Result(TwitchPrefetch.strip(filtered.content), Strategy.STRIP, adSegmentsRemoved = filtered.adSegmentsRemoved)
         } catch (t: Throwable) {
             // Never pass ads off as success: the pill goes red, and the raw
             // playlist keeps playback alive instead of dead-ending.
             adBlockEngine.reportResolutionFailure()
-            Result(raw, Strategy.FAILED)
+            Result(TwitchPrefetch.strip(raw), Strategy.FAILED)
         }
     }
+
+    /** An ad-free playlist, reaching as close to live as the low-latency setting allows. */
+    private fun atLiveEdge(playlist: String): String =
+        if (lowLatency()) TwitchPrefetch.promote(playlist) else playlist
 
     private suspend fun hold(
         variantUrl: String,

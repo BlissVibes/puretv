@@ -124,6 +124,7 @@ fun SettingsScreen(onBack: () -> Unit) {
         PlaybackPanel(
             settings = state.settings,
             onSelectQuality = viewModel::setPreferredQuality,
+            onLowLatencyChange = viewModel::setLowLatency,
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
@@ -295,6 +296,7 @@ private fun ShapeAndMotionPanel(currentIntensity: ShapeIntensity, onSelect: (Sha
 private fun PlaybackPanel(
     settings: AppSettings,
     onSelectQuality: (StreamQuality) -> Unit,
+    onLowLatencyChange: (Boolean) -> Unit,
     onAnimateEmotesChange: (Boolean) -> Unit,
     onBackgroundPlayChange: (Boolean) -> Unit,
     onPipOnLeaveChange: (Boolean) -> Unit,
@@ -321,6 +323,25 @@ private fun PlaybackPanel(
                     val selected = settings.preferredQuality.equals(quality.name, ignoreCase = true)
                     ExpressiveFilterChip(label = quality.label, selected = selected, onClick = { onSelectQuality(quality) })
                 }
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Low latency", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "Play a few seconds closer to live, so the stream keeps up with chat. If streams " +
+                            "pause to buffer on a weak connection, turn this off. Applies to the next stream you open.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.lowLatencyMode, onCheckedChange = onLowLatencyChange)
             }
 
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))

@@ -103,7 +103,10 @@ val desktopModule = module {
     // LocalStreamProxy takes HttpClient (variant fetches) + BackupStreamResolver
     // (the player-type swap that actually removes ads) on top of the shared
     // PlayableStreamCache and AdBlockEngine. See the /variant route.
-    single { LocalStreamProxy(get(), get(), get(), get()) }
+    single {
+        val settingsStore = get<DesktopSettingsStore>()
+        LocalStreamProxy(get(), get(), get(), get(), lowLatency = { settingsStore.settings.value.lowLatencyMode })
+    }
 
     // --- Auth ------------------------------------------------------------------
     single { DesktopOAuthManager() }

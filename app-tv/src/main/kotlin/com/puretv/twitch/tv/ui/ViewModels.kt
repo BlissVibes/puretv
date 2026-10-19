@@ -373,6 +373,8 @@ data class StreamUiState(
      * viewer's pick.
      */
     val quality: StreamQuality? = null,
+    /** Settings > Low latency, read with the playable URL so they reach the player together. */
+    val lowLatency: Boolean = false,
 )
 
 class StreamViewModel(
@@ -449,7 +451,8 @@ class StreamViewModel(
         runCatching { playableStreamCache.get(channelLogin) }
             .onSuccess { playable ->
                 openTiming.mark("playable_url")
-                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) }
+                val lowLatency = settingsStore.flow.first().lowLatencyMode
+                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null, lowLatency = lowLatency) }
             }
             .onFailure { e ->
                 Log.w(TAG, "Stream resolution failed for $channelLogin", e)
@@ -582,6 +585,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setAdBlockEnabled(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(adBlockEnabled = enabled) }
+    }
+
+    fun setLowLatency(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(lowLatencyMode = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

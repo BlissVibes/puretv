@@ -348,6 +348,7 @@ private fun PlayerArea(
             onDoubleTap = { if (fullscreen) onToggleFill() },
             onControlsVisibilityChanged = { controlsVisible = it },
             metadata = metadata,
+            lowLatency = state.lowLatency,
             modifier = Modifier.fillMaxSize(),
         )
 

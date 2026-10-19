@@ -26,7 +26,12 @@ interface DesktopPlayer {
 
     /** Whether this (running) backend can GPU-upscale — true only for an available mpv. */
     val supportsUpscaling: Boolean get() = false
-    fun play(streamUrl: String)
+
+    /**
+     * Plays [streamUrl]. [lowLatency] (Settings > Low latency, live streams only)
+     * asks the backend to start closer to the live edge; VODs leave it off.
+     */
+    fun play(streamUrl: String, lowLatency: Boolean = false)
     fun pause()
     fun resume()
     fun togglePlayPause()

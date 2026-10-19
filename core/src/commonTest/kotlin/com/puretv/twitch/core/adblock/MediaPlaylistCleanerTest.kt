@@ -38,6 +38,7 @@ class MediaPlaylistCleanerTest {
         engine: AdBlockEngine,
         clock: FakeClock = FakeClock(),
         hold: Boolean = true,
+        lowLatency: Boolean = false,
     ) = MediaPlaylistCleaner(
         adBlockEngine = engine,
         backupStreamResolver = BackupStreamResolver(http, StreamResolver(http, TwitchGqlClient(http))),
@@ -45,6 +46,7 @@ class MediaPlaylistCleanerTest {
         nowMs = { clock.now },
         holdEmptyWindows = hold,
         pause = clock.pause,
+        lowLatency = { lowLatency },
     )
 
     private fun engine() = AdBlockEngine(AdBlockConfig(), client { respond("", HttpStatusCode.OK) })
@@ -132,6 +134,30 @@ class MediaPlaylistCleanerTest {
         val result = cleaner(http, engine()).clean(variantUrl, PrerollWindowTest.REAL_PREROLL_WINDOW, null, null)
 
         assertEquals(2_000, result.heldMs, "one poll, then give the player its error")
+    }
+
+    @Test
+    fun lowLatencyPromotesPrefetchHintsOnACleanPlaylist() = runTest {
+        val raw = contentWindow(firstSequence = 100) + "#EXT-X-TWITCH-PREFETCH:https://cdn.invalid/v1/segment/content-104\n"
+        val http = client { respond("", HttpStatusCode.OK) }
+        val on = cleaner(http, engine(), lowLatency = true).clean(variantUrl, raw, channelLogin = null, quality = null)
+        assertEquals(5, MediaPlaylistCleaner.segmentCount(on.content))
+        assertFalse("#EXT-X-TWITCH-PREFETCH" in on.content)
+
+        val off = cleaner(http, engine(), lowLatency = false).clean(variantUrl, raw, channelLogin = null, quality = null)
+        assertEquals(4, MediaPlaylistCleaner.segmentCount(off.content))
+    }
+
+    @Test
+    fun aStrippedAdWindowNeverKeepsPrefetchHints() = runTest {
+        // Ads, no backup to swap to: the pod is stripped, and the hints (which can
+        // be ad segments) go too, even with low latency on.
+        val raw = PrerollWindowTest.REAL_PREROLL_WINDOW + "\n#EXT-X-TWITCH-PREFETCH:https://cdn.invalid/v1/segment/next\n"
+        val result = cleaner(client { respond("", HttpStatusCode.OK) }, engine(), hold = false, lowLatency = true)
+            .clean(variantUrl, raw, channelLogin = null, quality = null)
+        assertEquals(MediaPlaylistCleaner.Strategy.STRIP, result.strategy)
+        assertFalse("#EXT-X-TWITCH-PREFETCH" in result.content)
+        assertFalse("cdn.invalid/v1/segment/next" in result.content)
     }
 
     @Test

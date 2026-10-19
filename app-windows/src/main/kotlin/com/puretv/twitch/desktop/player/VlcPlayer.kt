@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,6 +73,9 @@ class VlcPlayer : DesktopPlayer {
     override val isAvailable: Boolean get() = mediaPlayer != null
 
     private var currentUrl: String? = null
+
+    // Per-media options for currentUrl, replayed whenever it is (re)started.
+    @Volatile private var currentOptions: Array<String> = emptyArray()
 
     // Remembers the pre-mute level so unmuting restores it. Touched from the
     // EDT (slider) and VLC callback threads, hence @Volatile.
@@ -154,7 +158,7 @@ class VlcPlayer : DesktopPlayer {
         // calls play() one EDT-tick before SwingPanel's HierarchyListener fires.
         currentUrl?.let { url ->
             if (mp.status().state() != State.PLAYING) {
-                runCatching { mp.media().play(url) }
+                runCatching { mp.media().play(url, *currentOptions) }
                     .onFailure { e -> _status.update { it.copy(error = "Player attach race: ${e.message}") } }
             }
         }
@@ -178,9 +182,13 @@ class VlcPlayer : DesktopPlayer {
      * pane forever — even after the surface eventually binds, libvlc doesn't
      * re-target an already-running session.
      */
-    override fun play(streamUrl: String) {
+    override fun play(streamUrl: String, lowLatency: Boolean) {
         val mp = mediaPlayer ?: return
         currentUrl = streamUrl
+        // VLC starts a live HLS stream 15 s back from the end of the playlist by
+        // default; low latency starts it LiveLatency.VLC_LIVE_DELAY_MS back.
+        val options = if (lowLatency) arrayOf(":adaptive-livedelay=${LiveLatency.VLC_LIVE_DELAY_MS}") else emptyArray()
+        currentOptions = options
         _status.update { it.copy(isBuffering = true, error = null) }
         val component = attachedComponent ?: return
         // else: attachToPanel will pick up currentUrl and start playback once
@@ -198,7 +206,7 @@ class VlcPlayer : DesktopPlayer {
                 attachedComponent = null  // force re-attach when HierarchyListener fires next
                 return@invokeLater
             }
-            runCatching { mp.media().play(streamUrl) }
+            runCatching { mp.media().play(streamUrl, *options) }
                 .onFailure { e ->
                     _status.update {
                         it.copy(isPlaying = false, isBuffering = false, error = "Playback start failed: ${e.message}")
@@ -226,7 +234,7 @@ class VlcPlayer : DesktopPlayer {
         val mp = mediaPlayer ?: return
         SwingUtilities.invokeLater {
             if (mp.status().state() == State.PAUSED) mp.controls().play()
-            else currentUrl?.let { mp.media().play(it) }
+            else currentUrl?.let { mp.media().play(it, *currentOptions) }
         }
     }
 

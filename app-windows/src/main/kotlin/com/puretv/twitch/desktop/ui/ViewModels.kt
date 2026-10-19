@@ -498,7 +498,7 @@ class StreamViewModel(
                         autoRetries++
                         playableStreamCache.invalidate(channelLogin)
                         playbackStallWatchdog.reset()
-                        vlcPlayer.play(url)
+                        startPlayback(url)
                     }
                     else -> _state.update {
                         it.copy(fatalError = (failure ?: Failure(FailureKind.UNKNOWN, error)).message())
@@ -521,7 +521,7 @@ class StreamViewModel(
                 if (playbackStallWatchdog.sample(vlcPlayer.status.value, System.currentTimeMillis())) {
                     // A stalled session should not be reused: mint a fresh one.
                     playableStreamCache.invalidate(channelLogin)
-                    vlcPlayer.play(url)
+                    startPlayback(url)
                 }
             }
         }
@@ -629,7 +629,16 @@ class StreamViewModel(
         autoRetries = 0
         openTiming.mark("play_requested")
         _state.update { it.copy(playableUrl = url, currentQuality = quality) }
-        vlcPlayer.play(url)
+        startPlayback(url)
+    }
+
+    /**
+     * Every (re)start of the live stream goes through here, so a retry or a stall
+     * recovery keeps Settings > Low latency instead of falling back to the
+     * player's default delay.
+     */
+    private fun startPlayback(url: String) {
+        vlcPlayer.play(url, lowLatency = settingsStore.settings.value.lowLatencyMode)
     }
 
     /** A quality picked in the player: played now and kept for next time (see [StreamQuality.preferenceFor]). */
@@ -896,6 +905,9 @@ class SettingsViewModel(private val settingsStore: DesktopSettingsStore) : Deskt
 
     fun setAnimateEmotes(enabled: Boolean) =
         settingsStore.updateSettings { it.copy(animateEmotes = enabled) }
+
+    fun setLowLatency(enabled: Boolean) =
+        settingsStore.updateSettings { it.copy(lowLatencyMode = enabled) }
 
     // upscalingMode + playbackBackend are now owned by the in-player gear menu
     // (StreamViewModel/VodPlayerViewModel.setUpscaling/setPlaybackBackend) — single

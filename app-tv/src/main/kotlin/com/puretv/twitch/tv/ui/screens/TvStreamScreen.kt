@@ -99,7 +99,7 @@ fun TvStreamScreen(
 
     LaunchedEffect(state.playableUrl) {
         val url = state.playableUrl ?: return@LaunchedEffect
-        tvPlayer.playUrl(url)
+        tvPlayer.playUrl(url, lowLatency = state.lowLatency)
         isPlaying = true
     }
 

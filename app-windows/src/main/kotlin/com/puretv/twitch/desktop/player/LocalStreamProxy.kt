@@ -62,6 +62,8 @@ class LocalStreamProxy(
     private val adBlockEngine: AdBlockEngine,
     private val httpClient: HttpClient,
     backupStreamResolver: BackupStreamResolver,
+    /** Settings > Low latency, read on every variant refresh. */
+    lowLatency: () -> Boolean = { false },
 ) {
     companion object {
         const val PORT = 7979
@@ -149,6 +151,7 @@ class LocalStreamProxy(
         httpClient = httpClient,
         nowMs = System::currentTimeMillis,
         holdEmptyWindows = false,
+        lowLatency = lowLatency,
     )
 
     /**

@@ -102,6 +102,8 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onSelectQuality = viewModel::setPreferredQuality,
             animateEmotes = state.settings.animateEmotes,
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
+            lowLatency = state.settings.lowLatencyMode,
+            onLowLatencyChange = viewModel::setLowLatency,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -276,6 +278,8 @@ private fun PlaybackPanel(
     onSelectQuality: (StreamQuality) -> Unit,
     animateEmotes: Boolean,
     onAnimateEmotesChange: (Boolean) -> Unit,
+    lowLatency: Boolean,
+    onLowLatencyChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -292,6 +296,14 @@ private fun PlaybackPanel(
                     label = { it.label },
                     onSelect = onSelectQuality,
                 )
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Low latency",
+                description = "Play a few seconds closer to live, so the stream keeps up with chat. If streams " +
+                    "pause to buffer on a weak connection, turn this off. Applies to the next stream you open.",
+            ) {
+                ExpressiveSwitch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(

@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.puretv.twitch.core.adblock.AdBlockEngine
+import com.puretv.twitch.core.adblock.AdMarkers
 import okhttp3.Protocol
 import io.ktor.client.HttpClient
 import com.puretv.twitch.core.stream.PlayableStreamCache
@@ -23,8 +24,10 @@ import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.adblock.BackupStreamResolver
 import com.puretv.twitch.core.adblock.PlaylistAction
 import com.puretv.twitch.core.adblock.PlaylistDetect
+import com.puretv.twitch.core.adblock.TwitchPrefetch
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.stream.HlsMasterParser
+import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.runBlocking
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -62,9 +65,11 @@ class TvPlayer(
                     nowMs = System::currentTimeMillis,
                     // ExoPlayer cannot play an empty window (issue #22); wait for content instead.
                     holdEmptyWindows = true,
+                    lowLatency = { lowLatency },
                 ),
                 playableStreamCache = playableStreamCache,
                 audioOnly = { audioOnly },
+                lowLatency = { lowLatency },
             ),
         )
         .build()
@@ -179,16 +184,21 @@ class TvPlayer(
         }
     }
 
+    /** The playing stream's "Low latency" setting, read by the playlist pipeline on OkHttp threads. */
+    @Volatile private var lowLatency = false
+
     /**
      * Selects a stream for playback, resetting the transient-error retry budget so
      * a fresh stream always gets its full allowance even if the previous one
      * exhausted it without ever reaching STATE_READY (a dead/offline channel).
+     * [lowLatency] plays closer to live (see [liveConfiguration]).
      */
-    fun playUrl(url: String) {
+    fun playUrl(url: String, lowLatency: Boolean = false) {
         errorRetries = 0
         mainHandler.removeCallbacks(retryRunnable)
+        this.lowLatency = lowLatency
         with(exoPlayer) {
-            setMediaItem(MediaItem.fromUri(url))
+            setMediaItem(MediaItem.Builder().setUri(url).setLiveConfiguration(liveConfiguration(lowLatency)).build())
             prepare()
             play()
         }
@@ -298,6 +308,8 @@ class TvAdBlockInterceptor(
     private val playableStreamCache: PlayableStreamCache,
     /** True while the player should get the audio-only rendition instead of video. */
     private val audioOnly: () -> Boolean,
+    /** The playing stream's low-latency choice, for playlists that skip the cleaner. */
+    private val lowLatency: () -> Boolean,
 ) : Interceptor {
 
     // Learned from the master. channelLogin is @Volatile (written on the master
@@ -359,10 +371,11 @@ class TvAdBlockInterceptor(
 
         // Honour the user's "Enable ad block" switch: when off, media playlists
         // pass through unfiltered (and the engine has already flipped the pill to
-        // DISABLED).
+        // DISABLED). Low latency still applies while no ad is showing.
         if (!adBlockEngine.isEnabled) {
+            val passed = if (lowLatency() && !AdMarkers.containsAds(rawBody)) TwitchPrefetch.promote(rawBody) else rawBody
             return response.newBuilder()
-                .body(rawBody.toResponseBody(HLS_MEDIA_TYPE))
+                .body(passed.toResponseBody(HLS_MEDIA_TYPE))
                 .removeHeader("Content-Length")
                 .build()
         }
@@ -409,3 +422,21 @@ class TvAdBlockInterceptor(
         val HLS_MEDIA_TYPE = "application/vnd.apple.mpegurl".toMediaType()
     }
 }
+
+/**
+ * The live target for a stream: with low latency on, aim [LiveLatency.EXO_TARGET_OFFSET_MS]
+ * behind live and let ExoPlayer adjust its speed slightly to stay there; with it
+ * off, ExoPlayer's own default.
+ */
+internal fun liveConfiguration(lowLatency: Boolean): MediaItem.LiveConfiguration =
+    if (!lowLatency) {
+        MediaItem.LiveConfiguration.UNSET
+    } else {
+        MediaItem.LiveConfiguration.Builder()
+            .setTargetOffsetMs(LiveLatency.EXO_TARGET_OFFSET_MS)
+            .setMinOffsetMs(LiveLatency.EXO_MIN_OFFSET_MS)
+            .setMaxOffsetMs(LiveLatency.EXO_MAX_OFFSET_MS)
+            .setMinPlaybackSpeed(LiveLatency.EXO_MIN_SPEED)
+            .setMaxPlaybackSpeed(LiveLatency.EXO_MAX_SPEED)
+            .build()
+    }

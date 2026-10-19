@@ -342,6 +342,8 @@ data class StreamUiState(
     val chatTextScale: Float = 1f,
     /** What the player plays at: the saved preference on open, then the viewer's pick. */
     val quality: StreamQuality = StreamQuality.AUTO,
+    /** Settings > Low latency, read with the playable URL so they reach the player together. */
+    val lowLatency: Boolean = false,
 )
 
 @OptIn(UnstableApi::class)
@@ -508,7 +510,8 @@ class StreamViewModel(
         runCatching { playableStreamCache.get(channelLogin) }
             .onSuccess { playable ->
                 openTiming.mark("playable_url")
-                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null) }
+                val lowLatency = settingsStore.flow.first().lowLatencyMode
+                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null, lowLatency = lowLatency) }
             }
             .onFailure { e -> _state.update { it.copy(playbackError = StreamFailures.classify(e).message()) } }
     }
@@ -687,6 +690,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setPipOnLeave(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(pipOnLeave = enabled) }
+    }
+
+    fun setLowLatency(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(lowLatencyMode = enabled) }
     }
 
     fun setAudioOnlyInBackground(enabled: Boolean) = viewModelScope.launch {

@@ -6,6 +6,7 @@ import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.SecureTokenStore
 import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.data.TokenRefresher
+import com.puretv.twitch.android.data.db.MIGRATION_1_2
 import com.puretv.twitch.android.data.db.PureTvDatabase
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
@@ -54,12 +55,13 @@ val androidModule = module {
     // --- Persistence -----------------------------------------------------
     single {
         // No .fallbackToDestructiveMigration(): that silently wipes all user
-        // data (watch/search history) on any schema bump. The @Database is at
-        // version 1 with no migrations yet, so omitting it is safe today; real
-        // Migration objects get added here when the schema first changes.
+        // data (watch/search history) on any schema bump. Every schema change
+        // gets a real Migration instead (1 to 2 added vod_progress).
         Room.databaseBuilder(get(), PureTvDatabase::class.java, PureTvDatabase.DB_NAME)
+            .addMigrations(MIGRATION_1_2)
             .build()
     }
+    single { get<PureTvDatabase>().vodProgressDao() }
     single { get<PureTvDatabase>().cachedStreamDao() }
     single { get<PureTvDatabase>().cachedChannelDao() }
     single { get<PureTvDatabase>().cachedEmoteDao() }

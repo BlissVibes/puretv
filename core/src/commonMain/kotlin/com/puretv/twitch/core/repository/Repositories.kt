@@ -1,10 +1,12 @@
 package com.puretv.twitch.core.repository
 
+import com.puretv.twitch.core.api.ChannelSearchResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.model.ChannelInfo
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.stream.StreamResolver
+import com.puretv.twitch.core.stream.TwitchGqlDirectoryClient
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -22,12 +24,26 @@ import kotlinx.coroutines.sync.withLock
 class StreamRepository(
     private val apiClient: TwitchApiClient,
     private val streamResolver: StreamResolver,
+    // Signed-out browsing (Wave 4, D5.1): with no user token the public
+    // directory reads below go through anonymous GQL. With a token they stay on
+    // Helix, so a Helix 401 is still reported as the sign-in problem it is.
+    // Null keeps every read on Helix.
+    private val directory: TwitchGqlDirectoryClient? = null,
 ) {
     private val _topStreams = MutableStateFlow<List<StreamInfo>>(emptyList())
     val topStreams: StateFlow<List<StreamInfo>> = _topStreams.asStateFlow()
 
+    /** The anonymous directory, or null while a user token is on hand. Checked per call. */
+    private fun signedOutDirectory(): TwitchGqlDirectoryClient? =
+        directory?.takeIf { !apiClient.hasUserToken() }
+
     suspend fun refreshTopStreams(gameId: String? = null): List<StreamInfo> {
-        val streams = apiClient.getStreams(gameIds = listOfNotNull(gameId))
+        val anonymous = signedOutDirectory()
+        val streams = when {
+            anonymous == null -> apiClient.getStreams(gameIds = listOfNotNull(gameId))
+            gameId != null -> anonymous.streamsForGame(gameId, first = 20)
+            else -> anonymous.topStreams(first = 20).streams
+        }
         _topStreams.value = streams
         return streams
     }
@@ -43,6 +59,7 @@ class StreamRepository(
      */
     suspend fun streamsForChannels(logins: List<String>): List<StreamInfo> {
         if (logins.isEmpty()) return emptyList()
+        signedOutDirectory()?.let { return it.liveStreamsForLogins(logins) }
         return coroutineScope {
             logins.chunked(100)
                 .map { chunk -> async { apiClient.getStreams(userLogins = chunk, first = 100) } }
@@ -60,8 +77,11 @@ class StreamRepository(
     /** Everything [userId] follows that is live right now, in one Helix call (see TwitchApiClient.getFollowedStreams). */
     suspend fun followedLiveStreams(userId: String): List<StreamInfo> = apiClient.getFollowedStreams(userId)
 
-    suspend fun streamsForGame(gameId: String, first: Int = 40): List<StreamInfo> =
-        if (gameId.isBlank()) emptyList() else apiClient.getStreams(gameIds = listOf(gameId), first = first)
+    suspend fun streamsForGame(gameId: String, first: Int = 40): List<StreamInfo> {
+        if (gameId.isBlank()) return emptyList()
+        signedOutDirectory()?.let { return it.streamsForGame(gameId, first) }
+        return apiClient.getStreams(gameIds = listOf(gameId), first = first)
+    }
 
     suspend fun resolvePlayableStream(
         channelLogin: String,
@@ -70,7 +90,15 @@ class StreamRepository(
     ) = streamResolver.resolveMasterPlaylist(channelLogin, oauthToken, playerType)
 }
 
-class ChannelRepository(private val apiClient: TwitchApiClient) {
+class ChannelRepository(
+    private val apiClient: TwitchApiClient,
+    // Same rule as [StreamRepository]: anonymous GQL only while there is no
+    // user token. Null keeps every read on Helix.
+    private val directory: TwitchGqlDirectoryClient? = null,
+) {
+    private fun signedOutDirectory(): TwitchGqlDirectoryClient? =
+        directory?.takeIf { !apiClient.hasUserToken() }
+
     // Audit M7: this cache is read and written from suspend funcs that may run on
     // different dispatchers/threads; a plain mutableMapOf gives no happens-before
     // guarantee and concurrent puts can corrupt or lose entries. A Mutex
@@ -82,14 +110,25 @@ class ChannelRepository(private val apiClient: TwitchApiClient) {
 
     suspend fun getChannel(login: String): ChannelInfo? {
         cacheMutex.withLock { cache[login] }?.let { return it }
-        val channel = apiClient.getUsers(logins = listOf(login)).firstOrNull()
+        val anonymous = signedOutDirectory()
+        val channel = if (anonymous != null) {
+            anonymous.user(login)
+        } else {
+            apiClient.getUsers(logins = listOf(login)).firstOrNull()
+        }
         channel?.let { cacheMutex.withLock { cache[login] = it } }
         return channel
     }
 
-    suspend fun search(query: String, liveOnly: Boolean = false) = apiClient.searchChannels(query, liveOnly)
+    suspend fun search(query: String, liveOnly: Boolean = false): List<ChannelSearchResult> {
+        val anonymous = signedOutDirectory()
+        return if (anonymous != null) anonymous.searchChannels(query, liveOnly) else apiClient.searchChannels(query, liveOnly)
+    }
 
-    suspend fun topGames(): List<GameInfo> = apiClient.getTopGames()
+    suspend fun topGames(): List<GameInfo> {
+        val anonymous = signedOutDirectory()
+        return if (anonymous != null) anonymous.topGames() else apiClient.getTopGames()
+    }
 }
 
 class UserRepository(private val apiClient: TwitchApiClient) {

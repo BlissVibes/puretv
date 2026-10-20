@@ -70,6 +70,15 @@ interface DesktopPlayer {
      * the other transport calls (the running player's context is read, not freed).
      */
     fun setUpscaling(mode: UpscalingMode) {}
+
+    /**
+     * Turn the audio normalizer (AudioNormalizerProfile) on or off for the LIVE
+     * audio. mpv swaps its audio filter on the running context. Default no-op:
+     * VLC only takes audio filters when its instance is built (see VlcPlayer's
+     * `extraArgs`), so there the setting applies after a restart. The caller
+     * persists the setting either way.
+     */
+    fun setAudioNormalizer(enabled: Boolean) {}
 }
 
 /**
@@ -127,5 +136,10 @@ class DesktopPlayerProvider(create: () -> DesktopPlayer) {
 
     fun releaseIfCreated() {
         if (lazyPlayer.isInitialized()) lazyPlayer.value.release()
+    }
+
+    /** Runs [block] on the player only if it already exists, so settings never build one. */
+    fun ifCreated(block: (DesktopPlayer) -> Unit) {
+        if (lazyPlayer.isInitialized()) block(lazyPlayer.value)
     }
 }

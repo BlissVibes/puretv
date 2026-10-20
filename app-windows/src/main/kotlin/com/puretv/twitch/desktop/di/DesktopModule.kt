@@ -5,6 +5,7 @@ import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
+import com.puretv.twitch.core.audio.AudioNormalizerProfile
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
@@ -96,7 +97,12 @@ val desktopModule = module {
     single {
         val store = get<DesktopSettingsStore>()
         DesktopPlayerProvider {
-            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) MpvPlayer(store) else VlcPlayer()
+            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) {
+                MpvPlayer(store)
+            } else {
+                // VLC takes the audio normalizer only as instance arguments.
+                VlcPlayer(if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList())
+            }
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }
@@ -131,7 +137,11 @@ val desktopModule = module {
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }
-    factory { SettingsViewModel(get()) }
+    factory {
+        val players = get<DesktopPlayerProvider>()
+        // Live on mpv; never builds a player just to tell it about the setting.
+        SettingsViewModel(get(), onAudioNormalizerChange = { on -> players.ifCreated { it.setAudioNormalizer(on) } })
+    }
     // LoginViewModel collaborators: settingsStore, oauthManager, httpClient,
     // tokenHolder (for "set token BEFORE first authed call"), apiClient (for
     // resolving the broadcaster's own userId/login via GET /users).

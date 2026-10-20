@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.audio.AudioNormalizerProfile
 import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.sun.jna.Native
@@ -146,6 +147,11 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         l.mpv_set_option_string(c, "keep-open", "yes")
         l.mpv_set_option_string(c, "network-timeout", "10")
         mpvScalerProps(mode, shaderPaths).forEach { (k, v) -> l.mpv_set_option_string(c, k, v) }
+        // Audio normalizer: a fresh context per surface, so the filter is set here
+        // as well as live in setAudioNormalizer.
+        if (settingsStore.settings.value.audioNormalizer) {
+            l.mpv_set_option_string(c, "af", AudioNormalizerProfile.mpvAudioFilter())
+        }
         // OSD styling for the upscaling stats overlay (show-text): a restrained
         // top-left mono readout, not a loud HUD. Consolas ships on Windows. These
         // only take effect when we actually push OSD text (the F3 overlay).
@@ -398,6 +404,16 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         mpvScalerProps(mode, shaderPaths).forEach { (k, v) ->
             runCatching { l.mpv_set_property_string(c, k, v) }
         }
+    }
+
+    /**
+     * Swap the audio normalizer in or out of the running context: `af` is
+     * runtime-settable, and an empty list clears it. No-op when not attached;
+     * `applyPreInitOptions` reads the saved setting for the next stream.
+     */
+    override fun setAudioNormalizer(enabled: Boolean) = withCtx { l, c ->
+        runCatching { l.mpv_set_property_string(c, "af", if (enabled) AudioNormalizerProfile.mpvAudioFilter() else "") }
+        Unit
     }
 
     override fun release() {

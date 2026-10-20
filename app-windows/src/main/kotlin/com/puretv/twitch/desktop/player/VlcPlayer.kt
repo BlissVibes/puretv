@@ -30,7 +30,12 @@ import javax.swing.SwingUtilities
  * onto the EDT via [SwingUtilities.invokeLater]. [PlayerStatus] updates are
  * safe to publish from any thread since [MutableStateFlow] is thread-safe.
  */
-class VlcPlayer : DesktopPlayer {
+class VlcPlayer(
+    // Extra libVLC instance arguments, read once when the instance is built. The
+    // audio normalizer's compressor goes here (AudioNormalizerProfile.vlcArgs):
+    // VLC 3.0.23 only loads audio filters per instance, so it applies after a restart.
+    private val extraArgs: List<String> = emptyList(),
+) : DesktopPlayer {
 
     // Must be initialised before `factory` so jna.library.path is set before
     // VLCJ's JNA binding loads libvlc.dll.  Kotlin initialises properties in
@@ -53,6 +58,7 @@ class VlcPlayer : DesktopPlayer {
             "--network-caching=2000",
             "--live-caching=1000",
             "--sout-mux-caching=500",
+            *extraArgs.toTypedArray(),
         )
     }.getOrNull()
 

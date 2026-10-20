@@ -1,10 +1,13 @@
 package com.puretv.twitch.android
 
 import android.app.Application
+import androidx.annotation.OptIn
+import androidx.media3.common.util.UnstableApi
 import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.di.androidModule
 import com.puretv.twitch.android.player.BackgroundPlayback
+import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
@@ -41,6 +44,7 @@ class PureTvApp : Application() {
     }
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + startupFailures)
 
+    @OptIn(UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         // Local-only timing marks (time to first frame and so on) go to logcat;
@@ -117,6 +121,15 @@ class PureTvApp : Application() {
                 .map { it.audioOnlyInBackground }
                 .distinctUntilChanged()
                 .collect { playback.setAudioOnlyInBackground(it) }
+        }
+        // "Even out loud and quiet audio" switches live: the player's audio
+        // processor reads the flag on the audio thread.
+        appScope.launch {
+            val player = koinApp.koin.get<TwitchPlayer>()
+            koinApp.koin.get<AppSettingsStore>().flow
+                .map { it.audioNormalizer }
+                .distinctUntilChanged()
+                .collect { player.setAudioNormalizer(it) }
         }
     }
 

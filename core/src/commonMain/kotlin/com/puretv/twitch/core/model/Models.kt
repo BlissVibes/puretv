@@ -140,6 +140,9 @@ data class ChatMessage(
     /** This incoming message @-mentions the local viewer; drives row highlighting.
      *  Viewer-relative, so it is computed at receipt (when selfLogin is known). */
     val mentionsSelf: Boolean = false,
+    /** The author's numeric Twitch id (IRC `user-id` tag). Blank when unknown, for
+     *  example on system rows. Looks up per-user extras such as 7TV name paints. */
+    val userId: String = "",
 )
 
 /** A non-base emote drawn over a base emote (7TV zero-width / overlay cosmetics). */
@@ -187,7 +190,13 @@ sealed class ChatEvent {
         val followersOnlyMinutes: Int? = null,
         val subsOnly: Boolean? = null,
     ) : ChatEvent()
-    data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
+    /** The viewer's own identity. [userId] comes only with GLOBALUSERSTATE; USERSTATE leaves it blank. */
+    data class SelfState(
+        val displayName: String,
+        val color: String,
+        val badges: List<Badge>,
+        val userId: String = "",
+    ) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
     /**
      * A NOTICE from Twitch addressed to this viewer, usually about a message they

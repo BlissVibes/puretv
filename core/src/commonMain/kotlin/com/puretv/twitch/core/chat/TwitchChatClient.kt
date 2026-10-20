@@ -310,6 +310,7 @@ object TwitchIrcParser {
                 displayName = tags["display-name"].orEmpty(),
                 color = tags["color"].orEmpty().ifBlank { "#9B5DE5" },
                 badges = parseBadges(tags["badges"]),
+                userId = tags["user-id"].orEmpty(),
             )
             // USERSTATE is sent on JOIN and after each of our own sends. It carries
             // our per-channel identity (channel sub/mod badges, color) — more
@@ -347,6 +348,7 @@ object TwitchIrcParser {
             isBroadcaster = badges.any { it.setId == "broadcaster" },
             replyParentDisplayName = tags["reply-parent-display-name"]?.ifBlank { null },
             replyParentBody = tags["reply-parent-msg-body"]?.ifBlank { null },
+            userId = tags["user-id"].orEmpty(),
         )
     }
 

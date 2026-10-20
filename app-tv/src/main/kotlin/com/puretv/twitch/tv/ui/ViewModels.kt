@@ -19,6 +19,7 @@ import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.GameInfo
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -74,6 +75,7 @@ class HomeViewModel(
     private val settings: AppSettingsStore,
     private val cachedStreamDao: CachedStreamDao,
     private val tokenRefresher: TokenRefresher,
+    private val liveFollows: LiveFollowsMonitor,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -127,9 +129,10 @@ class HomeViewModel(
             val prefs = settings.flow.first()
             // Live status straight from Twitch on every refresh (resume and the 90s
             // poll): one /streams/followed call instead of re-downloading the whole
-            // follow list and then checking it.
+            // follow list and then checking it. Through the shared monitor, so this
+            // refresh is also the go-live banner's check and never doubles it.
             if (prefs.userId.isNotBlank()) {
-                runCatching { streamRepository.followedLiveStreams(prefs.userId) }
+                runCatching { liveFollows.followedLive(prefs.userId) }
                     .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
             }
             val ok = loadTopStreamsResilient()
@@ -589,6 +592,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setLowLatency(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(lowLatencyMode = enabled) }
+    }
+
+    fun setLiveNotifications(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(liveNotifications = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

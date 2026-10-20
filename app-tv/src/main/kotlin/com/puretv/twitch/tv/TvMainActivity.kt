@@ -5,12 +5,23 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
+import androidx.navigation.compose.rememberNavController
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.tv.data.AppSettingsStore
+import com.puretv.twitch.tv.notify.TvGoLiveMonitor
+import com.puretv.twitch.tv.ui.Routes
 import com.puretv.twitch.tv.ui.components.LocalStreamPrewarm
+import com.puretv.twitch.tv.ui.components.TvGoLiveBanner
 import com.puretv.twitch.tv.update.TvUpdateManager
 import com.puretv.twitch.tv.ui.PureTvTvNavHost
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
@@ -74,13 +85,44 @@ class TvMainActivity : ComponentActivity() {
 
         val playableStreamCache = getKoin().get<PlayableStreamCache>()
         val streamPrewarm: (String) -> Unit = { login -> playableStreamCache.prewarm(login) }
+        val goLive = getKoin().get<TvGoLiveMonitor>()
         setContent {
+            val navController = rememberNavController()
+            // No banner for the channel already playing.
+            LaunchedEffect(navController) {
+                navController.currentBackStackEntryFlow.collect { entry ->
+                    goLive.watchingLogin =
+                        if (entry.destination.route == Routes.STREAM) entry.arguments?.getString("channelLogin") else null
+                }
+            }
             PureTvTvTheme(variant = themeVariant.value) {
                 CompositionLocalProvider(LocalStreamPrewarm provides streamPrewarm) {
-                    PureTvTvNavHost()
+                    Box(Modifier.fillMaxSize()) {
+                        PureTvTvNavHost(navController = navController)
+                        // Drawn above every screen and never focusable (see TvGoLiveBanner),
+                        // so it shows over Home, Following or a playing stream without
+                        // touching where the D-pad is.
+                        TvGoLiveBanner(
+                            queue = goLive.banners,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    // Go-live banners poll only while PureTV is on screen; a TV app sitting in the
+    // background never touches the network for them.
+    override fun onStart() {
+        super.onStart()
+        runCatching { getKoin().get<TvGoLiveMonitor>().start() }
+            .onFailure { Log.w(TAG, "Could not start go-live checks", it) }
+    }
+
+    override fun onStop() {
+        runCatching { getKoin().get<TvGoLiveMonitor>().stop() }
+        super.onStop()
     }
 
     /**

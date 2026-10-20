@@ -89,6 +89,31 @@ class PlayerShortcutsTest {
         assertEquals(0, PlayerShortcuts.steppedVolume(3, up = false))
     }
 
+    @Test fun iTogglesTheMiniPlayerAndEscLeavesIt() {
+        assertEquals(ShortcutAction.ToggleMini, action(KeyEvent.VK_I))
+        assertEquals(ShortcutAction.ToggleMini, action(KeyEvent.VK_I, immersive = true))
+        assertEquals(ShortcutAction.ExitImmersive, action(KeyEvent.VK_ESCAPE, immersive = true))
+        assertNull(action(KeyEvent.VK_I, ctrlOrAlt = true))
+        // Typing an "i" in chat is not a shortcut.
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_I, 'i', false, false, textInputFocused = true))
+    }
+
+    @Test fun theMiniPlayerKeepsOnlyTheKeysThatMeanSomethingThere() {
+        for (swallowed in listOf(
+            ShortcutAction.ToggleFullscreen, ShortcutAction.ToggleTheater, ShortcutAction.ToggleChat,
+            ShortcutAction.ToggleStats, ShortcutAction.ToggleHelp,
+        )) assertTrue(!PlayerShortcuts.worksInMini(swallowed), "$swallowed")
+        for (kept in listOf(
+            ShortcutAction.TogglePlayPause, ShortcutAction.ExitImmersive, ShortcutAction.ToggleMini,
+            ShortcutAction.FlipNext, ShortcutAction.FlipPrevious, ShortcutAction.VolumeUp,
+            ShortcutAction.VolumeDown, ShortcutAction.ToggleMute, ShortcutAction.CycleSleepTimer,
+        )) assertTrue(PlayerShortcuts.worksInMini(kept), "$kept")
+    }
+
+    @Test fun theSheetListsTheMiniPlayerKey() {
+        assertTrue(PlayerShortcuts.help.any { it.keys == "I" })
+    }
+
     @Test fun everyActionHasARowInTheSheet() {
         val text = PlayerShortcuts.help.joinToString("|") { it.keys + " " + it.what }
         assertTrue("Page Up" in text && "Volume" in text && "Mute" in text && "Sleep" in text && "?" in text)

@@ -61,8 +61,16 @@ class AppSettingsStore(
         val CHAT_TIMESTAMPS = booleanPreferencesKey("chat_timestamps")
         val THEME = stringPreferencesKey("theme")
         val COMPACT_MODE = booleanPreferencesKey("compact_mode")
+        // Go-live alerts.
         val LIVE_NOTIFICATIONS = booleanPreferencesKey("live_notifications")
         val NOTIFY_MUTED_LOGINS = stringSetPreferencesKey("notify_muted_logins")
+
+        // TV chat placement
+        val TV_CHAT_MODE = stringPreferencesKey("tv_chat_mode")
+        val TV_CHAT_OPACITY = floatPreferencesKey("tv_chat_opacity")
+
+        // Audio normalizer (Wave 4).
+        val AUDIO_NORMALIZER = booleanPreferencesKey("audio_normalizer")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -100,6 +108,11 @@ class AppSettingsStore(
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
+            // TV chat placement
+            tvChatMode = prefs[Keys.TV_CHAT_MODE] ?: AppSettings().tvChatMode,
+            tvChatOpacity = prefs[Keys.TV_CHAT_OPACITY] ?: AppSettings().tvChatOpacity,
+            // Audio normalizer (Wave 4).
+            audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
         )
     }
         // The corruption handler above covers a file DataStore can parse but not
@@ -140,6 +153,11 @@ class AppSettingsStore(
             prefs[Keys.COMPACT_MODE] = next.compactMode
             prefs[Keys.LIVE_NOTIFICATIONS] = next.liveNotifications
             prefs[Keys.NOTIFY_MUTED_LOGINS] = next.notifyMutedLogins.mapTo(HashSet()) { it.lowercase() }
+            // TV chat placement
+            prefs[Keys.TV_CHAT_MODE] = next.tvChatMode
+            prefs[Keys.TV_CHAT_OPACITY] = next.tvChatOpacity
+            // Audio normalizer (Wave 4).
+            prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
         }
     }
 

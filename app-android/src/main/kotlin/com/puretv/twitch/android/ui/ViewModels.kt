@@ -21,13 +21,22 @@ import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.TwitchConfig
+import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.BadgeRepository
+import com.puretv.twitch.core.chat.ChatChange
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.ChatTimeline
+import com.puretv.twitch.core.chat.ChatTimelineState
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
 import com.puretv.twitch.core.emotes.ResolvedEmote
+import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.applySevenTvDelta
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.buildPickableEmotes
 import com.puretv.twitch.core.emotes.prioritizeThirdParty
@@ -35,7 +44,6 @@ import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
-import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChannelEmote
@@ -328,6 +336,8 @@ data class StreamUiState(
     val playableUrl: String? = null,
     val adBlockStatus: AdBlockStatus = AdBlockStatus.UNKNOWN,
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** Slow, emote-only, followers-only and sub-only, shown above the composer. */
+    val roomModes: ChatRoomModes = ChatRoomModes(),
     val chatFraction: Float = 0.5f,
     val chatEnabled: Boolean = true,
     /** Third-party (7TV/BTTV/FFZ) name-to-url map the chat rows word-match against.
@@ -337,6 +347,10 @@ data class StreamUiState(
     /** Everything the picker and autocomplete offer, first-party Twitch included,
      *  in [buildPickableEmotes] order (channel sets before globals). */
     val pickableEmotes: List<PickableEmote> = emptyList(),
+    /** Chat badge art (global and channel); the rows draw text chips until it loads. */
+    val badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. */
+    val showBadges: Boolean = true,
     /** The signed-in viewer's login, so @-completion never suggests yourself. */
     val selfLogin: String? = null,
     val isLoading: Boolean = true,
@@ -364,6 +378,8 @@ class StreamViewModel(
     private val apiClient: TwitchApiClient,
     private val backgroundPlayback: BackgroundPlayback,
     private val playableStreamCache: PlayableStreamCache,
+    private val badgeRepository: BadgeRepository,
+    private val sevenTvEventClient: SevenTvEventClient,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -377,12 +393,21 @@ class StreamViewModel(
     private var selfColor: String? = null
     private var selfBadges: List<Badge> = emptyList()
     private var echoCounter = 0
+    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
 
     // Tokenizes only YOUR OWN echoed message: third-party plus first-party Twitch,
     // because your own message carries no `emotes=` tag, so a typed Kappa or sub
     // emote can only be resolved by name. Incoming rows keep using the
     // third-party-only [StreamUiState.emotes] map.
     private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
+
+    // The emote source lists everything above is built from. Fields (not locals of
+    // the load coroutine) so a live 7TV change can fold into the channel set and
+    // rebuild without fetching again. Main dispatcher only, like the identity above.
+    private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
+    private var twitchChannelEmotes: List<ChannelEmote> = emptyList()
+    private var twitchGlobalEmotes: List<ChannelEmote> = emptyList()
 
     private val openTiming = StreamOpenTiming(channelLogin)
 
@@ -438,33 +463,37 @@ class StreamViewModel(
                     ?: emptyList()
             }
 
-            // Third-party emotes: the copy cached from the last visit first, so the
-            // first chat lines already render, then the fresh set. Android has no
-            // per-provider toggles in its settings UI, so every provider is on;
-            // prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision
-            // order the desktop uses.
-            var tpChannel = emptyList<ChannelEmote>()
-            var tpGlobal = emptyList<ChannelEmote>()
-            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
-                tpChannel = prioritizeThirdParty(emotes.channel, ALL_THIRD_PARTY)
-                tpGlobal = prioritizeThirdParty(emotes.global, ALL_THIRD_PARTY)
-                selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal)
-                _state.update { s ->
-                    s.copy(
-                        emotes = (emotes.global + emotes.channel).associate { it.name to it.url },
-                        pickableEmotes = buildPickableEmotes(emptyList(), tpChannel, emptyList(), tpGlobal),
-                    )
+            // Badge art only needs the channel id, so it loads on its own coroutine and
+            // early lines show the text chips for as short a time as possible.
+            // Best-effort: a failure (or no session) keeps the chips.
+            channel?.let { ch ->
+                launch {
+                    val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
+                    _state.update { it.copy(badges = badges) }
                 }
+            }
+
+            // Third-party emotes: the copy cached from the last visit first, so the
+            // first chat lines already render, then the fresh set.
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannelEmotes = emotes.channel
+                tpGlobalEmotes = emotes.global
+                rebuildEmotes()
                 openTiming.mark("emotes_ready")
             }
 
             // First-party Twitch emotes (Helix; best-effort, empty without a token)
             // then join the picker, autocomplete and self-echo only, never incoming rows.
-            val twitchGlobal = twitchGlobalLookup.await()
-            val twitchChannel = twitchChannelLookup.await()
-            selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannel, twitchGlobal)
-            _state.update { s ->
-                s.copy(pickableEmotes = buildPickableEmotes(twitchChannel, tpChannel, twitchGlobal, tpGlobal))
+            twitchGlobalEmotes = twitchGlobalLookup.await()
+            twitchChannelEmotes = twitchChannelLookup.await()
+            rebuildEmotes()
+            // Live 7TV emote changes for as long as this stream is open.
+            channel?.let { sevenTvEventClient.connect(it.id) }
+        }
+        viewModelScope.launch {
+            sevenTvEventClient.updates.collect { delta ->
+                tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
+                rebuildEmotes()
             }
         }
         viewModelScope.launch {
@@ -483,6 +512,7 @@ class StreamViewModel(
                     chatFraction = settings.chatFraction,
                     chatEnabled = settings.chatEnabled,
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    showBadges = settings.showBadges,
                     quality = preferred,
                 )
             }
@@ -493,24 +523,21 @@ class StreamViewModel(
             _state.update { it.copy(isLoggedIn = token != null, selfLogin = username) }
             chatClient.connect(channelLogin, token, username)
             // A busy chat arrives in batches (about ten a second), each applied in
-            // one state update instead of one per message.
+            // one state update instead of one per message. Core's ChatTimeline holds
+            // the chat rules every app shares (moderation tombstones, sub and raid
+            // rows, mentions, room modes); the batch is prepared out here because
+            // the update lambda may run more than once.
             chatClient.events.batchedEvery().collect { batch ->
-                val incoming = ArrayList<ChatMessage>(batch.size)
-                for (event in batch) {
-                    when (event) {
-                        is ChatEvent.Message -> incoming += event.message
-                        // Our own name/color/badges, used to dress the self-echo.
-                        is ChatEvent.SelfState -> {
-                            event.displayName.ifBlank { null }?.let { selfDisplayName = it }
-                            selfColor = event.color
-                            selfBadges = event.badges
-                        }
-                        else -> {}
-                    }
-                }
-                if (incoming.isNotEmpty()) {
-                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
-                }
+                val changes = chatTimeline.changesFor(
+                    batch,
+                    // Our own name/color/badges, used to dress the self-echo.
+                    onSelfState = { self ->
+                        self.displayName.ifBlank { null }?.let { selfDisplayName = it }
+                        selfColor = self.color
+                        selfBadges = self.badges
+                    },
+                )
+                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
     }
@@ -573,7 +600,34 @@ class StreamViewModel(
             timestamp = System.currentTimeMillis(),
             emoteIndex = selfEchoIndex,
         )
-        _state.update { it.copy(chatMessages = (it.chatMessages + echo).takeLast(200)) }
+        val echoed = listOf(ChatChange.Add(echo))
+        _state.update { it.withChat(echoed) }
+    }
+
+    /**
+     * Rebuilds the row emote map, the picker and the self-echo index from the
+     * source lists. Runs when emotes load and on every live 7TV change. Android has
+     * no per-provider toggles in its settings UI, so every provider is on;
+     * prioritizeThirdParty still applies the 7TV > BTTV > FFZ collision order the
+     * desktop uses, and the row map follows the same order (channel before global).
+     */
+    private fun rebuildEmotes() {
+        val tpChannel = prioritizeThirdParty(tpChannelEmotes, ALL_THIRD_PARTY)
+        val tpGlobal = prioritizeThirdParty(tpGlobalEmotes, ALL_THIRD_PARTY)
+        selfEchoIndex = buildEmoteIndex(tpChannel, tpGlobal, twitchChannelEmotes, twitchGlobalEmotes)
+        val rowEmotes = buildEmoteIndex(tpChannel, tpGlobal).mapValues { it.value.url }
+        val picks = buildPickableEmotes(twitchChannelEmotes, tpChannel, twitchGlobalEmotes, tpGlobal)
+        _state.update { it.copy(emotes = rowEmotes, pickableEmotes = picks) }
+    }
+
+    /**
+     * [changes] applied to the chat rows and room modes (see [applying]). The phone
+     * has no Mentions tab, so a ping is only highlighted in place.
+     */
+    private fun StreamUiState.withChat(changes: List<ChatChange>): StreamUiState {
+        val before = ChatTimelineState(messages = chatMessages, modes = roomModes)
+        val after = before.applying(changes)
+        return if (after === before) this else copy(chatMessages = after.messages, roomModes = after.modes)
     }
 
     /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */
@@ -597,6 +651,7 @@ class StreamViewModel(
     override fun onCleared() {
         super.onCleared()
         chatClient.disconnect()
+        sevenTvEventClient.disconnect()
         // Teardown lives here, not in PlayerSurface.onDispose: onCleared fires only
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
@@ -716,6 +771,11 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setAudioOnlyInBackground(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(audioOnlyInBackground = enabled) }
+    }
+
+    // PureTvApp hands the saved value to the player, which applies it live.
+    fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioNormalizer = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

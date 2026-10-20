@@ -30,7 +30,12 @@ import javax.swing.SwingUtilities
  * onto the EDT via [SwingUtilities.invokeLater]. [PlayerStatus] updates are
  * safe to publish from any thread since [MutableStateFlow] is thread-safe.
  */
-class VlcPlayer : DesktopPlayer {
+class VlcPlayer(
+    // Extra libVLC instance arguments, read once when the instance is built. The
+    // audio normalizer's compressor goes here (AudioNormalizerProfile.vlcArgs):
+    // VLC 3.0.23 only loads audio filters per instance, so it applies after a restart.
+    private val extraArgs: List<String> = emptyList(),
+) : DesktopPlayer {
 
     // Must be initialised before `factory` so jna.library.path is set before
     // VLCJ's JNA binding loads libvlc.dll.  Kotlin initialises properties in
@@ -47,14 +52,13 @@ class VlcPlayer : DesktopPlayer {
      *                               live sources.
      * `--sout-mux-caching=500`    — output muxer cache; keeps A/V sync tight.
      */
-    private val factory: MediaPlayerFactory? = runCatching {
-        MediaPlayerFactory(
-            "--no-video-title-show",
-            "--network-caching=2000",
-            "--live-caching=1000",
-            "--sout-mux-caching=500",
-        )
-    }.getOrNull()
+    private val factory: MediaPlayerFactory? = buildFactory(extraArgs)
+        ?: if (extraArgs.isEmpty()) null else {
+            // An extra argument libVLC refuses makes it refuse to start at all;
+            // playing without the extras beats not playing.
+            System.err.println("VLC rejected the extra arguments $extraArgs, starting without them")
+            buildFactory(emptyList())
+        }
 
     private val mediaPlayer: EmbeddedMediaPlayer? = factory?.mediaPlayers()?.newEmbeddedMediaPlayer()
 
@@ -291,6 +295,16 @@ class VlcPlayer : DesktopPlayer {
     }
 
     companion object {
+        private fun buildFactory(extra: List<String>): MediaPlayerFactory? = runCatching {
+            MediaPlayerFactory(
+                "--no-video-title-show",
+                "--network-caching=2000",
+                "--live-caching=1000",
+                "--sout-mux-caching=500",
+                *extra.toTypedArray(),
+            )
+        }.getOrNull()
+
         // Checks for a VLC copy bundled inside the distributable's resources dir.
         // When found, prepends the directory to jna.library.path so JNA locates
         // libvlc.dll before scanning system paths. VLC then finds its plugins/

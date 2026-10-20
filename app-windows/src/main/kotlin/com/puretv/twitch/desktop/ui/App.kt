@@ -334,6 +334,9 @@ fun App(
                                         koin = koin,
                                         onOpenChannel = { login -> route = Route.Channel(login) },
                                         onResumeVod = { launch -> route = Route.Vod(launch) },
+                                        onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) },
+                                        onOpenBrowse = { destination = Destination.BROWSE },
+                                        onSignIn = { destination = Destination.ACCOUNT },
                                     )
                                     Destination.FOLLOWING -> FollowingContent(
                                         koin = koin,

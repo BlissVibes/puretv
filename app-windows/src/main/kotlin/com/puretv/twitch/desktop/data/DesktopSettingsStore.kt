@@ -169,11 +169,15 @@ class DesktopSettingsStore(
         val compactMode: Boolean = false,
         val upscalingMode: String = "off",
         val playbackBackend: String = "vlc",
+        // Go-live alerts and the tray.
         val liveNotifications: Boolean = true,
         val notifyMutedLogins: List<String> = emptyList(),
         val closeToTray: Boolean = false,
         val startWithWindows: Boolean = false,
         val trayHintShown: Boolean = false,
+        val showSevenTvPaints: Boolean = true,
+        // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
+        val audioNormalizer: Boolean = false,
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -200,6 +204,8 @@ class DesktopSettingsStore(
         closeToTray = closeToTray,
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
+        showSevenTvPaints = showSevenTvPaints,
+        audioNormalizer = audioNormalizer,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -228,6 +234,8 @@ class DesktopSettingsStore(
         closeToTray = closeToTray,
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
+        showSevenTvPaints = showSevenTvPaints,
+        audioNormalizer = audioNormalizer,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

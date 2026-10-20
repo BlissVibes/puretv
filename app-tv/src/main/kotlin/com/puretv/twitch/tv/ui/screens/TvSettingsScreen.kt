@@ -34,6 +34,8 @@ import androidx.tv.material3.Text
 import com.puretv.twitch.core.adblock.AdBlockStrategy
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
+import com.puretv.twitch.core.model.TV_CHAT_OVER_VIDEO
 import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.ui.SettingsViewModel
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
@@ -51,6 +53,7 @@ import com.puretv.twitch.tv.ui.theme.ThemeVariant
 import com.puretv.twitch.tv.ui.theme.themeColors
 import com.puretv.twitch.tv.update.TvUpdateManager
 import com.puretv.twitch.tv.update.TvUpdateState
+import kotlin.math.abs
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -107,6 +110,8 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
                 onSelect = viewModel::setPreferredQuality,
                 lowLatency = state.settings.lowLatencyMode,
                 onLowLatencyChange = viewModel::setLowLatency,
+                audioNormalizer = state.settings.audioNormalizer,
+                onAudioNormalizerChange = viewModel::setAudioNormalizer,
             )
         }
         TvDivider()
@@ -115,6 +120,16 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
             ChatTextSizeSection(
                 selected = ChatTextSize.from(state.settings.chatFontSize),
                 onSelect = viewModel::setChatTextSize,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
+            ChatPlacementSection(
+                mode = state.settings.tvChatMode,
+                onModeSelect = viewModel::setTvChatMode,
+                opacity = state.settings.tvChatOpacity,
+                onOpacitySelect = viewModel::setTvChatOpacity,
             )
         }
         TvDivider()
@@ -250,6 +265,8 @@ private fun StreamQualitySection(
     onSelect: (StreamQuality) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    audioNormalizer: Boolean,
+    onAudioNormalizerChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTvTheme.colors
     Column {
@@ -283,6 +300,25 @@ private fun StreamQualitySection(
             }
             Switch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
         }
+        Spacer(Modifier.height(20.dp))
+        TvDivider()
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Even out loud and quiet audio", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                        "leave the volume alone. Music can sound flatter with it on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
+        }
     }
 }
 
@@ -303,6 +339,64 @@ private fun ChatTextSizeSection(selected: ChatTextSize, onSelect: (ChatTextSize)
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             ChatTextSize.entries.forEach { size ->
                 TvFilterChip(label = size.label, selected = size == selected, onClick = { onSelect(size) })
+            }
+        }
+    }
+}
+
+/** The chat background choices, as (label, opacity). */
+private val ChatOpacityChoices = listOf("40%" to 0.4f, "60%" to 0.6f, "85%" to 0.85f, "100%" to 1f)
+
+@Composable
+private fun ChatPlacementSection(
+    mode: String,
+    onModeSelect: (String) -> Unit,
+    opacity: Float,
+    onOpacitySelect: (Float) -> Unit,
+) {
+    val c = PureTvTvTheme.colors
+    Column {
+        Text("Chat position", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "Over the video keeps the picture full size. Beside the video makes the picture a little " +
+                "smaller so chat never covers it. Applies to the next stream you open.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = c.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(20.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            TvFilterChip(
+                label = "Over the video",
+                selected = mode != TV_CHAT_BESIDE_VIDEO,
+                onClick = { onModeSelect(TV_CHAT_OVER_VIDEO) },
+            )
+            TvFilterChip(
+                label = "Beside the video",
+                selected = mode == TV_CHAT_BESIDE_VIDEO,
+                onClick = { onModeSelect(TV_CHAT_BESIDE_VIDEO) },
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+        TvDivider()
+        Spacer(Modifier.height(20.dp))
+        Text("Chat background", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+        Text(
+            "Lower lets more of the stream show through chat.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = c.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(16.dp))
+        // The stored value is matched to the nearest choice, so any saved number
+        // still shows one chip as selected.
+        val nearest = ChatOpacityChoices.minBy { abs(it.second - opacity) }
+        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ChatOpacityChoices.forEach { choice ->
+                TvFilterChip(
+                    label = choice.first,
+                    selected = choice == nearest,
+                    onClick = { onOpacitySelect(choice.second) },
+                )
             }
         }
     }

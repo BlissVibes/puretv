@@ -123,7 +123,25 @@ class TwitchPlayer(
     val exoPlayer: ExoPlayer
         get() = _exoPlayer ?: buildPlayer().also { _exoPlayer = it }
 
-    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(context)
+    // "Even out loud and quiet audio". The flag outlives the player; each built
+    // player gets its own processor, primed from it.
+    @Volatile private var audioNormalizerOn = false
+    @Volatile private var audioNormalizer: AudioNormalizer? = null
+
+    /** Switches the audio normalizer live. Never builds the player. */
+    fun setAudioNormalizer(enabled: Boolean) {
+        audioNormalizerOn = enabled
+        audioNormalizer?.enabled = enabled
+    }
+
+    private fun buildPlayer(): ExoPlayer = ExoPlayer.Builder(
+        context,
+        NormalizingRenderersFactory(
+            context,
+            // Published before it reads the flag, so a switch flipped meanwhile is never lost.
+            AudioNormalizer().also { audioNormalizer = it; it.enabled = audioNormalizerOn },
+        ),
+    )
         .setMediaSourceFactory(
             DefaultMediaSourceFactory(context)
                 .setDataSourceFactory(OkHttpDataSource.Factory(okHttpClient)),

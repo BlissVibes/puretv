@@ -7,17 +7,30 @@ import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.DevicePollResult
+import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.BadgeRepository
+import com.puretv.twitch.core.chat.ChatChange
+import com.puretv.twitch.core.chat.ChatRoomModes
+import com.puretv.twitch.core.chat.ChatTimeline
+import com.puretv.twitch.core.chat.ChatTimelineState
 import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.applySevenTvDelta
+import com.puretv.twitch.core.emotes.buildEmoteIndex
+import com.puretv.twitch.core.emotes.prioritizeThirdParty
+import com.puretv.twitch.core.model.ChannelEmote
+import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.follows.FollowRow
 import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.core.model.AppSettings
-import com.puretv.twitch.core.model.ChatEvent
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
@@ -52,6 +65,8 @@ import kotlinx.coroutines.launch
 
 data class HomeUiState(
     val isLoggedIn: Boolean = false,
+    /** False until the stored session has been read, so a signed-in cold start never flashes the sign-in panel. */
+    val sessionKnown: Boolean = false,
     val followedLive: List<StreamInfo> = emptyList(),
     val topStreams: List<StreamInfo> = emptyList(),
     val isLoading: Boolean = false,
@@ -113,10 +128,19 @@ class HomeViewModel(
                 }
             }
         }
-        // Login flag, recomputed whenever the session changes.
+        // Login flag, recomputed whenever the session changes. Signed out, Home
+        // still loads: core reads the public directory through anonymous GQL.
         viewModelScope.launch {
             settings.flow.collect { prefs ->
-                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank()) }
+                val loggedIn = prefs.accessToken.isNotBlank()
+                _state.update {
+                    it.copy(
+                        isLoggedIn = loggedIn,
+                        sessionKnown = true,
+                        // Logging out drops the follows the moment it happens.
+                        followedLive = if (loggedIn) it.followedLive else emptyList(),
+                    )
+                }
             }
         }
         refresh()
@@ -134,6 +158,10 @@ class HomeViewModel(
             if (prefs.userId.isNotBlank()) {
                 runCatching { liveFollows.followedLive(prefs.userId) }
                     .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+            } else {
+                // Signed out (or just logged out): the last account's follows must
+                // not linger as a FOLLOWING hero above the sign-in panel.
+                _state.update { it.copy(followedLive = emptyList()) }
             }
             val ok = loadTopStreamsResilient()
             _state.update {
@@ -358,6 +386,15 @@ data class StreamUiState(
     val playableUrl: String? = null,
     val adBlockStatus: AdBlockStatus = AdBlockStatus.UNKNOWN,
     val chatMessages: List<ChatMessage> = emptyList(),
+    /** Slow, emote-only, followers-only and sub-only, shown in the chat header. */
+    val roomModes: ChatRoomModes = ChatRoomModes(),
+    /** Third-party (7TV/BTTV/FFZ) name-to-url map the chat rows word-match against.
+     *  Third-party only: Twitch's own emotes arrive tagged in each message. */
+    val emotes: Map<String, String> = emptyMap(),
+    /** Chat badge art (global and channel); rows draw text chips until it loads. */
+    val badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. */
+    val showBadges: Boolean = true,
     val isLoading: Boolean = true,
     /**
      * Why playback could not start, or null while it is fine. Stream resolution
@@ -370,6 +407,10 @@ data class StreamUiState(
     val playbackError: String? = null,
     /** Settings > Chat text size, as a scale for the chat overlay. */
     val chatTextScale: Float = 1f,
+    /** Settings > Chat position: true puts chat beside the video instead of over it. */
+    val chatBesideVideo: Boolean = false,
+    /** Settings > Chat background, 0.4 to 1. */
+    val chatOpacity: Float = 0.85f,
     /**
      * What the player plays at: the saved preference once settings load (null
      * until then, so the screen never applies a placeholder first), then the
@@ -389,11 +430,24 @@ class StreamViewModel(
     private val adBlockEngine: AdBlockEngine,
     private val settingsStore: AppSettingsStore,
     private val playableStreamCache: PlayableStreamCache,
+    private val badgeRepository: BadgeRepository,
+    private val sevenTvEventClient: SevenTvEventClient,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
 
     private val openTiming = StreamOpenTiming(channelLogin)
+
+    // The signed-in viewer's login (null when watching anonymously), so a line
+    // that @-mentions them is highlighted. Written once, before chat connects.
+    private var selfLogin: String? = null
+    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
+
+    // The third-party emote lists the row map is built from. Fields so a live 7TV
+    // change can fold into the channel set without fetching again. Every reader
+    // and writer runs on viewModelScope's main dispatcher, so plain vars.
+    private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
 
     init {
         adBlockEngine.resetForNewStream()
@@ -408,8 +462,31 @@ class StreamViewModel(
             val channel = channelLookup.await()
             _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
 
-            runCatching { emoteRepository.loadGlobalEmotes() }
-            channel?.let { runCatching { emoteRepository.loadChannelEmotes(it.id, it.login) } }
+            // Badge art only needs the channel id, so it loads on its own coroutine.
+            // Best-effort: Helix wants a session, so a signed-out TV keeps the chips.
+            channel?.let { ch ->
+                launch {
+                    val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
+                    _state.update { it.copy(badges = badges) }
+                }
+            }
+
+            // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
+            // first, so the first lines already render, then the fresh set.
+            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                tpChannelEmotes = emotes.channel
+                tpGlobalEmotes = emotes.global
+                rebuildEmotes()
+                openTiming.mark("emotes_ready")
+            }
+            // Live 7TV emote changes for as long as this stream is open.
+            channel?.let { sevenTvEventClient.connect(it.id) }
+        }
+        viewModelScope.launch {
+            sevenTvEventClient.updates.collect { delta ->
+                tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
+                rebuildEmotes()
+            }
         }
         viewModelScope.launch {
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
@@ -422,21 +499,47 @@ class StreamViewModel(
             _state.update {
                 it.copy(
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                    showBadges = settings.showBadges,
+                    chatBesideVideo = settings.tvChatMode == TV_CHAT_BESIDE_VIDEO,
+                    chatOpacity = settings.tvChatOpacity.coerceIn(0.4f, 1f),
                     quality = StreamQuality.fromSetting(settings.preferredQuality),
                 )
             }
             val token = settings.accessToken.takeIf { it.isNotBlank() }
             val username = settings.username.takeIf { it.isNotBlank() }
+            selfLogin = username
             chatClient.connect(channelLogin, token, username)
             // A busy chat arrives in batches (about ten a second), each applied in
-            // one state update instead of one per message.
+            // one state update instead of one per message. Core's ChatTimeline holds
+            // the chat rules every app shares (moderation tombstones, sub and raid
+            // rows, mentions, room modes); the batch is prepared out here because
+            // the update lambda may run more than once.
             chatClient.events.batchedEvery().collect { batch ->
-                val incoming = batch.filterIsInstance<ChatEvent.Message>().map { it.message }
-                if (incoming.isNotEmpty()) {
-                    _state.update { current -> current.copy(chatMessages = (current.chatMessages + incoming).takeLast(200)) }
-                }
+                val changes = chatTimeline.changesFor(batch)
+                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
             }
         }
+    }
+
+    /**
+     * Rebuilds the name-to-url map chat rows match words against. Runs when emotes
+     * load and on every live 7TV change. TV has no per-provider toggles in its
+     * settings, so every provider is on; collisions resolve 7TV > BTTV > FFZ and
+     * channel before global, as on the other apps.
+     */
+    private fun rebuildEmotes() {
+        val map = buildEmoteIndex(
+            prioritizeThirdParty(tpChannelEmotes, ALL_THIRD_PARTY),
+            prioritizeThirdParty(tpGlobalEmotes, ALL_THIRD_PARTY),
+        ).mapValues { it.value.url }
+        _state.update { it.copy(emotes = map) }
+    }
+
+    /** [changes] applied to the chat rows and room modes (see [applying]). */
+    private fun StreamUiState.withChat(changes: List<ChatChange>): StreamUiState {
+        val before = ChatTimelineState(messages = chatMessages, modes = roomModes)
+        val after = before.applying(changes)
+        return if (after === before) this else copy(chatMessages = after.messages, roomModes = after.modes)
     }
 
     /**
@@ -520,11 +623,13 @@ class StreamViewModel(
     override fun onCleared() {
         super.onCleared()
         chatClient.disconnect()
+        sevenTvEventClient.disconnect()
     }
 
     private companion object {
         const val TAG = "StreamViewModel"
         const val MAX_FRESH_SESSION_RETRIES = 1
+        val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
     }
 }
 
@@ -582,6 +687,14 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(chatFontSize = size.sp) }
     }
 
+    fun setTvChatMode(mode: String) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvChatMode = mode) }
+    }
+
+    fun setTvChatOpacity(opacity: Float) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvChatOpacity = opacity) }
+    }
+
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {
         settingsStore.update { it.copy(preferredQuality = quality.name.lowercase()) }
     }
@@ -596,6 +709,11 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setLiveNotifications(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(liveNotifications = enabled) }
+    }
+
+    // PureTvTvApp hands the saved value to the player, which applies it live.
+    fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioNormalizer = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

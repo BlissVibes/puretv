@@ -96,18 +96,19 @@ fun BrowseContent(koin: Koin, onOpenCategory: (gameId: String, gameName: String)
 
 /**
  * A single box-art poster: 3:4 cover that rounds out and lifts on hover, name
- * below in [titleMedium][MaterialTheme.typography]. One interaction source
+ * below in [titleMedium][MaterialTheme.typography]. Also used for Home's
+ * signed-out category shelf. One interaction source
  * drives both the card's lift and the art's radius morph, so hovering
  * anywhere on the tile, art or title, animates the whole thing together.
  */
 @Composable
-private fun GameTile(name: String, boxArtUrl: String, onClick: () -> Unit) {
+internal fun GameTile(name: String, boxArtUrl: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
 
     Column(
-        modifier = Modifier.expressiveClickable(
+        modifier = modifier.expressiveClickable(
             interaction = interaction,
             onClick = onClick,
             restRadius = 0.dp,

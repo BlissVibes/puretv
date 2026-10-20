@@ -1,15 +1,16 @@
-package com.puretv.twitch.desktop.ui.chat
+package com.puretv.twitch.core.chat
 
 import com.puretv.twitch.core.model.ChatMessage
 
 /**
- * Pure helpers for Twitch chat moderation + mention state, extracted from
- * `StreamViewModel` so the tombstoning/highlight rules are unit-testable in
- * isolation (same pattern as [SelfEcho]/[ChatScrollPolicy]).
+ * Pure helpers for Twitch chat moderation + mention state, shared by every app's
+ * chat (through [ChatTimeline]) so the tombstoning/highlight rules are written
+ * once and unit-testable in isolation (same pattern as [buildSelfEcho]).
  *
- * All functions are allocation-conservative: they return the SAME list instance
- * when nothing changed, so an unrelated CLEARCHAT/CLEARMSG doesn't churn the
- * Compose state or force a recomposition.
+ * The list-returning functions are allocation-conservative: they return the SAME
+ * list instance when nothing changed, so an unrelated CLEARCHAT/CLEARMSG doesn't
+ * churn the Compose state or force a recomposition. The `InPlace` variants serve
+ * the batch fold, which already owns a working copy and should not copy again.
  */
 object ChatModeration {
 
@@ -22,7 +23,7 @@ object ChatModeration {
         if (targetLogin.isBlank()) return messages
         var changed = false
         val out = messages.map {
-            if (!it.deleted && !it.isSystem && it.username.equals(targetLogin, ignoreCase = true)) {
+            if (isByUser(it, targetLogin)) {
                 changed = true
                 it.copy(deleted = true)
             } else it
@@ -34,13 +35,45 @@ object ChatModeration {
     fun markMessageDeleted(messages: List<ChatMessage>, targetMessageId: String): List<ChatMessage> {
         var changed = false
         val out = messages.map {
-            if (!it.deleted && it.id == targetMessageId) {
+            if (isMessage(it, targetMessageId)) {
                 changed = true
                 it.copy(deleted = true)
             } else it
         }
         return if (changed) out else messages
     }
+
+    /** [markUserDeleted] on a list the caller owns. Returns true if any row changed. */
+    fun markUserDeletedInPlace(messages: MutableList<ChatMessage>, targetLogin: String): Boolean {
+        if (targetLogin.isBlank()) return false
+        var changed = false
+        for (i in messages.indices) {
+            val m = messages[i]
+            if (isByUser(m, targetLogin)) {
+                messages[i] = m.copy(deleted = true)
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    /** [markMessageDeleted] on a list the caller owns. Returns true if a row changed. */
+    fun markMessageDeletedInPlace(messages: MutableList<ChatMessage>, targetMessageId: String): Boolean {
+        var changed = false
+        for (i in messages.indices) {
+            val m = messages[i]
+            if (isMessage(m, targetMessageId)) {
+                messages[i] = m.copy(deleted = true)
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private fun isByUser(m: ChatMessage, login: String): Boolean =
+        !m.deleted && !m.isSystem && m.username.equals(login, ignoreCase = true)
+
+    private fun isMessage(m: ChatMessage, id: String): Boolean = !m.deleted && m.id == id
 
     /**
      * True when [body] @-mentions the viewer identified by [selfLogin]. Matches the

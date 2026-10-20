@@ -12,6 +12,7 @@ import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
 import com.puretv.twitch.core.stream.StreamResolver
 import com.puretv.twitch.core.stream.TwitchGqlClient
+import com.puretv.twitch.core.stream.TwitchGqlDirectoryClient
 import com.puretv.twitch.core.api.RateLimitedException
 import com.puretv.twitch.core.api.HelixApiException
 import io.ktor.client.HttpClient
@@ -41,6 +42,9 @@ val coreModule = module {
     // Twitch
     single { val holder = get<TokenHolder>(); TwitchApiClient(get()) { holder.current() } }
     single { TwitchGqlClient(get()) }
+    // Anonymous directory reads for signed-out browsing; the repositories only
+    // route here while there is no user token.
+    single { TwitchGqlDirectoryClient(get()) }
     single { StreamResolver(get(), get()) }
 
     // Ad Block — AdBlockConfig is normally provided per-platform from DataStore/settings;
@@ -66,12 +70,12 @@ val coreModule = module {
     factory { com.puretv.twitch.core.emotes.SevenTvEventClient(get()) }
 
     // Repositories
-    single { StreamRepository(get(), get()) }
-    single { ChannelRepository(get()) }
+    single { StreamRepository(get(), get(), get<TwitchGqlDirectoryClient>()) }
+    single { ChannelRepository(get(), get<TwitchGqlDirectoryClient>()) }
     single { UserRepository(get()) }
     single { ChannelStatsRepository(get(), get(), get()) }
     single { com.puretv.twitch.core.stream.VodResolver(get(), get()) }
-    single { com.puretv.twitch.core.repository.VodRepository(get(), get()) }
+    single { com.puretv.twitch.core.repository.VodRepository(get(), get(), get<TwitchGqlDirectoryClient>()) }
 
     // Token holder — wraps whatever encrypted store the platform uses
     // (EncryptedSharedPreferences on Android/TV, AES-encrypted file on Desktop).

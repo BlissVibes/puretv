@@ -32,6 +32,7 @@ fun buildSelfEcho(
     timestamp: Long,
     replyParent: ChatMessage? = null,
     emoteIndex: Map<String, ResolvedEmote> = emptyMap(),
+    userId: String = "",
 ): ChatMessage = ChatMessage(
     id = id,
     channel = channel,
@@ -47,4 +48,5 @@ fun buildSelfEcho(
     isBroadcaster = badges.any { it.setId == "broadcaster" },
     replyParentDisplayName = replyParent?.displayName,
     replyParentBody = replyParent?.message,
+    userId = userId,
 )

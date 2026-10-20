@@ -140,6 +140,9 @@ data class ChatMessage(
     /** This incoming message @-mentions the local viewer; drives row highlighting.
      *  Viewer-relative, so it is computed at receipt (when selfLogin is known). */
     val mentionsSelf: Boolean = false,
+    /** The author's numeric Twitch id (IRC `user-id` tag). Blank when unknown, for
+     *  example on system rows. Looks up per-user extras such as 7TV name paints. */
+    val userId: String = "",
 )
 
 /** A non-base emote drawn over a base emote (7TV zero-width / overlay cosmetics). */
@@ -175,8 +178,25 @@ sealed class ChatEvent {
     data class UserNotice(val systemMessage: String, val raw: ChatMessage?) : ChatEvent()
     data class ClearChat(val targetUser: String?, val durationSeconds: Int?) : ChatEvent()
     data class ClearMessage(val targetMessageId: String) : ChatEvent()
-    data class RoomState(val slowModeSeconds: Int?, val emoteOnly: Boolean) : ChatEvent()
-    data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
+    /**
+     * The room's chat modes. Twitch sends every mode on join, then a partial
+     * update carrying only the tag that changed, so null means "unchanged by this
+     * update" and the receiver merges (see `ChatRoomModes.merge`).
+     */
+    data class RoomState(
+        val slowModeSeconds: Int? = null,
+        val emoteOnly: Boolean? = null,
+        /** -1 off, 0 any follower, N minutes of following. */
+        val followersOnlyMinutes: Int? = null,
+        val subsOnly: Boolean? = null,
+    ) : ChatEvent()
+    /** The viewer's own identity. [userId] comes only with GLOBALUSERSTATE; USERSTATE leaves it blank. */
+    data class SelfState(
+        val displayName: String,
+        val color: String,
+        val badges: List<Badge>,
+        val userId: String = "",
+    ) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
     /**
      * A NOTICE from Twitch addressed to this viewer, usually about a message they
@@ -198,6 +218,12 @@ data class ChannelEmote(
 )
 
 // ---- Settings ----
+
+/** [AppSettings.tvChatMode]: chat floats over the video (the default). */
+const val TV_CHAT_OVER_VIDEO = "overlay"
+
+/** [AppSettings.tvChatMode]: chat gets its own column and the video shrinks beside it. */
+const val TV_CHAT_BESIDE_VIDEO = "side"
 
 /** GPU video upscaling mode. STANDARD/ANIME are effective only on the mpv
  *  backend (VLC ignores them); that gating lives in the player + settings UI,
@@ -269,4 +295,20 @@ data class AppSettings(
     val accessToken: String = "",
     val username: String = "",
     val userId: String = "",
+
+    // TV chat placement (TV only)
+    // Where chat sits: TV_CHAT_OVER_VIDEO floats it over the picture,
+    // TV_CHAT_BESIDE_VIDEO shrinks the video to make room.
+    val tvChatMode: String = TV_CHAT_OVER_VIDEO,
+    // How solid the chat panel is, from 0.4 (see-through) to 1.
+    val tvChatOpacity: Float = 0.85f,
+
+    // 7TV name paints (Windows only for now)
+    // Draw chatters' 7TV name paints (gradient names) in chat.
+    val showSevenTvPaints: Boolean = true,
+
+    // Audio normalizer (Wave 4): evens out loud and quiet audio with the shared
+    // curve in `audio.AudioNormalizerProfile`. Off by default because it changes
+    // the broadcaster's mix. Instant on mpv, phone and TV; VLC after a restart.
+    val audioNormalizer: Boolean = false,
 )

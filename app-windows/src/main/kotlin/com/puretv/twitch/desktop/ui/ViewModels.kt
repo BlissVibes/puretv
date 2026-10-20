@@ -392,10 +392,10 @@ data class StreamUiState(
 private const val NAME_PAINT_BATCH_MS = 500L
 
 /** Stream failures no retry can fix: say why straight away. */
-private val FINAL_FAILURES = setOf(FailureKind.OFFLINE, FailureKind.RESTRICTED, FailureKind.REGION_BLOCKED)
+internal val FINAL_FAILURES = setOf(FailureKind.OFFLINE, FailureKind.RESTRICTED, FailureKind.REGION_BLOCKED)
 
 /** Pauses before each automatic retry of a failed stream on Windows. */
-private val AUTO_RETRY_DELAYS_MS = longArrayOf(2_000, 5_000, 10_000)
+internal val AUTO_RETRY_DELAYS_MS = longArrayOf(2_000, 5_000, 10_000)
 
 class StreamViewModel(
     private val channelLogin: String,

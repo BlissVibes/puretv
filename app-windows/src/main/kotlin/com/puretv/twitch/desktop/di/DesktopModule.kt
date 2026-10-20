@@ -36,6 +36,7 @@ import com.puretv.twitch.desktop.ui.ChannelViewModel
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
 import com.puretv.twitch.desktop.ui.HomeViewModel
 import com.puretv.twitch.desktop.ui.LoginViewModel
+import com.puretv.twitch.desktop.ui.MultiViewViewModel
 import com.puretv.twitch.desktop.ui.SearchViewModel
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
@@ -168,6 +169,9 @@ val desktopModule = module {
     factory { SearchViewModel(get()) }
     factory { (channelLogin: String) ->
         StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    factory { (channelLogin: String) ->
+        MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get())
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }

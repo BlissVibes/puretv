@@ -71,12 +71,16 @@ class DynamicRangeCompressor {
 
     /** Forgets the audio so far (a seek, a new stream), keeping the format. */
     fun reset() {
+        resetFollowers()
+        mix = if (enabled) 1f else 0f
+    }
+
+    private fun resetFollowers() {
         envelope = 0f
         gain = makeup
         gainStep = 0f
         blockLeft = 0
         limiterGain = 1f
-        mix = if (enabled) 1f else 0f
     }
 
     /** True when turned off and faded out: the audio can be passed through as is. */
@@ -87,10 +91,18 @@ class DynamicRangeCompressor {
      * sample across its channels, full scale 1.0). Multiply every channel of the
      * frame by it; [peak] times the result never exceeds the ceiling.
      */
-    fun nextGain(peak: Float): Float {
+    fun nextGain(rawPeak: Float): Float {
         val on = enabled
         if (!on && mix == 0f) return 1f
         mix = if (on) minOf(1f, mix + fadeStep) else maxOf(0f, mix - fadeStep)
+        if (!on && mix == 0f) {
+            // Faded out: forget the followers, so switching back on starts clean
+            // instead of from the level of whatever played before.
+            resetFollowers()
+            return 1f
+        }
+        // A NaN or infinite sample (a broken decoder) must not poison the envelope for good.
+        val peak = if (rawPeak.isFinite()) rawPeak else 0f
 
         val coef = if (peak > envelope) attackCoef else releaseCoef
         envelope = peak + coef * (envelope - peak)
@@ -103,14 +115,14 @@ class DynamicRangeCompressor {
         gain += gainStep
 
         // Fading in or out blends toward unity gain rather than switching.
-        var g = 1f + mix * (gain - 1f)
+        val g = 1f + mix * (gain - 1f)
 
         // Limiter: let go slowly, clamp instantly.
         if (limiterGain < 1f) limiterGain = 1f - limiterReleaseCoef * (1f - limiterGain)
         val out = peak * g * limiterGain
         if (out > ceiling) limiterGain = ceiling / (peak * g)
-        g *= limiterGain
-        return g
+        // The limiter fades with the rest, so there is no step when it ends.
+        return g * (1f + mix * (limiterGain - 1f))
     }
 
     /** Processes [frameCount] interleaved 16-bit frames of [samples] in place, from [offset]. */

@@ -142,6 +142,55 @@ class DynamicRangeCompressorTest {
     }
 
     @Test
+    fun nonFinitePeaksDoNotPoisonTheEnvelope() {
+        val c = compressor()
+        c.nextGain(Float.NaN)
+        c.nextGain(Float.POSITIVE_INFINITY)
+        val audio = sine(0.01f, seconds = 0.2)
+        val input = audio.copyOf()
+        c.process(audio)
+        for (i in audio.indices) {
+            assertEquals(input[i] * makeup, audio[i], 1e-4f, "sample $i")
+        }
+    }
+
+    @Test
+    fun noStepWhenALimitedSignalFadesOut() {
+        val c = compressor()
+        c.process(sine(0.9f, seconds = 0.3))
+        c.process(FloatArray(2 * 4_800) { 1f }) // pins the limiter well below unity
+        c.enabled = false
+        var last = Float.NaN
+        var steps = 0
+        while (!c.isBypassed && steps < rate) {
+            val g = c.nextGain(1f)
+            if (!last.isNaN()) assertTrue(abs(g - last) < 0.01f, "gain stepped from $last to $g")
+            last = g
+            steps++
+        }
+        assertTrue(c.isBypassed)
+        assertTrue(abs(c.nextGain(1f) - last) < 0.01f, "step at the end of the fade")
+    }
+
+    @Test
+    fun switchingBackOnStartsCleanInsteadOfFromStaleLevels() {
+        val c = compressor()
+        c.process(sine(0.9f, seconds = 0.5))
+        c.enabled = false
+        c.process(sine(0.9f, seconds = 0.2))
+        assertTrue(c.isBypassed)
+        c.enabled = true
+        val audio = sine(0.01f, seconds = 0.3)
+        val input = audio.copyOf()
+        c.process(audio)
+        // Once faded back in, quiet audio gets the plain makeup, not a dip left over from the loud audio.
+        val from = (rate * 0.1).toInt() * 2
+        for (i in from until audio.size) {
+            assertEquals(input[i] * makeup, audio[i], 1e-4f, "sample $i")
+        }
+    }
+
+    @Test
     fun clampsInsteadOfWrapping() {
         assertEquals(Short.MAX_VALUE, DynamicRangeCompressor.scale16(30_000, 2f))
         assertEquals(Short.MIN_VALUE, DynamicRangeCompressor.scale16(-30_000, 2f))

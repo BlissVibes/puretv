@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -62,6 +63,7 @@ import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.ui.VodLaunch
 import com.puretv.twitch.android.ui.VodPlayerUiState
 import com.puretv.twitch.android.ui.VodPlayerViewModel
+import com.puretv.twitch.android.ui.components.ChatPanel
 import com.puretv.twitch.android.ui.components.ExpressiveButton
 import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
@@ -94,6 +96,39 @@ fun VodPlayerScreen(launch: VodLaunch, onBack: () -> Unit) {
     val c = PureTvTheme.colors
 
     var fullscreen by rememberSaveable { mutableStateOf(false) }
+    var chatVisible by rememberSaveable { mutableStateOf(true) }
+    val showChat = chatVisible && !fullscreen && !isInPip
+
+    // The replay follows the playback position. Polled once a second, and only
+    // while the pane is on screen, so a hidden chat costs no wakeups.
+    val twitchPlayer = koinInject<TwitchPlayer>()
+    LaunchedEffect(showChat) {
+        while (showChat) {
+            viewModel.onChatPosition(twitchPlayer.exoPlayer.currentPosition.coerceAtLeast(0L) / 1000)
+            delay(1_000)
+        }
+    }
+    val chatMessages by viewModel.chatMessages.collectAsState()
+    val chatError by viewModel.chatError.collectAsState()
+    val chatPane: @Composable (Modifier) -> Unit = { modifier ->
+        Column(modifier = modifier) {
+            if (chatError != null) {
+                Text(
+                    chatError.orEmpty(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                )
+            }
+            ChatPanel(
+                messages = chatMessages,
+                onSend = {},
+                canSend = false,
+                noComposerText = "Chat replay",
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
+        }
+    }
 
     // Same immersive handling as the live player: bars hidden in fullscreen,
     // always restored on the way out.
@@ -123,6 +158,8 @@ fun VodPlayerScreen(launch: VodLaunch, onBack: () -> Unit) {
             isInPip = isInPip,
             onBack = onBack,
             onToggleFullscreen = { fullscreen = !fullscreen },
+            chatVisible = chatVisible,
+            onToggleChat = { chatVisible = !chatVisible },
             onRetry = viewModel::retry,
             onSelectQuality = viewModel::setQuality,
             onResume = viewModel::resume,
@@ -132,13 +169,15 @@ fun VodPlayerScreen(launch: VodLaunch, onBack: () -> Unit) {
     }
 
     if (isLandscape || fullscreen || isInPip) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black).navigationBarsPadding()) {
-            playerArea(Modifier.fillMaxSize())
+        Row(modifier = Modifier.fillMaxSize().background(Color.Black).navigationBarsPadding()) {
+            playerArea(Modifier.weight(if (showChat) 0.62f else 1f).fillMaxHeight())
+            if (showChat) chatPane(Modifier.weight(0.38f).fillMaxHeight().background(c.surfaceLowest))
         }
     } else {
         Column(modifier = Modifier.fillMaxSize().background(c.surfaceLowest).navigationBarsPadding()) {
             playerArea(Modifier.fillMaxWidth().aspectRatio(16f / 9f))
             VodTitleBlock(launch = launch)
+            if (showChat) chatPane(Modifier.weight(1f).fillMaxWidth())
         }
     }
 }
@@ -166,6 +205,8 @@ private fun VodPlayerArea(
     isInPip: Boolean,
     onBack: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    chatVisible: Boolean,
+    onToggleChat: () -> Unit,
     onRetry: () -> Unit,
     onSelectQuality: (StreamQuality) -> Unit,
     onResume: () -> Unit,
@@ -296,6 +337,12 @@ private fun VodPlayerArea(
                         modifier = Modifier.align(Alignment.TopEnd).then(topInset).padding(6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
+                        VodScrimButton(
+                            icon = ExpressiveIcons.Chat,
+                            contentDescription = if (chatVisible) "Hide chat" else "Show chat",
+                            onClick = onToggleChat,
+                            tint = if (chatVisible) PureTvTheme.colors.primary else Color.White,
+                        )
                         VodQualityButton(quality = state.quality, onSelect = onSelectQuality)
                         VodScrimButton(
                             icon = if (fullscreen) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,

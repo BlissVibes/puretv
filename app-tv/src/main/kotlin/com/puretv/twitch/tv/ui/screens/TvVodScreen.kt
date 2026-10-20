@@ -64,6 +64,7 @@ import com.puretv.twitch.tv.ui.TvVodViewModel
 import com.puretv.twitch.tv.ui.VodLaunch
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
 import com.puretv.twitch.tv.ui.components.StoryboardPreview
+import com.puretv.twitch.tv.ui.components.TvChatOverlay
 import com.puretv.twitch.tv.ui.components.TvButtonStyle
 import com.puretv.twitch.tv.ui.components.TvExpressiveButton
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
@@ -109,6 +110,17 @@ fun TvVodScreen(
     var durationMs by remember { mutableLongStateOf(0L) }
     // Where Left/Right/FF/RW have moved to; the seek fires after the keys settle.
     var pendingMs by remember { mutableStateOf<Long?>(null) }
+    var chatVisible by remember { mutableStateOf(false) }
+    val chatMessages by viewModel.chatMessages.collectAsState()
+
+    // The chat replay follows the playback position. Polled once a second, and
+    // only while the overlay is on screen.
+    LaunchedEffect(chatVisible) {
+        while (chatVisible) {
+            viewModel.onChatPosition(player.currentPosition.coerceAtLeast(0L) / 1000)
+            delay(1_000)
+        }
+    }
 
     LaunchedEffect(Unit) {
         runCatching { rootFocusRequester.requestFocus() }
@@ -215,6 +227,9 @@ fun TvVodScreen(
                 when (event.key) {
                     Key.DirectionRight -> { scrub(VodScrub.stepFor(event.nativeKeyEvent.repeatCount)); true }
                     Key.DirectionLeft -> { scrub(-VodScrub.stepFor(event.nativeKeyEvent.repeatCount)); true }
+                    Key.DirectionUp -> { if (!chatVisible) { chatVisible = true; true } else false }
+                    Key.DirectionDown -> { if (chatVisible) { chatVisible = false; true } else false }
+                    Key.Menu -> { chatVisible = !chatVisible; true }
                     Key.MediaFastForward -> { scrub(VodScrub.JUMP_MS); true }
                     Key.MediaRewind -> { scrub(-VodScrub.JUMP_MS); true }
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
@@ -281,6 +296,12 @@ fun TvVodScreen(
                 color = Color.White.copy(alpha = 0.8f),
             )
         }
+
+        TvChatOverlay(
+            visible = chatVisible,
+            messages = chatMessages,
+            modifier = Modifier.fillMaxSize(),
+        )
 
         if (offer != null && error == null) {
             Row(
@@ -379,7 +400,7 @@ private fun VodBar(
                 )
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "Left and right to skip, OK to pause",
+                    text = "Left and right to skip, OK to pause, up for chat",
                     style = PureTvTvType.data,
                     color = Color.White.copy(alpha = 0.6f),
                 )

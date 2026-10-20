@@ -15,10 +15,15 @@ import com.puretv.twitch.android.data.db.toEntity
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.model.ChatMessage
+import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.VodRepository
 import com.puretv.twitch.core.stream.Storyboard
 import com.puretv.twitch.core.vod.ResumePolicy
+import com.puretv.twitch.core.vod.VodChatReplayController
 import com.puretv.twitch.core.vod.VodFailures
+import com.puretv.twitch.core.vod.loadVodEmoteIndex
 import com.puretv.twitch.core.vod.WatchProgress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,9 +77,23 @@ class VodPlayerViewModel(
     private val backgroundPlayback: BackgroundPlayback,
     private val settingsStore: AppSettingsStore,
     private val progressDao: VodProgressDao,
+    channelRepository: ChannelRepository,
+    emoteRepository: EmoteRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(VodPlayerUiState())
     val state: StateFlow<VodPlayerUiState> = _state.asStateFlow()
+
+    /** Chat as it was said, following the playback position (fed by [onChatPosition]). */
+    private val chatReplay = VodChatReplayController(
+        scope = viewModelScope,
+        fetch = { offsetSeconds -> vodRepository.videoComments(launch.vodId, offsetSeconds) },
+        loadEmoteIndex = { loadVodEmoteIndex(launch.channelLogin, channelRepository, emoteRepository) },
+    )
+    val chatMessages: StateFlow<List<ChatMessage>> = chatReplay.messages
+    val chatError: StateFlow<String?> = chatReplay.error
+
+    /** The screen ticks this about once a second, and only while the chat pane is showing. */
+    fun onChatPosition(seconds: Long) = chatReplay.onPosition(seconds)
 
     private val gaveUpListener: (PlaybackException) -> Unit = { onPlaybackGaveUp() }
     private var freshSessionRetries = 0

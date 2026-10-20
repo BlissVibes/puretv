@@ -103,7 +103,7 @@ val tvModule = module {
     viewModel { SearchViewModel(get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get(), get()) }
-    viewModel { (launch: VodLaunch) -> TvVodViewModel(launch, get(), get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> TvVodViewModel(launch, get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     // Device Code Grant flow: (httpClient, settingsStore, userRepository).
     viewModel { LoginViewModel(get(), get(), get()) }

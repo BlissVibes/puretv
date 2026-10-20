@@ -77,6 +77,20 @@ class SingleInstanceTest {
     }
 
     @Test
+    fun aCopyThatStoppedListeningLeavesALaterRequestForTheNextCopy() {
+        // Quit, then an immediate relaunch: the dying copy must not delete the request.
+        val dying = SingleInstance(lockFile, focusExistingWindow = { false })
+        assertTrue(dying.acquire())
+        var activated = 0
+        dying.listenForActivation { activated++ }
+        dying.stopListening()
+
+        val relaunch = SingleInstance(lockFile, focusExistingWindow = { false })
+        assertTrue(relaunch.acquire(waitForClosingCopyMs = 1_000), "nobody answered, so the relaunch runs itself")
+        assertEquals(0, activated)
+    }
+
+    @Test
     fun anUnusableLockFileNeverStopsTheApp() {
         val notAFile = File(dir, "a-directory").apply { mkdirs() }
         assertTrue(SingleInstance(notAFile, focusExistingWindow = { true }).acquire())

@@ -45,6 +45,7 @@ class SingleInstance(
     private var channel: FileChannel? = null
     private var lock: FileLock? = null
     @Volatile private var watcher: WatchService? = null
+    @Volatile private var listening = false
 
     private val requestFile get() = File(activationDir, REQUEST_NAME)
 
@@ -88,6 +89,7 @@ class SingleInstance(
             }
         }.getOrNull() ?: return
         watcher = service
+        listening = true
         Thread({
             // A request written between acquire() and the watch starting is answered too.
             consumeRequest(onActivate)
@@ -104,14 +106,20 @@ class SingleInstance(
         }, "puretv-activation").apply { isDaemon = true }.start()
     }
 
-    /** Stops [listenForActivation]. Tests only: the watch otherwise lives as long as the app. */
+    /**
+     * Stops [listenForActivation]. Called as soon as the app is quitting: a launch
+     * that arrives while this copy tears down must not have its request answered
+     * (deleted) by a copy that is about to exit, or it would leave and nothing
+     * would be running. Unanswered, it waits for the lock and starts normally.
+     */
     fun stopListening() {
+        listening = false
         runCatching { watcher?.close() }
         watcher = null
     }
 
     private fun consumeRequest(onActivate: () -> Unit) {
-        if (requestFile.exists() && runCatching { requestFile.delete() }.getOrDefault(false)) {
+        if (listening && requestFile.exists() && runCatching { requestFile.delete() }.getOrDefault(false)) {
             runCatching(onActivate)
         }
     }

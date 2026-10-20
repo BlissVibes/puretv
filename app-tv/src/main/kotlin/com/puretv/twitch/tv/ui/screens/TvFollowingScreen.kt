@@ -39,6 +39,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -518,7 +519,8 @@ private fun String.streamThumb(width: Int, height: Int): String? =
  */
 private fun Modifier.onMenuKey(action: () -> Unit): Modifier = onPreviewKeyEvent { event ->
     if (event.key == Key.Menu) {
-        if (event.type == KeyEventType.KeyDown) action()
+        // A held key repeats; only the first press toggles, or it would flip back and forth.
+        if (event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) action()
         true
     } else {
         false

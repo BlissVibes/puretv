@@ -167,7 +167,7 @@ class TwitchGqlDirectoryClient(
     /** A channel's own badge sets (subscriber tiers, bits, ...). Empty for an unknown id. */
     suspend fun channelBadgeSets(broadcasterId: String): List<ChatBadgeSetDto> {
         if (broadcasterId.isBlank()) return emptyList()
-        val data: GqlChatUserData = execute(CHANNEL_CHAT_QUERY, buildJsonObject { put("id", broadcasterId) })
+        val data: GqlChatUserData = execute(CHANNEL_BADGES_QUERY, buildJsonObject { put("id", broadcasterId) })
         return data.user?.broadcastBadges.orEmpty().toBadgeSets()
     }
 
@@ -183,7 +183,7 @@ class TwitchGqlDirectoryClient(
      */
     suspend fun channelEmotes(broadcasterId: String): List<ChannelEmote> {
         if (broadcasterId.isBlank()) return emptyList()
-        val data: GqlChatUserData = execute(CHANNEL_CHAT_QUERY, buildJsonObject { put("id", broadcasterId) })
+        val data: GqlChatUserData = execute(CHANNEL_EMOTES_QUERY, buildJsonObject { put("id", broadcasterId) })
         return data.user?.subscriptionProducts.orEmpty().filterNotNull().flatMap { it.emotes.orEmpty() }.toTwitchEmotes()
     }
 
@@ -268,6 +268,9 @@ internal const val GLOBAL_BADGES_QUERY =
 internal const val GLOBAL_EMOTES_QUERY =
     "query { emoteSet(id: \"0\") { emotes { id token assetType } } }"
 
-internal const val CHANNEL_CHAT_QUERY =
-    "query(\$id: ID!) { user(id: \$id) { broadcastBadges { setID version title imageURL(size: DOUBLE) } " +
-        "subscriptionProducts { emotes { id token assetType } } } }"
+// Two queries on purpose: badges and sub emotes fail independently, and one must not take the other down.
+internal const val CHANNEL_BADGES_QUERY =
+    "query(\$id: ID!) { user(id: \$id) { broadcastBadges { setID version title imageURL(size: DOUBLE) } } }"
+
+internal const val CHANNEL_EMOTES_QUERY =
+    "query(\$id: ID!) { user(id: \$id) { subscriptionProducts { emotes { id token assetType } } } }"

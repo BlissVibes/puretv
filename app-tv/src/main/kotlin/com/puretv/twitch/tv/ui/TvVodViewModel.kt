@@ -147,7 +147,7 @@ class TvVodViewModel(
             .onFailure { e ->
                 var message = VodFailures.message(e)
                 // A deleted video can never be resumed, so its Continue watching card goes too.
-                if (message == VodFailures.GONE) {
+                if (VodFailures.isConfirmedGone(e)) {
                     val removed = runCatching {
                         val had = progressDao.get(launch.vodId) != null
                         if (had) progressDao.delete(launch.vodId)

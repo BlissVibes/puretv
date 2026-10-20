@@ -309,6 +309,9 @@ class TvFollowingViewModel(
 
     private var loadJob: Job? = null
 
+    // Bumped on every sign-out; a load that started under an older count is stale.
+    @Volatile private var signOutCount = 0
+
     /** Lowercased logins whose go-live banners are muted (press Menu on a channel to change). */
     val mutedLogins: StateFlow<Set<String>> = settings.flow
         .map { it.notifyMutedLogins }
@@ -328,6 +331,9 @@ class TvFollowingViewModel(
             settings.flow.collect { prefs ->
                 val loggedIn = prefs.accessToken.isNotBlank()
                 if (!loggedIn) {
+                    // A load already in flight belongs to the account that just left; its
+                    // answer must not land after this wipe (see loadOnce).
+                    signOutCount++
                     // Signing out drops the last account's follows at once, so the next
                     // account never sees them while its own list loads.
                     _state.update { it.copy(isLoggedIn = false, isLoading = false, live = emptyList(), offline = emptyList(), errored = false) }
@@ -353,16 +359,18 @@ class TvFollowingViewModel(
             _state.update { it.copy(isLoggedIn = false, isLoading = false, live = emptyList(), offline = emptyList()) }
             return
         }
+        val startedAt = signOutCount
         _state.update { it.copy(isLoggedIn = true, isLoading = it.live.isEmpty() && it.offline.isEmpty()) }
         runCatching {
             source.load(userId, emptyList()) { partial ->
+                if (signOutCount != startedAt) return@load
                 // Fast partial: live channels are in (avatars may still be loading). Drop
                 // the loading state now so the list appears without waiting on avatars.
                 _state.update { it.copy(isLoading = false, errored = false, live = partial.live, offline = partial.offline) }
             }
         }
-            .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-            .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
+            .onSuccess { full -> if (signOutCount == startedAt) _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
+            .onFailure { e -> if (signOutCount == startedAt) _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
     }
 }
 

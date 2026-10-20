@@ -32,6 +32,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -185,17 +187,33 @@ private fun PastBroadcastsRow(
         // Where focus goes when "More" has done its job. Clicking More remembers how many
         // cards there were; once the page lands (or More goes away), focus moves to the
         // first new card, or the last one if nothing came, rather than dropping to the
-        // screen root. Any card taking focus on its own cancels the hand-off.
+        // screen root. Any card taking focus on its own cancels the hand-off, and so does
+        // focus leaving the row while the page is still loading.
         val landing = remember { FocusRequester() }
         var pendingFrom by remember { mutableStateOf<Int?>(null) }
-        val landingIndex = pendingFrom?.takeIf { it < videos.size } ?: videos.lastIndex
+        var landingIndex by remember { mutableStateOf<Int?>(null) }
+        val stillLoading by rememberUpdatedState(loading)
         LaunchedEffect(videos.size, loading, hasMore) {
             val from = pendingFrom ?: return@LaunchedEffect
             if (loading) return@LaunchedEffect
+            if (videos.size > from || !hasMore) {
+                landingIndex = if (videos.size > from) from else videos.lastIndex
+                // The card needs a frame to take the requester before it can be asked for focus.
+                withFrameNanos { }
+                if (pendingFrom != null && runCatching { landing.requestFocus() }.isFailure) {
+                    withFrameNanos { }
+                    if (pendingFrom != null) runCatching { landing.requestFocus() }
+                }
+            }
             pendingFrom = null
-            if (videos.size > from || !hasMore) runCatching { landing.requestFocus() }
+            landingIndex = null
         }
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // A More card that has gone takes the focus with it, but by then the page has
+            // loaded; leaving mid-load means the viewer went elsewhere, so let the hand-off go.
+            modifier = Modifier.onFocusChanged { if (!it.hasFocus && stillLoading) pendingFrom = null },
+        ) {
             itemsIndexed(videos, key = { _, v -> v.id }) { index, video ->
                 TvVideoCard(
                     modifier = (if (index == landingIndex) Modifier.focusRequester(landing) else Modifier)

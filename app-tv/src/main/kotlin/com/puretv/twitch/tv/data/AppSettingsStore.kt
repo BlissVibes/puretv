@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 // A half-written preferences file (a process killed mid-write, and the in-app
 // updater kills this one by definition) otherwise makes DataStore throw on
@@ -137,7 +139,12 @@ class AppSettingsStore(
             )
         }
 
-    suspend fun update(transform: (AppSettings) -> AppSettings) {
+    // One update at a time: each reads the current settings, changes them and writes every
+    // key back, so two overlapping updates (rapid Menu presses on Following) would otherwise
+    // both start from the same snapshot and the later write would undo the earlier one.
+    private val updateLock = Mutex()
+
+    suspend fun update(transform: (AppSettings) -> AppSettings): Unit = updateLock.withLock {
         val current = flow.first()
         val next = transform(current)
 

@@ -56,6 +56,7 @@ class SignedOutChatRoutingTest {
     private fun harness(
         gqlStatus: HttpStatusCode = HttpStatusCode.OK,
         wired: Boolean = true,
+        failEmotes: Boolean = false,
         token: () -> String?,
     ): Harness {
         val helix = CallCounter()
@@ -71,7 +72,8 @@ class SignedOutChatRoutingTest {
                     val body = (request.body as io.ktor.http.content.TextContent).text
                     val reply = when {
                         "emoteSet" in body -> gqlGlobalEmotes
-                        "broadcastBadges" in body -> gqlChannel
+                        "subscriptionProducts" in body && failEmotes -> """{"errors":[{"message":"service error"}]}"""
+                        "subscriptionProducts" in body || "broadcastBadges" in body -> gqlChannel
                         else -> gqlGlobalBadges
                     }
                     respond(reply, gqlStatus, jsonHeaders)
@@ -134,5 +136,12 @@ class SignedOutChatRoutingTest {
         assertEquals(null, BadgeRepository(h.api).loadForChannel("1").resolve("moderator", "1"))
         assertEquals(emptyList(), h.api.getGlobalEmotes())
         assertEquals(emptyList(), h.api.getChannelTwitchEmotes("1"))
+    }
+
+    @Test fun failingEmotesDoNotTakeTheChannelBadgesDown() = runTest {
+        val h = harness(failEmotes = true) { null }
+        assertEquals(emptyList(), h.api.getChannelTwitchEmotes("37402112"))
+        val index = BadgeRepository(h.api).loadForChannel("37402112")
+        assertEquals("3-Month Subscriber", index.resolve("subscriber", "3")?.title)
     }
 }

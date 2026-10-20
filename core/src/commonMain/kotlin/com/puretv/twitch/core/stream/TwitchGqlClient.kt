@@ -14,6 +14,9 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.jsonObject
 
 /**
  * SECTION 03.4 [CRITICAL] — Helix does not expose a playable stream URL.
@@ -76,7 +79,13 @@ class TwitchGqlClient(
         )
         val payload = json.decodeFromString<GqlEnvelope<PlaybackAccessTokenData>>(response)
         val token = payload.data?.videoPlaybackAccessToken
-            ?: throw GqlPlaybackTokenException("VOD PlaybackAccessToken returned no token")
+            ?: throw if (hasGqlErrors(response)) {
+                // An integrity check, rate limit or hiccup: the video may be perfectly fine.
+                GqlPlaybackTokenException("VOD PlaybackAccessToken returned no token, GQL reported errors")
+            } else {
+                // A clean answer with no video behind the id: it was deleted.
+                GqlVideoMissingException("VOD PlaybackAccessToken returned no token and no errors")
+            }
         return StreamToken(value = token.value, signature = token.signature)
     }
 
@@ -142,7 +151,16 @@ class TwitchGqlClient(
     }.body()
 }
 
-class GqlPlaybackTokenException(message: String) : Exception(message)
+open class GqlPlaybackTokenException(message: String) : Exception(message)
+
+/** GQL answered cleanly (no `errors`) but has no video for the id, so it is gone for good. */
+class GqlVideoMissingException(message: String) : GqlPlaybackTokenException(message)
+
+/** True when the raw GQL body carries a non-empty `errors` array (or cannot be read at all). */
+private fun hasGqlErrors(response: String): Boolean = runCatching {
+    val errors = Json.parseToJsonElement(response).jsonObject["errors"]
+    errors != null && errors !is JsonNull && !(errors is JsonArray && errors.isEmpty())
+}.getOrDefault(true)
 
 /**
  * The FULL inline PlaybackAccessToken GraphQL operation (the same one Twitch's

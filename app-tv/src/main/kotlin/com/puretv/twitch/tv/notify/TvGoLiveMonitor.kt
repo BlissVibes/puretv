@@ -58,7 +58,15 @@ class TvGoLiveMonitor(
             settingsStore.value.flow
                 .map { it.liveNotifications && it.accessToken.isNotBlank() && it.userId.isNotBlank() }
                 .distinctUntilChanged()
-                .collectLatest { active -> if (active) monitor.value.pollEvery(POLL_INTERVAL_MS) }
+                .collectLatest { active ->
+                    if (active) {
+                        monitor.value.pollEvery(POLL_INTERVAL_MS)
+                    } else {
+                        // Banners switched off or signed out: the first poll after they
+                        // resume seeds silently instead of announcing a backlog.
+                        monitor.value.alertsStopped()
+                    }
+                }
         }
     }
 

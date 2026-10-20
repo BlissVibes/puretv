@@ -52,6 +52,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.media3.common.C
@@ -102,11 +106,29 @@ fun VodPlayerScreen(launch: VodLaunch, onBack: () -> Unit) {
     // The replay follows the playback position. Polled once a second, and only
     // while the pane is on screen, so a hidden chat costs no wakeups.
     val twitchPlayer = koinInject<TwitchPlayer>()
+    val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(showChat) {
-        while (showChat) {
-            viewModel.onChatPosition(twitchPlayer.exoPlayer.currentPosition.coerceAtLeast(0L) / 1000)
-            delay(1_000)
+        // Not while the screen is stopped (app in the background, screen off).
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (showChat) {
+                viewModel.onChatPosition(twitchPlayer.exoPlayer.currentPosition.coerceAtLeast(0L) / 1000)
+                delay(1_000)
+            }
         }
+    }
+
+    // A go-live stream can be stacked on this video and empty the shared player on
+    // its way out; coming back in front, the video starts again where it was.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> viewModel.onScreenPaused()
+                Lifecycle.Event.ON_RESUME -> viewModel.onScreenResumed()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
     val chatMessages by viewModel.chatMessages.collectAsState()
     val chatError by viewModel.chatError.collectAsState()
@@ -360,7 +382,14 @@ private fun VodPlayerArea(
                             icon = if (isPlaying) ExpressiveIcons.Pause else ExpressiveIcons.Play,
                             contentDescription = if (isPlaying) "Pause" else "Play",
                             onClick = {
-                                if (player.isPlaying) player.pause() else player.play()
+                                if (player.isPlaying) {
+                                    player.pause()
+                                } else {
+                                    // After the notification's Stop the player is idle: it has to be
+                                    // prepared again, or Play does nothing.
+                                    if (player.playbackState == Player.STATE_IDLE) player.prepare()
+                                    player.play()
+                                }
                                 lastTouchAt = System.currentTimeMillis()
                             },
                             boxSize = 64,

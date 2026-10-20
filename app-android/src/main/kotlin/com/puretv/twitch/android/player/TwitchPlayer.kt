@@ -105,7 +105,9 @@ class TwitchPlayer(
         val quality: () -> StreamQuality?,
     )
 
-    private val ownership = PlayOwnership<PlayTicket>()
+    // Stream tickets and VOD owners share one claim, so a stream stacked on a VOD
+    // (a go-live alert) and the VOD under it never stop each other by mistake.
+    private val ownership = PlayOwnership<Any>()
 
     /**
      * Stops playback and clears the callbacks, but only if [ticket] is still the one
@@ -317,7 +319,13 @@ class TwitchPlayer(
      * (see [plainHttpClient]), no live configuration, no latency sampling.
      * Seeking and resuming go through the player's own seekTo, never a reload.
      */
-    fun playVod(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY, startPositionMs: Long = 0L) {
+    fun playVod(
+        url: String,
+        metadata: MediaMetadata = MediaMetadata.EMPTY,
+        startPositionMs: Long = 0L,
+        owner: Any? = null,
+    ) {
+        owner?.let(ownership::claim)
         errorRetries = 0
         mainHandler.removeCallbacks(retryRunnable)
         mainHandler.removeCallbacks(latencySample)
@@ -329,6 +337,21 @@ class TwitchPlayer(
             prepare()
             play()
         }
+    }
+
+    /** True while [owner] (a VOD view model) is the one the player plays for. */
+    fun ownsVod(owner: Any): Boolean = ownership.isOwner(owner)
+
+    /**
+     * Stops playback, but only if [owner] is still the one the player plays for: a
+     * VOD that was cleared after another video or stream took the player changes
+     * nothing.
+     */
+    fun stopIfVodOwner(owner: Any): Boolean {
+        if (!ownership.release(owner)) return false
+        stop()
+        onGaveUp = null
+        return true
     }
 
     // Audio only, by the viewer's pick or because the app is in the background.

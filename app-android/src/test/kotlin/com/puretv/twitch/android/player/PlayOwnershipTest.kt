@@ -30,6 +30,28 @@ class PlayOwnershipTest {
     }
 
     @Test
+    fun aVideoClearedAfterAnotherVideoStartedLeavesTheSecondOneAlone() {
+        // Video A is open, video B starts, then A's view model is cleared.
+        val ownership = PlayOwnership<Any>()
+        ownership.claim(a)
+        ownership.claim(b)
+        assertFalse(ownership.isOwner(a))
+        assertFalse(ownership.release(a), "A must not stop B")
+        assertTrue(ownership.isOwner(b))
+    }
+
+    @Test
+    fun aStreamStackedOnAVideoTakesTheClaimAndLeavesItBehind() {
+        val ownership = PlayOwnership<Any>()
+        val stream = Any()
+        ownership.claim(a)
+        ownership.claim(stream)
+        assertFalse(ownership.isOwner(a), "the video has to start playing again when it is back in front")
+        assertTrue(ownership.release(stream))
+        assertFalse(ownership.isOwner(a))
+    }
+
+    @Test
     fun aViewModelThatNeverPlayedCannotStopAnything() {
         val ownership = PlayOwnership<Any>()
         ownership.claim(a)

@@ -98,6 +98,15 @@ class VodPlayerViewModel(
     private val gaveUpListener: (PlaybackException) -> Unit = { onPlaybackGaveUp() }
     private var freshSessionRetries = 0
 
+    /** Identifies this video to the shared player (see [TwitchPlayer.ownsVod]). */
+    private val owner = Any()
+
+    // Where to start once the video resolves, when Resume was tapped before it had.
+    private var startAtMs: Long? = null
+
+    // Where the viewer was when something else (a go-live stream) took the player.
+    private var lastPositionMs = 0L
+
     /** What the media notification and lock screen show. */
     private val metadata: MediaMetadata = MediaMetadata.Builder()
         .setTitle(launch.title.ifBlank { "Past broadcast" })
@@ -120,6 +129,8 @@ class VodPlayerViewModel(
         viewModelScope.launch {
             while (true) {
                 delay(SAVE_EVERY_MS)
+                // A video that played to here has recovered: give the next hiccup its retry again.
+                if (twitchPlayer.ownsVod(owner) && twitchPlayer.exoPlayer.isPlaying) freshSessionRetries = 0
                 val progress = snapshot() ?: continue
                 runCatching { progressDao.upsert(progress.toEntity()) }
             }
@@ -143,7 +154,11 @@ class VodPlayerViewModel(
         _state.update { it.copy(error = null, errorIsPermanent = false) }
         runCatching { vodRepository.resolvePlayableVod(launch.vodId) }
             .onSuccess { master ->
-                twitchPlayer.playVod(master.masterUrl, metadata, startPositionMs)
+                // A Resume tapped before the video loaded takes over the start.
+                val start = startAtMs ?: startPositionMs
+                startAtMs = null
+                twitchPlayer.playVod(master.masterUrl, metadata, start, owner)
+                twitchPlayer.onGaveUp = gaveUpListener
                 _state.update { it.copy(playableUrl = master.masterUrl) }
             }
             .onFailure { e ->
@@ -155,7 +170,30 @@ class VodPlayerViewModel(
     fun resume() {
         val at = _state.value.resumeOfferMs ?: return
         _state.update { it.copy(resumeOfferMs = null) }
-        runCatching { twitchPlayer.exoPlayer.seekTo(at) }
+        if (_state.value.playableUrl == null) {
+            startAtMs = at
+        } else {
+            runCatching { twitchPlayer.exoPlayer.seekTo(at) }
+        }
+    }
+
+    /** The screen is leaving the foreground: remember where we were in case a stream takes the player. */
+    fun onScreenPaused() {
+        if (twitchPlayer.ownsVod(owner)) lastPositionMs = currentPositionMs()
+    }
+
+    /**
+     * The screen is back in front. If a stream stacked on top has taken the player
+     * (and then emptied it on its way out), start this video again where it was.
+     * A plain seek is not enough: the media is gone, so it is a fresh playVod.
+     */
+    fun onScreenResumed() {
+        val url = _state.value.playableUrl ?: return
+        if (_state.value.error != null || twitchPlayer.ownsVod(owner)) return
+        twitchPlayer.playVod(url, metadata, lastPositionMs, owner)
+        twitchPlayer.setQuality(_state.value.quality)
+        twitchPlayer.onGaveUp = gaveUpListener
+        backgroundPlayback.startService()
     }
 
     fun startOver() = _state.update { it.copy(resumeOfferMs = null) }
@@ -204,7 +242,11 @@ class VodPlayerViewModel(
         val player = runCatching { twitchPlayer.exoPlayer }.getOrNull() ?: return null
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return null
         val position = player.currentPosition
-        if (position <= 0 || !twitchPlayer.isVod) return null
+        if (position <= 0 || !twitchPlayer.ownsVod(owner)) return null
+        // An unanswered "Resume from ..." still points at the saved spot: playing the
+        // first seconds must not overwrite it before the viewer has chosen.
+        val offer = _state.value.resumeOfferMs
+        if (offer != null && position <= offer) return null
         return WatchProgress(
             vodId = launch.vodId,
             positionMs = position,
@@ -233,9 +275,10 @@ class VodPlayerViewModel(
         }
         // Teardown lives here, as for live streams: onCleared fires only when
         // the viewer leaves the video, not on rotation or PiP.
-        twitchPlayer.stop()
+        // Only when this video still owns the player: another one (or a stream) may
+        // have started since, and clearing here must not stop it.
+        if (twitchPlayer.stopIfVodOwner(owner)) backgroundPlayback.onStreamClosed()
         if (twitchPlayer.onGaveUp === gaveUpListener) twitchPlayer.onGaveUp = null
-        backgroundPlayback.onStreamClosed()
     }
 
     private companion object {

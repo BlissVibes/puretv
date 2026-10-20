@@ -49,6 +49,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -115,10 +119,31 @@ fun TvVodScreen(
 
     // The chat replay follows the playback position. Polled once a second, and
     // only while the overlay is on screen.
+    val lifecycleOwner = LocalLifecycleOwner.current
     LaunchedEffect(chatVisible) {
-        while (chatVisible) {
-            viewModel.onChatPosition(player.currentPosition.coerceAtLeast(0L) / 1000)
-            delay(1_000)
+        // Not while the screen is stopped.
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+            while (chatVisible) {
+                viewModel.onChatPosition(player.currentPosition.coerceAtLeast(0L) / 1000)
+                delay(1_000)
+            }
+        }
+    }
+
+    // A go-live stream can be stacked on this video and empty the shared player on
+    // its way out; once this screen is back in front the video starts again where it
+    // was. The short wait lets the leaving stream finish its own teardown first.
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_PAUSE) viewModel.onScreenPaused()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(lifecycleOwner) {
+        lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            delay(RESUME_SETTLE_MS)
+            viewModel.onScreenResumed()
         }
     }
 
@@ -129,8 +154,9 @@ fun TvVodScreen(
 
     // The offer takes focus (Resume first) so OK answers it; afterwards the root
     // gets the remote back for scrubbing.
-    LaunchedEffect(offer != null) {
-        runCatching { if (offer != null) resumeFocusRequester.requestFocus() else rootFocusRequester.requestFocus() }
+    val offerShown = offer != null && state.error == null
+    LaunchedEffect(offerShown) {
+        runCatching { if (offerShown) resumeFocusRequester.requestFocus() else rootFocusRequester.requestFocus() }
     }
 
     // Auto-hide 3 s after the last key, but never while paused or mid-scrub.
@@ -211,9 +237,6 @@ fun TvVodScreen(
 
                 lastInputAt = System.currentTimeMillis()
 
-                // While the offer is up, the two buttons use the D-pad and OK themselves.
-                if (offer != null) return@onKeyEvent false
-
                 if (state.error != null) {
                     return@onKeyEvent when (event.key) {
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
@@ -223,6 +246,9 @@ fun TvVodScreen(
                         else -> false
                     }
                 }
+
+                // While the offer is up, the two buttons use the D-pad and OK themselves.
+                if (offer != null) return@onKeyEvent false
 
                 when (event.key) {
                     Key.DirectionRight -> { scrub(VodScrub.stepFor(event.nativeKeyEvent.repeatCount)); true }
@@ -448,5 +474,6 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
+private const val RESUME_SETTLE_MS = 300L
 private const val POSITION_POLL_MS = 500L
 private const val CONTROLS_TIMEOUT_MS = 3_000L

@@ -94,6 +94,13 @@ class TvVodViewModel(
     private val gaveUpListener: (PlaybackException) -> Unit = { onPlaybackGaveUp() }
     private var freshSessionRetries = 0
 
+    // Where to start once the video resolves, when Resume was tapped before it had.
+    private var startAtMs: Long? = null
+
+    // Where the viewer was when something else (a go-live stream) took the player.
+    private var lastPositionMs = 0L
+    private var quality = StreamQuality.AUTO
+
     init {
         tvPlayer.onGaveUp = gaveUpListener
         viewModelScope.launch {
@@ -109,6 +116,8 @@ class TvVodViewModel(
         viewModelScope.launch {
             while (true) {
                 delay(SAVE_EVERY_MS)
+                // A video that played to here has recovered: give the next hiccup its retry again.
+                if (playerIsOurs() && tvPlayer.exoPlayer.isPlaying) freshSessionRetries = 0
                 val progress = snapshot() ?: continue
                 runCatching { progressDao.upsert(progress.toEntity()) }
             }
@@ -117,6 +126,7 @@ class TvVodViewModel(
             // Audio only is a live-stream choice: a VOD always opens with its picture.
             val preferred = StreamQuality.fromSetting(settingsStore.flow.first().preferredQuality)
                 .takeIf { it != StreamQuality.AUDIO_ONLY } ?: StreamQuality.AUTO
+            quality = preferred
             runCatching { tvPlayer.setQuality(preferred) }
             play(startPositionMs = 0L)
         }
@@ -127,7 +137,11 @@ class TvVodViewModel(
         _state.update { it.copy(error = null, errorIsPermanent = false) }
         runCatching { vodRepository.resolvePlayableVod(launch.vodId) }
             .onSuccess { master ->
-                tvPlayer.playVod(master.masterUrl, startPositionMs)
+                // A Resume tapped before the video loaded takes over the start.
+                val start = startAtMs ?: startPositionMs
+                startAtMs = null
+                tvPlayer.playVod(master.masterUrl, start)
+                tvPlayer.onGaveUp = gaveUpListener
                 _state.update { it.copy(playableUrl = master.masterUrl) }
             }
             .onFailure { e ->
@@ -139,7 +153,29 @@ class TvVodViewModel(
     fun resume() {
         val at = _state.value.resumeOfferMs ?: return
         _state.update { it.copy(resumeOfferMs = null) }
-        runCatching { tvPlayer.exoPlayer.seekTo(at) }
+        if (_state.value.playableUrl == null) {
+            startAtMs = at
+        } else {
+            runCatching { tvPlayer.exoPlayer.seekTo(at) }
+        }
+    }
+
+    /** The screen is leaving the foreground: remember where we were in case a stream takes the player. */
+    fun onScreenPaused() {
+        if (playerIsOurs()) lastPositionMs = currentPositionMs()
+    }
+
+    /**
+     * The screen is back in front. If a stream stacked on top (a go-live alert) has
+     * taken the player and emptied it on its way out, start this video again where it
+     * was. A plain seek is not enough: the media is gone, so it is a fresh playVod.
+     */
+    fun onScreenResumed() {
+        val url = _state.value.playableUrl ?: return
+        if (_state.value.error != null || playerIsOurs()) return
+        tvPlayer.playVod(url, lastPositionMs)
+        runCatching { tvPlayer.setQuality(quality) }
+        tvPlayer.onGaveUp = gaveUpListener
     }
 
     fun startOver() = _state.update { it.copy(resumeOfferMs = null) }
@@ -193,6 +229,10 @@ class TvVodViewModel(
         val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return null
         val position = player.currentPosition
         if (position <= 0) return null
+        // An unanswered "Resume from ..." still points at the saved spot: playing the
+        // first seconds must not overwrite it before the viewer has chosen.
+        val offer = _state.value.resumeOfferMs
+        if (offer != null && position <= offer) return null
         return WatchProgress(
             vodId = launch.vodId,
             positionMs = position,
@@ -222,6 +262,7 @@ class TvVodViewModel(
         // Leaving must stop the singleton (it plays with playWhenReady=true), but
         // only if it is still ours: a screen opened right after may own it now.
         if (playerIsOurs()) tvPlayer.stop()
+        if (tvPlayer.onGaveUp === gaveUpListener) tvPlayer.onGaveUp = null
     }
 
     private companion object {

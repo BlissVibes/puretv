@@ -67,6 +67,7 @@ import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.session.SessionState
 import io.ktor.client.HttpClient
 import kotlin.jvm.Volatile
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
@@ -751,10 +752,14 @@ class ChannelViewModel(
                             videos = if (reset) page.videos else it.videos + page.videos,
                             videoCursor = page.cursor,
                             videosLoading = false,
+                            videosError = null,
                         )
                     }
                 }
                 .onFailure { e ->
+                    // A filter change cancels the page in flight; that is not a failure,
+                    // and the new request owns the loading state.
+                    if (e is CancellationException) return@onFailure
                     _state.update {
                         it.copy(videosLoading = false, videosError = StreamFailures.classify(e).sentence("Couldn't load videos"))
                     }

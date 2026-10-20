@@ -19,6 +19,10 @@ class PlayOwnership<T : Any> {
         return changed
     }
 
+    /** True while [candidate] is the owner. */
+    @Synchronized
+    fun isOwner(candidate: T): Boolean = owner === candidate
+
     /** True if [candidate] was the owner; it no longer is. A stale caller gets false and changes nothing. */
     @Synchronized
     fun release(candidate: T): Boolean {

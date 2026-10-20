@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.data
 
+import com.puretv.twitch.core.vod.WatchProgress
 import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch

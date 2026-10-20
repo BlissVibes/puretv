@@ -124,6 +124,8 @@ fun ChatPanel(
     badges: BadgeIndex = BadgeIndex.EMPTY,
     /** Settings > Chat > badges. Off shows name and message only. */
     showBadges: Boolean = true,
+    /** Shown in place of the composer when [canSend] is false. */
+    noComposerText: String = "Log in to chat",
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -298,7 +300,7 @@ fun ChatPanel(
             } else {
                 Box(modifier = Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                     Text(
-                        "Log in to chat",
+                        noComposerText,
                         color = c.onSurfaceVariant,
                         style = MaterialTheme.typography.bodyLarge,
                     )

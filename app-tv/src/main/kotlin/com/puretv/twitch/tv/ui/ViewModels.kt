@@ -36,6 +36,9 @@ import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
+import com.puretv.twitch.core.repository.VodRepository
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.model.VideoType
 import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.StreamFailures
@@ -637,12 +640,19 @@ data class ChannelUiState(
     val channel: com.puretv.twitch.core.model.ChannelInfo? = null,
     val isLive: Boolean = false,
     val viewerCount: Long = 0L,
+    /** Past broadcasts, newest first. Signed out this is a single page from the anonymous GQL directory. */
+    val videos: List<VideoInfo> = emptyList(),
+    /** Helix cursor for the next page; null when there is nothing more. */
+    val videoCursor: String? = null,
+    val videosLoading: Boolean = false,
 )
 
 class ChannelViewModel(
     private val channelLogin: String,
     private val channelRepository: ChannelRepository,
     private val streamRepository: StreamRepository,
+    private val vodRepository: VodRepository,
+    private val settings: AppSettingsStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChannelUiState())
     val state: StateFlow<ChannelUiState> = _state.asStateFlow()
@@ -656,6 +666,23 @@ class ChannelViewModel(
             _state.update {
                 it.copy(channel = channel, isLive = stream != null, viewerCount = stream?.viewerCount?.toLong() ?: 0L)
             }
+            // Signed out the repository reads one page from the anonymous GQL directory (no cursor, so no "More").
+            if (channel != null) loadMoreVideos()
+        }
+    }
+
+    /** The next page of past broadcasts (the first page when none are loaded). Best-effort. */
+    fun loadMoreVideos() {
+        val s = _state.value
+        val userId = s.channel?.id ?: return
+        if (s.videosLoading || (s.videos.isNotEmpty() && s.videoCursor == null)) return
+        _state.update { it.copy(videosLoading = true) }
+        viewModelScope.launch {
+            runCatching { vodRepository.videosFor(userId = userId, type = VideoType.ARCHIVE, after = s.videoCursor) }
+                .onSuccess { page ->
+                    _state.update { it.copy(videos = it.videos + page.videos, videoCursor = page.cursor, videosLoading = false) }
+                }
+                .onFailure { _state.update { it.copy(videosLoading = false) } }
         }
     }
 }

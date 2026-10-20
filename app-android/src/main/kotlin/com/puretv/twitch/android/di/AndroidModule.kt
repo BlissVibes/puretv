@@ -6,6 +6,7 @@ import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.SecureTokenStore
 import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.data.TokenRefresher
+import com.puretv.twitch.android.data.db.MIGRATION_1_2
 import com.puretv.twitch.android.data.db.PureTvDatabase
 import com.puretv.twitch.android.notify.DataStoreLiveNotifyStore
 import com.puretv.twitch.android.notify.GoLiveMonitor
@@ -24,6 +25,8 @@ import com.puretv.twitch.android.ui.LoginViewModel
 import com.puretv.twitch.android.ui.SearchViewModel
 import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.StreamViewModel
+import com.puretv.twitch.android.ui.VodLaunch
+import com.puretv.twitch.android.ui.VodPlayerViewModel
 import com.puretv.twitch.android.ui.WelcomeViewModel
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.retryOnceIfUnauthorized
@@ -59,12 +62,13 @@ val androidModule = module {
     // --- Persistence -----------------------------------------------------
     single {
         // No .fallbackToDestructiveMigration(): that silently wipes all user
-        // data (watch/search history) on any schema bump. The @Database is at
-        // version 1 with no migrations yet, so omitting it is safe today; real
-        // Migration objects get added here when the schema first changes.
+        // data (watch/search history) on any schema bump. Every schema change
+        // gets a real Migration instead (1 to 2 added vod_progress).
         Room.databaseBuilder(get(), PureTvDatabase::class.java, PureTvDatabase.DB_NAME)
+            .addMigrations(MIGRATION_1_2)
             .build()
     }
+    single { get<PureTvDatabase>().vodProgressDao() }
     single { get<PureTvDatabase>().cachedStreamDao() }
     single { get<PureTvDatabase>().cachedChannelDao() }
     single { get<PureTvDatabase>().cachedEmoteDao() }
@@ -122,14 +126,15 @@ val androidModule = module {
     // --- ViewModels --------------------------------------------------------
     // get() resolves each constructor argument by type, so argument order does
     // not matter as long as every type is bound above (the DAOs are).
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { FollowingViewModel(get(), get(), get()) }
     viewModel { WelcomeViewModel(get(), get()) }
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
+    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }
 }

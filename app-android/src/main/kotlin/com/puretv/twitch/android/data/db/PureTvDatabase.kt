@@ -8,6 +8,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 /**
@@ -120,6 +122,58 @@ interface SearchHistoryDao {
     suspend fun clear()
 }
 
+/**
+ * Where the viewer got to in one past broadcast, mirroring core's
+ * `WatchProgress` (see VodProgressMappers) so the resume rules are the
+ * Windows ones. The metadata lets Home draw a card without an API call.
+ */
+@Entity(tableName = "vod_progress")
+data class VodProgressEntity(
+    @PrimaryKey val vodId: String,
+    val positionMs: Long,
+    val durationMs: Long,
+    val updatedAt: Long,
+    val title: String,
+    val channelLogin: String,
+    val thumbnailUrl: String,
+)
+
+@Dao
+interface VodProgressDao {
+    @Query("SELECT * FROM vod_progress WHERE vodId = :vodId LIMIT 1")
+    suspend fun get(vodId: String): VodProgressEntity?
+
+    @Query("SELECT * FROM vod_progress ORDER BY updatedAt DESC LIMIT 50")
+    fun observeRecent(): Flow<List<VodProgressEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(e: VodProgressEntity)
+
+    @Query("DELETE FROM vod_progress WHERE vodId = :vodId")
+    suspend fun delete(vodId: String)
+
+    /** Keeps the 300 most recent, the same bound as the Windows store. */
+    @Query("DELETE FROM vod_progress WHERE vodId NOT IN (SELECT vodId FROM vod_progress ORDER BY updatedAt DESC LIMIT 300)")
+    suspend fun prune()
+}
+
+/**
+ * Must match Room's own `createSql` for [VodProgressEntity] in
+ * `schemas/.../2.json` character for character (VodProgressMigrationTest checks
+ * it), or Room rejects the migrated database at open.
+ */
+const val VOD_PROGRESS_CREATE_SQL =
+    "CREATE TABLE IF NOT EXISTS `vod_progress` (`vodId` TEXT NOT NULL, `positionMs` INTEGER NOT NULL, " +
+        "`durationMs` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `title` TEXT NOT NULL, " +
+        "`channelLogin` TEXT NOT NULL, `thumbnailUrl` TEXT NOT NULL, PRIMARY KEY(`vodId`))"
+
+/** Version 2 adds VOD resume. Additive only, so every existing row survives. */
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(VOD_PROGRESS_CREATE_SQL)
+    }
+}
+
 @Database(
     entities = [
         CachedStream::class,
@@ -127,8 +181,9 @@ interface SearchHistoryDao {
         CachedEmote::class,
         WatchHistoryEntry::class,
         SearchHistoryEntry::class,
+        VodProgressEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class PureTvDatabase : RoomDatabase() {
@@ -137,6 +192,7 @@ abstract class PureTvDatabase : RoomDatabase() {
     abstract fun cachedEmoteDao(): CachedEmoteDao
     abstract fun watchHistoryDao(): WatchHistoryDao
     abstract fun searchHistoryDao(): SearchHistoryDao
+    abstract fun vodProgressDao(): VodProgressDao
 
     companion object {
         const val DB_NAME = "puretv.db"

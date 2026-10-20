@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Forward10
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.GridView
@@ -34,6 +35,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Replay10
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Shield
@@ -108,6 +110,8 @@ object ExpressiveIcons {
     val Chat: ImageVector = Icons.AutoMirrored.Filled.Chat
     val Emote: ImageVector = Icons.Filled.Mood
     val Send: ImageVector = Icons.AutoMirrored.Filled.Send
+    val Back10: ImageVector = Icons.Filled.Replay10
+    val Forward10: ImageVector = Icons.Filled.Forward10
 
     // Status / layout
     val Shield: ImageVector = Icons.Filled.Shield

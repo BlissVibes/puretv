@@ -76,6 +76,14 @@ class LocalStreamProxy(
             "http://localhost:$PORT/stream?channel=$channelLogin&quality=${quality.name}"
 
         /**
+         * The URL for a multi-stream tile: one rendition, the best one at or below
+         * [maxHeight] (see [TileQuality.capMaster]). Each tile asks for its own
+         * channel, and the proxy serves all of them at once.
+         */
+        fun tileStreamUrl(channelLogin: String, maxHeight: Int): String =
+            "http://localhost:$PORT/stream?channel=$channelLogin&quality=AUTO&cap=$maxHeight"
+
+        /**
          * The /variant route fetches an upstream URL on the player's behalf, so
          * restrict it to the Twitch HLS CDN — otherwise it is an open localhost
          * proxy (SSRF): any local process or a crafted page could hit
@@ -181,13 +189,20 @@ class LocalStreamProxy(
                         return@get
                     }
                     val quality = runCatching { StreamQuality.valueOf(qualityParam ?: "AUTO") }.getOrDefault(StreamQuality.AUTO)
+                    // Multi-stream tiles cap the picture by tile count (see TileQuality).
+                    val capHeight = call.request.queryParameters["cap"]?.toIntOrNull()
 
                     totalRequests.incrementAndGet()
                     streamFailures.remove(channel.lowercase())
                     runCatching {
                         val playable = playableStreamCache.get(channel)
                         // Resolution already fetched and validated the master; reuse it.
-                        adBlockEngine.resolveCleanStream(playable.masterUrl, quality, prefetchedMaster = playable.rawContent)
+                        adBlockEngine.resolveCleanStream(
+                            playable.masterUrl,
+                            quality,
+                            prefetchedMaster = playable.rawContent,
+                            channel = channel,
+                        )
                     }.onSuccess { result ->
                         when (result) {
                             is CleanStreamResult.Success -> {
@@ -206,10 +221,11 @@ class LocalStreamProxy(
                                     result.playlistContent,
                                     audioOnly = quality == StreamQuality.AUDIO_ONLY,
                                 )
-                                val qualityFiltered = if (quality != StreamQuality.AUTO && quality != StreamQuality.AUDIO_ONLY) {
-                                    filterMasterToQuality(playable, quality)
-                                } else {
-                                    playable
+                                val qualityFiltered = when {
+                                    capHeight != null -> TileQuality.capMaster(playable, capHeight)
+                                    quality != StreamQuality.AUTO && quality != StreamQuality.AUDIO_ONLY ->
+                                        filterMasterToQuality(playable, quality)
+                                    else -> playable
                                 }
                                 // CRITICAL: rewrite variant URLs so VLC fetches each per-quality
                                 // media playlist through us (ad-block choke point).
@@ -249,7 +265,7 @@ class LocalStreamProxy(
                         // GQL token mint failed). resolveCleanStream never set a status, so
                         // flip the engine off UNKNOWN here — otherwise the pill hangs on
                         // "Checking…" forever and hides the outage (GOTCHA #1 lesson).
-                        adBlockEngine.reportResolutionFailure()
+                        adBlockEngine.reportResolutionFailure(channel)
                         lastFailure.set(
                             FetchSnapshot(
                                 channel = channel,

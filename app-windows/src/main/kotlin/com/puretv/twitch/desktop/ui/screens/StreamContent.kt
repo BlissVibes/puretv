@@ -123,6 +123,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.core.emotes.PickableEmote
+import com.puretv.twitch.core.emotes.SevenTvPaint
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
@@ -488,11 +489,14 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                             ),
                         ) {
                             ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {
+                                // Settings > Chat > Show 7TV name paints; off draws plain names.
+                                val namePaints = if (appSettings.showSevenTvPaints) state.namePaints else emptyMap()
                                 when (chatTab) {
                                     ChatTab.Chat -> ChatMessageList(
                                         messages = state.chatMessages,
                                         onReply = viewModel::startReply,
                                         modifier = Modifier.fillMaxSize(),
+                                        namePaints = namePaints,
                                     )
                                     ChatTab.Mentions ->
                                         if (state.mentionMessages.isEmpty()) {
@@ -502,6 +506,7 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                                                 messages = state.mentionMessages,
                                                 onReply = viewModel::startReply,
                                                 modifier = Modifier.fillMaxSize(),
+                                                namePaints = namePaints,
                                             )
                                         }
                                 }
@@ -916,6 +921,8 @@ private fun ChatMessageList(
     messages: List<ChatMessage>,
     onReply: (ChatMessage) -> Unit,
     modifier: Modifier = Modifier,
+    /** 7TV name paints by Twitch user id; a lookup per row, nothing per frame. */
+    namePaints: Map<String, SevenTvPaint> = emptyMap(),
 ) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
@@ -953,7 +960,9 @@ private fun ChatMessageList(
             verticalArrangement = Arrangement.spacedBy(2.dp),
             contentPadding = PaddingValues(vertical = 14.dp),
         ) {
-            items(messages, key = { it.id }) { ChatMessageRow(message = it, onReply = onReply) }
+            items(messages, key = { it.id }) {
+                ChatMessageRow(message = it, onReply = onReply, namePaint = namePaints[it.userId])
+            }
         }
         // Twitch parity: paused while scrolled up. Clicking snaps to the bottom and resumes
         // following so the feed keeps going seamlessly.

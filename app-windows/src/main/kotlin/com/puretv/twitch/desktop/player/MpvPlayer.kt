@@ -219,6 +219,7 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
                 ctx = c
                 initialized = true
                 attachedCanvas = panel
+                normalizerOverride?.let { applyNormalizer(l, c, it) }
                 observedProps.forEach { l.mpv_observe_property(c, 0L, it, MpvConst.MPV_FORMAT_NONE) }
                 val handle = EventLoopHandle()
                 loopHandle = handle
@@ -411,10 +412,20 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
      * runtime-settable, and an empty list clears it. No-op when not attached;
      * `applyPreInitOptions` reads the saved setting for the next stream.
      */
-    override fun setAudioNormalizer(enabled: Boolean) = withCtx { l, c ->
-        runCatching { l.mpv_set_property_string(c, "af", if (enabled) AudioNormalizerProfile.mpvAudioFilter() else "") }
-        Unit
+    override fun setAudioNormalizer(enabled: Boolean) {
+        // Remembered first: a context still coming up (ctx is null until its attach
+        // finishes) applies it as soon as it is live, so a switch flipped
+        // mid-bring-up is never lost.
+        normalizerOverride = enabled
+        withCtx { l, c -> applyNormalizer(l, c, enabled) }
     }
+
+    private fun applyNormalizer(l: MpvLibrary, c: Pointer, enabled: Boolean) {
+        runCatching { l.mpv_set_property_string(c, "af", if (enabled) AudioNormalizerProfile.mpvAudioFilter() else "") }
+    }
+
+    // The newest live switch, for a context that was being created when it came in.
+    @Volatile private var normalizerOverride: Boolean? = null
 
     override fun release() {
         // App shutdown — tear the live context down exactly like a surface detach

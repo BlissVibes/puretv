@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.PlaybackBackend
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
@@ -107,7 +108,9 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onLowLatencyChange = viewModel::setLowLatency,
             audioNormalizer = state.settings.audioNormalizer,
             onAudioNormalizerChange = viewModel::setAudioNormalizer,
-            normalizerNeedsRestart = state.settings.playbackBackend == PlaybackBackend.VLC,
+            // The engine running now, not the saved one: an engine switch itself waits for a restart.
+            normalizerNeedsRestart = koin.get<DesktopPlayerProvider>()
+                .runningBackend(state.settings.playbackBackend) == PlaybackBackend.VLC,
         )
         Spacer(Modifier.height(16.dp))
 

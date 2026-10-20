@@ -2,6 +2,7 @@ package com.puretv.twitch.desktop.player
 
 import com.puretv.twitch.core.perf.TimingLog
 
+import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
 import kotlinx.coroutines.flow.StateFlow
 import java.awt.Component
@@ -137,6 +138,15 @@ class DesktopPlayerProvider(create: () -> DesktopPlayer) {
     fun releaseIfCreated() {
         if (lazyPlayer.isInitialized()) lazyPlayer.value.release()
     }
+
+    /**
+     * The engine actually running this session: the player's own type once it is
+     * built, otherwise [saved] (which is what it will be built from). The saved
+     * engine can differ mid-session, because switching engines applies after a restart.
+     */
+    fun runningBackend(saved: PlaybackBackend): PlaybackBackend =
+        if (!lazyPlayer.isInitialized()) saved
+        else if (lazyPlayer.value is MpvPlayer) PlaybackBackend.MPV else PlaybackBackend.VLC
 
     /** Runs [block] on the player only if it already exists, so settings never build one. */
     fun ifCreated(block: (DesktopPlayer) -> Unit) {

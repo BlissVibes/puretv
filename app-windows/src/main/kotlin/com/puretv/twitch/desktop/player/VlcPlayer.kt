@@ -52,15 +52,13 @@ class VlcPlayer(
      *                               live sources.
      * `--sout-mux-caching=500`    — output muxer cache; keeps A/V sync tight.
      */
-    private val factory: MediaPlayerFactory? = runCatching {
-        MediaPlayerFactory(
-            "--no-video-title-show",
-            "--network-caching=2000",
-            "--live-caching=1000",
-            "--sout-mux-caching=500",
-            *extraArgs.toTypedArray(),
-        )
-    }.getOrNull()
+    private val factory: MediaPlayerFactory? = buildFactory(extraArgs)
+        ?: if (extraArgs.isEmpty()) null else {
+            // An extra argument libVLC refuses makes it refuse to start at all;
+            // playing without the extras beats not playing.
+            System.err.println("VLC rejected the extra arguments $extraArgs, starting without them")
+            buildFactory(emptyList())
+        }
 
     private val mediaPlayer: EmbeddedMediaPlayer? = factory?.mediaPlayers()?.newEmbeddedMediaPlayer()
 
@@ -297,6 +295,16 @@ class VlcPlayer(
     }
 
     companion object {
+        private fun buildFactory(extra: List<String>): MediaPlayerFactory? = runCatching {
+            MediaPlayerFactory(
+                "--no-video-title-show",
+                "--network-caching=2000",
+                "--live-caching=1000",
+                "--sout-mux-caching=500",
+                *extra.toTypedArray(),
+            )
+        }.getOrNull()
+
         // Checks for a VLC copy bundled inside the distributable's resources dir.
         // When found, prepends the directory to jna.library.path so JNA locates
         // libvlc.dll before scanning system paths. VLC then finds its plugins/

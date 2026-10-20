@@ -255,6 +255,19 @@ data class AppSettings(
     // rendition instead of video nobody sees. Android phone only.
     val audioOnlyInBackground: Boolean = true,
 
+    // Go-live alerts for followed channels. Windows shows a tray notification,
+    // the phone a system notification, TV an in-app banner. Muted logins are
+    // lowercased.
+    val liveNotifications: Boolean = true,
+    val notifyMutedLogins: Set<String> = emptySet(),
+    // Windows only: closing the window hides it to the tray instead of quitting,
+    // and PureTV can start hidden in the tray when Windows starts. Both off by
+    // default: the close button quits, as it always has.
+    val closeToTray: Boolean = false,
+    val startWithWindows: Boolean = false,
+    // Windows only: the one-time "keep PureTV in the tray" hint was answered.
+    val trayHintShown: Boolean = false,
+
     // Ad Block
     val adBlockEnabled: Boolean = true,
     val adBlockStrategy: String = "proxy", // proxy, rewrite, disabled

@@ -16,6 +16,14 @@ release notes automatically.
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
 ### New
+- **Know when your channels go live.** PureTV tells you when a channel you
+  follow starts streaming: a Windows notification from the tray, a phone
+  notification you can tap to start watching, or a banner in the corner on
+  TV while PureTV is open (it never moves your selection). PureTV asks Twitch
+  itself; nothing goes through a push service or anyone else's server. On the
+  phone, alerts while PureTV is in the background may arrive a few minutes
+  late when the phone is idle. Long-press a channel on Following
+  (right-click on Windows) to mute it, or turn alerts off in Settings.
 - **Low latency.** Streams now play several seconds closer to live, so what
   you see keeps up with chat. It's on for Windows and phone. On TV it's off
   to start with, because TV sticks on Wi-Fi are more likely to pause and

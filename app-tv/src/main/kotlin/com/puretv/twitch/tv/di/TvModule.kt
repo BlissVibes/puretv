@@ -2,7 +2,10 @@ package com.puretv.twitch.tv.di
 
 import androidx.media3.common.util.UnstableApi
 import androidx.room.Room
+import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.api.retryOnceIfUnauthorized
 import com.puretv.twitch.core.di.TokenHolder
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.emotes.EmoteCache
 import com.puretv.twitch.core.emotes.PersistentEmoteCache
 import com.puretv.twitch.core.storage.FileTextStore
@@ -12,6 +15,8 @@ import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.data.SecureTokenStore
 import com.puretv.twitch.tv.data.TokenRefresher
 import com.puretv.twitch.tv.data.db.PureTvTvDatabase
+import com.puretv.twitch.tv.notify.DataStoreLiveNotifyStore
+import com.puretv.twitch.tv.notify.TvGoLiveMonitor
 import com.puretv.twitch.tv.player.TvPlayer
 import com.puretv.twitch.tv.update.TvUpdateManager
 import com.puretv.twitch.tv.ui.BrowseViewModel
@@ -25,13 +30,14 @@ import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.TvFollowingViewModel
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
+import kotlinx.coroutines.flow.first
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
 import java.io.File
 
 /**
- * SECTION 11 / 12.2 — TV-specific Koin bindings layered on top of
+ * SECTION 11 / 12.2: TV-specific Koin bindings layered on top of
  * `coreModule`, mirroring `androidModule` 1:1 (Room database, encrypted
  * token storage, DataStore-backed settings, the ExoPlayer wrapper, and
  * screen ViewModels) but pointed at this app's own TV-specific classes.
@@ -64,9 +70,36 @@ val tvModule = module {
     single { AppSettingsStore(get(), get(), get<TokenHolder>()) }
     // Launch-time access-token refresh + identity backfill (fail-soft).
     single { TokenRefresher(get(), get(), get()) }
+    // Go-live banners. The monitor is the app's one asker of "which follows are
+    // live" (see LiveFollowsMonitor): Home "Live now", Following and the banner
+    // timer all read through it, and whatever just went live becomes a banner. A
+    // 401 renews the sign-in once (the refresher's own one-minute guard applies)
+    // and asks again.
+    single { DataStoreLiveNotifyStore(androidContext()) }
+    single { TvGoLiveMonitor(lazy { get<LiveFollowsMonitor>() }, lazy { get<AppSettingsStore>() }) }
+    single {
+        val api = get<TwitchApiClient>()
+        val settings = get<AppSettingsStore>()
+        val refresher = get<TokenRefresher>()
+        val banners = get<TvGoLiveMonitor>()
+        LiveFollowsMonitor(
+            fetchLive = { userId ->
+                retryOnceIfUnauthorized(renew = { refresher.refreshIfPossible() }) { api.getFollowedStreams(userId) }
+            },
+            store = get<DataStoreLiveNotifyStore>(),
+            settings = { settings.flow.first() },
+            userId = { settings.flow.first().let { if (it.accessToken.isNotBlank()) it.userId else null } },
+            clock = System::currentTimeMillis,
+            onGoLive = { streams -> banners.announce(streams) },
+        )
+    }
     // Followed-rail data for the Following destination: real Twitch follows
-    // (paginated), no local pins on TV. Mirrors desktopModule's binding.
-    single<FollowedChannelsSource> { FollowedChannelsService(get()) }
+    // (paginated), no local pins on TV, live status from the shared monitor.
+    // Mirrors desktopModule's binding.
+    single<FollowedChannelsSource> {
+        val monitor = get<LiveFollowsMonitor>()
+        FollowedChannelsService(get(), followedLive = { userId -> monitor.followedLive(userId) })
+    }
 
     // In-app updater (GitHub Releases → PackageInstaller). Singleton so the
     // Settings section and the Home update banner observe one state.
@@ -82,10 +115,10 @@ val tvModule = module {
     single { TvPlayer(get(), get(), get(), get(), get()) }
 
     // --- ViewModels --------------------------------------------------------
-    // HomeViewModel(streamRepo, userRepo, settings, cachedStreamDao, tokenRefresher):
-    // the last two power cached-first paint/write-through + the on-failure token
-    // refresh so "Live Now" survives token expiry and repopulates on refresh.
-    viewModel { HomeViewModel(get(), get(), get(), get(), get()) }
+    // HomeViewModel(streamRepo, userRepo, settings, cachedStreamDao, tokenRefresher,
+    // liveFollows): cached-first paint/write-through, the on-failure token refresh
+    // so "Live Now" survives token expiry, and the shared live follows monitor.
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
     // TvFollowingViewModel(followedChannelsSource, settings): the Following
     // destination's own nav-rail screen, see TvFollowingScreen.
     viewModel { TvFollowingViewModel(get(), get()) }

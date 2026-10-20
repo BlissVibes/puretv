@@ -70,6 +70,7 @@ import com.puretv.twitch.android.LocalIsInPip
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.NowPlaying
 import com.puretv.twitch.android.player.PlayerSurface
+import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.ui.StreamUiState
 import com.puretv.twitch.android.ui.StreamViewModel
 import com.puretv.twitch.android.ui.components.AdBlockPill
@@ -179,6 +180,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                     onSelectQuality = viewModel::setQuality,
                     isInPip = isInPip,
                     metadata = metadata,
+                    playTicket = viewModel.playTicket,
                     modifier = Modifier.weight(if (showChat) 1f - chatFraction else 1f).fillMaxHeight(),
                 )
                 if (showChat) {
@@ -227,6 +229,7 @@ fun StreamScreen(channelLogin: String, onBack: () -> Unit) {
                 onSelectQuality = viewModel::setQuality,
                 isInPip = isInPip,
                 metadata = metadata,
+                playTicket = viewModel.playTicket,
                 modifier = if (isInPip) Modifier.fillMaxSize() else Modifier.fillMaxWidth().aspectRatio(16f / 9f),
             )
             if (!isInPip) {
@@ -329,6 +332,7 @@ private fun PlayerArea(
     onSelectQuality: (StreamQuality) -> Unit,
     isInPip: Boolean,
     metadata: MediaMetadata,
+    playTicket: TwitchPlayer.PlayTicket,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -355,6 +359,7 @@ private fun PlayerArea(
             onControlsVisibilityChanged = { controlsVisible = it },
             metadata = metadata,
             lowLatency = state.lowLatency,
+            ticket = playTicket,
             modifier = Modifier.fillMaxSize(),
         )
 

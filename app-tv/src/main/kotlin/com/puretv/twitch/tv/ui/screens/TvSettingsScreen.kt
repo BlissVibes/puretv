@@ -145,6 +145,14 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
         TvDivider()
 
         TvPanel {
+            GoLiveSection(
+                enabled = state.settings.liveNotifications,
+                onEnabledChange = viewModel::setLiveNotifications,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
             AccountSection(
                 isLoggedIn = state.isLoggedIn,
                 username = state.loginUsername,
@@ -434,6 +442,30 @@ private fun strategyLabel(strategy: AdBlockStrategy): String = when (strategy) {
     AdBlockStrategy.PROXY_PRIMARY -> "Proxy"
     AdBlockStrategy.MANIFEST_REWRITE_ONLY -> "Manifest rewrite"
     AdBlockStrategy.DISABLED -> "Disabled"
+}
+
+// ── Go-live banner ──────────────────────────────────────────────────────
+
+@Composable
+private fun GoLiveSection(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    val c = PureTvTvTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Go-live banner", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "While PureTV is open, a banner in the corner says when a channel you follow starts " +
+                    "streaming. It never moves your selection, so the remote keeps doing what it was doing.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
 }
 
 // ── Account ─────────────────────────────────────────────────────────────

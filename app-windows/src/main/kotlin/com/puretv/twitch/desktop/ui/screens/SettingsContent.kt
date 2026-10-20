@@ -41,7 +41,10 @@ import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.platform.Diagnostics
+import com.puretv.twitch.desktop.platform.WindowsStartup
 import com.puretv.twitch.desktop.platform.openInBrowser
+import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
+import androidx.compose.ui.window.isTraySupported
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
@@ -125,6 +128,20 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onCompact = { on -> settingsStore.updateSettings { it.copy(compactMode = on) } },
             showNamePaints = state.settings.showSevenTvPaints,
             onShowNamePaints = { on -> settingsStore.updateSettings { it.copy(showSevenTvPaints = on) } },
+        )
+        Spacer(Modifier.height(16.dp))
+
+        NotificationsPanel(
+            liveAlerts = state.settings.liveNotifications,
+            onLiveAlerts = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
+            closeToTray = state.settings.closeToTray,
+            onCloseToTray = { on -> settingsStore.updateSettings { it.copy(closeToTray = on, trayHintShown = true) } },
+            startWithWindows = state.settings.startWithWindows,
+            onStartWithWindows = { on ->
+                if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
+            },
+            mutedChannels = state.settings.notifyMutedLogins,
+            onUnmuteAll = { settingsStore.updateSettings { it.copy(notifyMutedLogins = emptySet()) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -388,6 +405,82 @@ private fun ChatPanel(
                 description = "Show the gradient names 7TV users pick for themselves.",
             ) {
                 ExpressiveSwitch(checked = showNamePaints, onCheckedChange = onShowNamePaints)
+            }
+        }
+    }
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────────
+
+/**
+ * Go-live alerts and the tray. Alerts arrive as Windows notifications from the tray
+ * icon while PureTV is running; keeping it in the tray when the window closes is what
+ * lets them keep coming. Without a system tray (rare on Windows) neither works, so
+ * the panel says so instead of offering switches that would do nothing.
+ */
+@Composable
+private fun NotificationsPanel(
+    liveAlerts: Boolean,
+    onLiveAlerts: (Boolean) -> Unit,
+    closeToTray: Boolean,
+    onCloseToTray: (Boolean) -> Unit,
+    startWithWindows: Boolean,
+    onStartWithWindows: (Boolean) -> Unit,
+    mutedChannels: Set<String>,
+    onUnmuteAll: () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    val trayAvailable = remember { isTraySupported }
+    val startupAvailable = remember { WindowsStartup.isAvailable }
+    ExpressivePanel {
+        Column {
+            Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            if (!trayAvailable) {
+                Text(
+                    "Go-live alerts need the Windows system tray, which is not available here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+                return@Column
+            }
+            SettingsRow(
+                label = "Go-live alerts",
+                description = "Tell me when channels I follow go live. Checks about every 90 seconds while PureTV is running.",
+            ) {
+                ExpressiveSwitch(checked = liveAlerts, onCheckedChange = onLiveAlerts)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Keep running in the tray",
+                description = "Closing the window keeps PureTV in the tray, so alerts still arrive. Quit from the tray icon.",
+            ) {
+                ExpressiveSwitch(checked = closeToTray, onCheckedChange = onCloseToTray)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Start with Windows",
+                description = if (startupAvailable) {
+                    "Open PureTV in the tray when you sign in to Windows."
+                } else {
+                    "Available in the installed app."
+                },
+            ) {
+                if (startupAvailable) ExpressiveSwitch(checked = startWithWindows, onCheckedChange = onStartWithWindows)
+            }
+            if (mutedChannels.isNotEmpty()) {
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+                SettingsRow(
+                    label = "Muted channels",
+                    description = "No alerts for ${mutedChannels.sorted().joinToString(", ")}.",
+                ) {
+                    ExpressiveButton(
+                        text = "Unmute all",
+                        onClick = onUnmuteAll,
+                        style = ExpressiveButtonStyle.Outlined,
+                        size = ExpressiveButtonSize.Small,
+                    )
+                }
             }
         }
     }

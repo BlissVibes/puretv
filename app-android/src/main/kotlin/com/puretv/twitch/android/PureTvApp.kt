@@ -6,11 +6,14 @@ import androidx.media3.common.util.UnstableApi
 import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.di.androidModule
+import com.puretv.twitch.android.notify.GoLiveMonitor
+import com.puretv.twitch.android.notify.GoLiveNotifications
+import com.puretv.twitch.android.notify.GoLiveScheduler
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
-import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import android.util.Log
 import com.puretv.twitch.core.perf.TimingLog
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -27,7 +30,7 @@ import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
 
 /**
- * SECTION 11 — wires `coreModule` (shared) + `androidModule` (phone/tablet
+ * SECTION 11: wires `coreModule` (shared) + `androidModule` (phone/tablet
  * specific: Room DB, ExoPlayer, DataStore, ViewModels) into a single Koin graph.
  */
 class PureTvApp : Application() {
@@ -65,11 +68,8 @@ class PureTvApp : Application() {
             // visible jank. This also primes the shared core TokenHolder so the
             // first authenticated request has a bearer token.
             koinApp.koin.get<AppSettingsStore>()
-
-            // Silent launch update check: surfaces an "Update available" banner on
-            // Home / a prompt in Settings when a newer Android APK is published.
-            // Fully fail-soft (no manifest / offline -> stays idle, no nagging).
-            koinApp.koin.get<AndroidUpdateManager>().checkForUpdates()
+            // The update check lives in MainActivity: this runs for every process
+            // start, including the go-live worker's, which must never contact GitHub.
         }
 
         // Keep the sign-in alive for as long as the process runs (background play
@@ -122,6 +122,28 @@ class PureTvApp : Application() {
                 .distinctUntilChanged()
                 .collect { playback.setAudioOnlyInBackground(it) }
         }
+
+        // Go-live alerts. The notification channel exists from the first run so the
+        // viewer can find it in Android settings; the background worker is scheduled
+        // only while alerts are on and someone is signed in, and cancelled
+        // otherwise; the in-app timer runs while the app is on screen. All three
+        // are local: nothing is pushed to the phone, PureTV asks Twitch itself.
+        appScope.launch {
+            koinApp.koin.get<GoLiveNotifications>().ensureChannel()
+        }
+        appScope.launch {
+            koinApp.koin.get<AppSettingsStore>().flow
+                .map { it.liveNotifications && it.accessToken.isNotBlank() }
+                .distinctUntilChanged()
+                .collect { wanted ->
+                    GoLiveScheduler.sync(this@PureTvApp, wanted)
+                    // Alerts stopped (switched off, signed out): the first poll after
+                    // they resume seeds silently instead of announcing a backlog.
+                    if (!wanted) runCatching { koinApp.koin.get<LiveFollowsMonitor>().alertsStopped() }
+                }
+        }
+        koinApp.koin.get<GoLiveMonitor>().start(appScope)
+
         // "Even out loud and quiet audio" switches live: the player's audio
         // processor reads the flag on the audio thread.
         appScope.launch {

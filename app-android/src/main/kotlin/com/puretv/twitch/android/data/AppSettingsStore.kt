@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.model.AppSettings
@@ -68,6 +69,10 @@ class AppSettingsStore(
         val PIP_ON_LEAVE = booleanPreferencesKey("pip_on_leave")
         val AUDIO_ONLY_IN_BACKGROUND = booleanPreferencesKey("audio_only_in_background")
 
+        // Go-live alerts.
+        val LIVE_NOTIFICATIONS = booleanPreferencesKey("live_notifications")
+        val NOTIFY_MUTED_LOGINS = stringSetPreferencesKey("notify_muted_logins")
+
         // Audio normalizer (Wave 4).
         val AUDIO_NORMALIZER = booleanPreferencesKey("audio_normalizer")
     }
@@ -123,6 +128,8 @@ class AppSettingsStore(
             backgroundPlay = prefs[Keys.BACKGROUND_PLAY] ?: AppSettings().backgroundPlay,
             pipOnLeave = prefs[Keys.PIP_ON_LEAVE] ?: AppSettings().pipOnLeave,
             audioOnlyInBackground = prefs[Keys.AUDIO_ONLY_IN_BACKGROUND] ?: AppSettings().audioOnlyInBackground,
+            liveNotifications = prefs[Keys.LIVE_NOTIFICATIONS] ?: AppSettings().liveNotifications,
+            notifyMutedLogins = prefs[Keys.NOTIFY_MUTED_LOGINS] ?: emptySet(),
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
@@ -173,6 +180,8 @@ class AppSettingsStore(
             prefs[Keys.BACKGROUND_PLAY] = next.backgroundPlay
             prefs[Keys.PIP_ON_LEAVE] = next.pipOnLeave
             prefs[Keys.AUDIO_ONLY_IN_BACKGROUND] = next.audioOnlyInBackground
+            prefs[Keys.LIVE_NOTIFICATIONS] = next.liveNotifications
+            prefs[Keys.NOTIFY_MUTED_LOGINS] = next.notifyMutedLogins.mapTo(HashSet()) { it.lowercase() }
             // Audio normalizer (Wave 4).
             prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
         }

@@ -3,6 +3,9 @@ package com.puretv.twitch.desktop.ui
 import com.puretv.twitch.core.playback.SleepStatus
 import com.puretv.twitch.core.playback.SleepTimer
 import com.puretv.twitch.core.playback.SleepTimerText
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 /** What the player screen shows for the sleep timer. */
 data class SleepUi(
@@ -51,4 +54,24 @@ class SleepTimerController(clock: () -> Long) {
         )
         SleepStatus.Expired -> SleepUi(expired = true)
     }
+}
+
+/**
+ * One sleep timer for the whole watching session, owned by App so it survives the move
+ * between the stream screen and multi-stream. [ui] is observable; the screens that show it
+ * call [onActivity] for keys and mouse moves, and App calls [tick] while it runs.
+ */
+class SleepSession(clock: () -> Long = System::currentTimeMillis) {
+    private val controller = SleepTimerController(clock)
+
+    var ui by mutableStateOf(SleepUi())
+        private set
+
+    fun cycle() { ui = controller.cycle() }
+
+    fun set(minutes: Int) { ui = controller.set(minutes) }
+
+    fun onActivity() { controller.onActivity()?.let { ui = it } }
+
+    fun tick(): SleepUi = controller.tick().also { ui = it }
 }

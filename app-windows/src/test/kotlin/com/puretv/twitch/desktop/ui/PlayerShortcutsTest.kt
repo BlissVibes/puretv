@@ -120,4 +120,48 @@ class PlayerShortcutsTest {
         // No en or em dashes in anything the viewer reads (code points 0x2013 and 0x2014).
         assertTrue(PlayerShortcuts.help.none { row -> (row.keys + row.what).any { it.code == 0x2013 || it.code == 0x2014 } })
     }
+
+    private fun multi(code: Int, ctrl: Boolean = false, alt: Boolean = false, text: Boolean = false, repeat: Boolean = false) =
+        MultiShortcuts.actionFor(code, ctrl, alt, text, repeat)
+
+    @Test fun multiStreamKeysAreVolumeMuteSleepAndMove() {
+        assertEquals(MultiShortcutAction.VolumeUp, multi(KeyEvent.VK_UP))
+        assertEquals(MultiShortcutAction.VolumeDown, multi(KeyEvent.VK_DOWN))
+        assertEquals(MultiShortcutAction.ToggleMute, multi(KeyEvent.VK_M))
+        assertEquals(MultiShortcutAction.CycleSleepTimer, multi(KeyEvent.VK_Z))
+        assertEquals(MultiShortcutAction.MoveEarlier, multi(KeyEvent.VK_LEFT, ctrl = true))
+        assertEquals(MultiShortcutAction.MoveLater, multi(KeyEvent.VK_RIGHT, ctrl = true))
+    }
+
+    @Test fun multiStreamLeavesOtherKeysAndModifiersAlone() {
+        assertNull(multi(KeyEvent.VK_LEFT))
+        assertNull(multi(KeyEvent.VK_UP, ctrl = true))
+        assertNull(multi(KeyEvent.VK_M, alt = true))
+        assertNull(multi(KeyEvent.VK_F))
+    }
+
+    @Test fun multiStreamKeysDoNothingWhileTyping() {
+        assertNull(multi(KeyEvent.VK_M, text = true))
+        assertNull(multi(KeyEvent.VK_UP, text = true))
+        assertNull(multi(KeyEvent.VK_LEFT, ctrl = true, text = true))
+    }
+
+    @Test fun onlyVolumeRepeatsInMultiStream() {
+        assertEquals(MultiShortcutAction.VolumeUp, multi(KeyEvent.VK_UP, repeat = true))
+        assertNull(multi(KeyEvent.VK_M, repeat = true))
+        assertNull(multi(KeyEvent.VK_Z, repeat = true))
+        assertNull(multi(KeyEvent.VK_RIGHT, ctrl = true, repeat = true))
+    }
+
+    @Test fun theMultiStreamHintHasNoLongDashes() {
+        assertTrue(MultiShortcuts.HINT.none { it.code == 0x2013 || it.code == 0x2014 })
+    }
+
+    @Test fun upFromMutedBringsBackSoundEvenWhenTheStoredVolumeIsZero() {
+        assertEquals(40 to false, MultiShortcuts.nudged(40, soundOff = true, up = true))
+        assertEquals(5 to false, MultiShortcuts.nudged(0, soundOff = true, up = true))
+        assertEquals(40 to true, MultiShortcuts.nudged(40, soundOff = true, up = false))
+        assertEquals(45 to false, MultiShortcuts.nudged(40, soundOff = false, up = true))
+        assertEquals(0 to false, MultiShortcuts.nudged(0, soundOff = false, up = false))
+    }
 }

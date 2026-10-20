@@ -215,11 +215,17 @@ fun App(
                     route = Route.Stream(login)
                 }
             }
-            // Go-live toasts skip the channel that is open on screen.
+            // Go-live toasts skip the channel that is open on screen. Multi-stream tells the
+            // notifier about its own tiles (and clears them when it closes).
             LaunchedEffect(route, windowVisible) {
                 val r = route
                 onWatching(if (windowVisible && r is Route.Stream) r.login else null)
             }
+            // One sleep timer for watching: it carries from a stream into multi-stream and back,
+            // and is off again once PureTV is on any other screen.
+            val sleep = remember { SleepSession() }
+            val watching = route is Route.Stream || route is Route.Multi
+            LaunchedEffect(watching) { if (!watching) sleep.set(0) }
             // The mini player is only ever a stream's: any other screen, and any request to bring
             // PureTV forward, puts the normal window back, so it can never be left stuck small.
             LaunchedEffect(route) { if (route !is Route.Stream) shell.exitMini() }
@@ -332,12 +338,14 @@ fun App(
                                         shell.exitImmersive()
                                         route = Route.Multi(r.login)
                                     },
+                                    sleep = sleep,
                                 )
                                 is Route.Multi -> MultiViewContent(
                                     koin = koin,
                                     initialLogin = r.login,
                                     onBack = { route = Route.Channel(r.login) },
                                     onWatchSingle = { login -> route = Route.Stream(login) },
+                                    sleep = sleep,
                                     onRequestSignIn = {
                                         destination = Destination.ACCOUNT
                                         route = Route.Top

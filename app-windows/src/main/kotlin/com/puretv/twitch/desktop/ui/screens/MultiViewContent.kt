@@ -30,18 +30,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
@@ -60,14 +67,18 @@ import com.puretv.twitch.desktop.ui.components.LocalBadgeIndex
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
+import com.puretv.twitch.desktop.ui.MultiShortcutAction
+import com.puretv.twitch.desktop.ui.MultiShortcuts
 import com.puretv.twitch.desktop.ui.MultiTile
 import com.puretv.twitch.desktop.ui.MultiViewLayout
 import com.puretv.twitch.desktop.ui.MultiViewState
 import com.puretv.twitch.desktop.ui.MultiViewUiState
 import com.puretv.twitch.desktop.ui.MultiViewViewModel
+import com.puretv.twitch.desktop.ui.SleepSession
 import com.puretv.twitch.desktop.ui.TileInfo
 import com.puretv.twitch.desktop.ui.components.AdBlockPill
 import com.puretv.twitch.desktop.ui.components.Avatar
+import com.puretv.twitch.desktop.ui.components.PlayerNoticeStrip
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
@@ -78,8 +89,12 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import kotlinx.coroutines.delay
 import org.koin.core.Koin
 import org.koin.core.parameter.parametersOf
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
+import java.awt.event.KeyEvent
 import kotlin.math.roundToInt
 
 private val TILE_GAP = 8.dp
@@ -105,6 +120,8 @@ fun MultiViewContent(
     onBack: () -> Unit,
     onWatchSingle: (String) -> Unit,
     onRequestSignIn: () -> Unit = {},
+    // Owned by App, so the timer started on the stream screen carries on here.
+    sleep: SleepSession = remember { SleepSession() },
 ) {
     val viewModel = rememberDesktopViewModel(initialLogin) {
         koin.get<MultiViewViewModel> { parametersOf(initialLogin) }
@@ -138,7 +155,82 @@ fun MultiViewContent(
         label = "multiChatGap",
     )
 
-    Row(modifier = Modifier.fillMaxSize().background(c.surfaceLowest).padding(8.dp)) {
+    // Shortcuts are read at the AWT level like the stream screen (the video surfaces are native
+    // windows that can take focus from Compose), and stand down while a text box has focus.
+    var chatFocused by remember { mutableStateOf(false) }
+    var pickerFocused by remember { mutableStateOf(false) }
+    val pickerShown = pickerOpen && layout.canAdd
+    LaunchedEffect(pickerShown) { if (!pickerShown) pickerFocused = false }
+    LaunchedEffect(chatOpen) { if (!chatOpen) chatFocused = false }
+    val latestTyping = rememberUpdatedState(chatFocused || pickerFocused)
+    val latestState = rememberUpdatedState(state)
+    DisposableEffect(Unit) {
+        var heldKey = 0
+        val dispatcher = KeyEventDispatcher { e ->
+            // Any key press is the viewer being there (sleep timer), typing in chat included.
+            if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
+            if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == heldKey) heldKey = 0
+            if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
+            val isRepeat = e.keyCode == heldKey
+            heldKey = e.keyCode
+            val action = MultiShortcuts.actionFor(
+                keyCode = e.keyCode,
+                ctrl = e.isControlDown,
+                alt = e.isAltDown,
+                textInputFocused = latestTyping.value,
+                isRepeat = isRepeat,
+            ) ?: return@KeyEventDispatcher false
+            val activeId = latestState.value.layout.activeId
+            when (action) {
+                MultiShortcutAction.VolumeUp -> viewModel.nudgeVolume(up = true)
+                MultiShortcutAction.VolumeDown -> viewModel.nudgeVolume(up = false)
+                MultiShortcutAction.ToggleMute -> viewModel.toggleMute()
+                MultiShortcutAction.CycleSleepTimer -> sleep.cycle()
+                MultiShortcutAction.MoveEarlier -> activeId?.let { viewModel.move(it, -1) }
+                MultiShortcutAction.MoveLater -> activeId?.let { viewModel.move(it, 1) }
+            }
+            true
+        }
+        val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        kfm.addKeyEventDispatcher(dispatcher)
+        onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+    }
+
+    // Sleep timer: at the end every tile is stopped (leaving the screen frees them all) and
+    // PureTV leaves multi-stream, out of fullscreen too.
+    val latestOnBack by rememberUpdatedState(onBack)
+    LaunchedEffect(sleep.ui.running) {
+        while (sleep.ui.running) {
+            delay(1_000)
+            if (sleep.tick().expired) {
+                shell.exitImmersive()
+                latestOnBack()
+            }
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(c.surfaceLowest)
+            .padding(8.dp)
+            .pointerInput(Unit) {
+                // Only genuine cursor movement counts as "still here" for the sleep timer.
+                var lastPos: Offset? = null
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == PointerEventType.Move) {
+                            val pos = event.changes.firstOrNull()?.position
+                            if (pos != null && pos != lastPos) {
+                                lastPos = pos
+                                sleep.onActivity()
+                            }
+                        }
+                    }
+                }
+            },
+    ) {
         Column(
             modifier = Modifier.weight(1f).fillMaxHeight(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -152,7 +244,14 @@ fun MultiViewContent(
                 onTogglePicker = { pickerOpen = !pickerOpen },
                 onVolume = viewModel::setVolume,
                 onToggleMute = viewModel::toggleMute,
+                sleepLabel = sleep.ui.label,
+                sleepRunning = sleep.ui.running,
+                onCycleSleep = sleep::cycle,
             )
+
+            // The timer's last-minute warning sits in the column like the stream screen's
+            // notice strip: a native video surface would paint over anything floating.
+            PlayerNoticeStrip(text = sleep.ui.warning)
 
             AnimatedVisibility(
                 visible = pickerOpen && layout.canAdd,
@@ -162,6 +261,7 @@ fun MultiViewContent(
                 AddChannelPanel(
                     koin = koin,
                     shown = layout,
+                    onFocusChanged = { pickerFocused = it },
                     onAdd = { login ->
                         if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
                     },
@@ -191,6 +291,10 @@ fun MultiViewContent(
                                     isActive = tile.id == layout.activeId,
                                     onActivate = { viewModel.setActive(tile.id) },
                                     onClose = { closeTile(tile.id) },
+                                    canMoveEarlier = tile.id != layout.tiles.first().id,
+                                    canMoveLater = tile.id != layout.tiles.last().id,
+                                    onMoveEarlier = { viewModel.move(tile.id, -1) },
+                                    onMoveLater = { viewModel.move(tile.id, 1) },
                                 )
                             } else {
                                 Box(Modifier)
@@ -198,6 +302,14 @@ fun MultiViewContent(
                         }
                     }
                 }
+                Text(
+                    MultiShortcuts.HINT,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
             }
         }
 
@@ -212,6 +324,7 @@ fun MultiViewContent(
                 channelName = layout.active?.let { state.info[it.id]?.displayName ?: it.login },
                 onClose = { shell.toggleChat() },
                 onRequestSignIn = onRequestSignIn,
+                onInputFocusChanged = { chatFocused = it },
             )
         }
     }
@@ -227,6 +340,7 @@ private fun MultiChatColumn(
     channelName: String?,
     onClose: () -> Unit,
     onRequestSignIn: () -> Unit,
+    onInputFocusChanged: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     val chat by viewModel.chatState.collectAsState()
@@ -295,6 +409,7 @@ private fun MultiChatColumn(
             replyingTo = chat.replyingTo,
             onCancelReply = viewModel::cancelReply,
             onSend = viewModel::sendChat,
+            onFocusChanged = onInputFocusChanged,
             onRequestSignIn = onRequestSignIn,
         )
     }
@@ -330,6 +445,10 @@ private fun Tile(
     isActive: Boolean,
     onActivate: () -> Unit,
     onClose: () -> Unit,
+    canMoveEarlier: Boolean,
+    canMoveLater: Boolean,
+    onMoveEarlier: () -> Unit,
+    onMoveLater: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     Column(modifier = Modifier.fillMaxSize()) {
@@ -396,6 +515,24 @@ private fun Tile(
                 )
             }
             if (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null) AdBlockPill(info.adBlockStatus)
+            if (canMoveEarlier || canMoveLater) {
+                ExpressiveIconButton(
+                    icon = ExpressiveIcons.ArrowLeft,
+                    contentDescription = "Move ${info.displayName} earlier",
+                    onClick = onMoveEarlier,
+                    boxSize = 36.dp,
+                    iconSize = 18.dp,
+                    enabled = canMoveEarlier,
+                )
+                ExpressiveIconButton(
+                    icon = ExpressiveIcons.ArrowRight,
+                    contentDescription = "Move ${info.displayName} later",
+                    onClick = onMoveLater,
+                    boxSize = 36.dp,
+                    iconSize = 18.dp,
+                    enabled = canMoveLater,
+                )
+            }
             ExpressiveIconButton(
                 icon = ExpressiveIcons.Close,
                 contentDescription = "Close ${info.displayName}",
@@ -417,6 +554,9 @@ private fun MultiTopBar(
     onTogglePicker: () -> Unit,
     onVolume: (Int) -> Unit,
     onToggleMute: () -> Unit,
+    sleepLabel: String,
+    sleepRunning: Boolean,
+    onCycleSleep: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     val layout = state.layout
@@ -459,6 +599,12 @@ private fun MultiTopBar(
             modifier = Modifier.width(150.dp),
         )
         ExpressiveButton(
+            text = sleepLabel,
+            onClick = onCycleSleep,
+            style = if (sleepRunning) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
+            size = ExpressiveButtonSize.Medium,
+        )
+        ExpressiveButton(
             text = if (pickerOpen) "Hide" else "Add channel",
             onClick = onTogglePicker,
             style = ExpressiveButtonStyle.Tonal,
@@ -482,7 +628,7 @@ private fun MultiTopBar(
  * channel by name.
  */
 @Composable
-private fun AddChannelPanel(koin: Koin, shown: MultiViewState, onAdd: (String) -> Unit) {
+private fun AddChannelPanel(koin: Koin, shown: MultiViewState, onFocusChanged: (Boolean) -> Unit, onAdd: (String) -> Unit) {
     val c = PureTvTheme.colors
     val rail = rememberDesktopViewModel { koin.get<FollowedRailViewModel>() }
     val railState by rail.state.collectAsState()
@@ -525,7 +671,7 @@ private fun AddChannelPanel(koin: Koin, shown: MultiViewState, onAdd: (String) -
                     cursorBrush = SolidColor(c.primary),
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                     keyboardActions = KeyboardActions(onDone = { submit() }),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().onFocusChanged { onFocusChanged(it.isFocused) },
                 )
             }
             ExpressiveButton(text = "Add", onClick = ::submit, size = ExpressiveButtonSize.Medium, icon = ExpressiveIcons.Add)

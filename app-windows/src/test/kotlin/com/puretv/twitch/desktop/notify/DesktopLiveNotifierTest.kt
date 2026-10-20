@@ -75,4 +75,15 @@ class DesktopLiveNotifierTest {
         assertEquals(1, tray.shown.size)
         assertEquals("bob", notifier.consumeRecentTarget(), "the toast is about bob alone")
     }
+
+    @Test fun everyMultiStreamTileIsSkippedUntilItsListIsCleared() {
+        val tray = Tray()
+        val notifier = DesktopLiveNotifier(tray.deliver)
+        notifier.alsoWatching = setOf("alice", "bob")
+        notifier.show(listOf(s("Alice"), s("bob")))
+        assertTrue(tray.shown.isEmpty())
+        notifier.alsoWatching = emptySet()
+        notifier.show(listOf(s("alice")))
+        assertEquals(1, tray.shown.size)
+    }
 }

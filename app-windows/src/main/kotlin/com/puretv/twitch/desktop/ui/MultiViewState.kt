@@ -67,6 +67,17 @@ data class MultiViewState(
         return copy(tiles = moved)
     }
 
+    /**
+     * The state with tile [id] moved [delta] places along the grid order (-1 is one
+     * earlier). The tile it passes takes its old place. Nothing moves past either end.
+     */
+    fun move(id: Int, delta: Int): MultiViewState {
+        val i = tiles.indexOfFirst { it.id == id }
+        val j = i + delta
+        if (i < 0 || j !in tiles.indices) return this
+        return swap(id, tiles[j].id)
+    }
+
     /** The best quality any tile may play right now (see [TileQuality.capFor]). */
     fun qualityCap(preference: StreamQuality): StreamQuality = TileQuality.capFor(tiles.size, preference)
 

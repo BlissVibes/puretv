@@ -34,6 +34,17 @@ import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.playback.ChannelFlip
+import com.puretv.twitch.core.playback.ContinueItem
+import com.puretv.twitch.core.playback.ContinueWatching
+import com.puretv.twitch.core.playback.RecentChannel
+import com.puretv.twitch.core.vod.WatchProgress
+import com.puretv.twitch.tv.data.db.VodProgressDao
+import com.puretv.twitch.tv.data.db.WatchHistoryDao
+import com.puretv.twitch.tv.data.db.WatchHistoryEntry
+import com.puretv.twitch.tv.data.db.toCore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import com.puretv.twitch.core.playback.FlipDirection
 import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.core.playback.PendingFlip
@@ -82,6 +93,8 @@ data class HomeUiState(
     val topStreams: List<StreamInfo> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** The "Continue watching" row: live channels, then broadcasts to resume, then offline channels. */
+    val continueWatching: List<ContinueItem> = emptyList(),
 )
 
 /**
@@ -102,9 +115,18 @@ class HomeViewModel(
     private val cachedStreamDao: CachedStreamDao,
     private val tokenRefresher: TokenRefresher,
     private val liveFollows: LiveFollowsMonitor,
+    private val watchHistoryDao: WatchHistoryDao,
+    private val vodProgressDao: VodProgressDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+
+    // The pieces of the "Continue watching" row. Each can change on its own (history
+    // and VOD positions are Room flows, live status arrives with a refresh), and the
+    // row is rebuilt from all of them by core's ContinueWatching.
+    private var recentChannels: List<RecentChannel> = emptyList()
+    private var resumableVods: List<WatchProgress> = emptyList()
+    private var lookedUpLive: Map<String, StreamInfo> = emptyMap()
 
     // Once the network returns a fresh top-streams list, stop letting the cached
     // snapshot overwrite it (the cache is only for the instant first paint).
@@ -115,6 +137,19 @@ class HomeViewModel(
     private var refreshJob: Job? = null
 
     init {
+        // "Continue watching": channels watched before, and broadcasts left part way.
+        viewModelScope.launch {
+            watchHistoryDao.observeRecent().collect { history ->
+                recentChannels = history.map { RecentChannel(it.channelLogin, it.channelDisplayName) }
+                rebuildContinueWatching()
+            }
+        }
+        viewModelScope.launch {
+            vodProgressDao.observeRecent().collect { rows ->
+                resumableVods = rows.map { it.toCore() }
+                rebuildContinueWatching()
+            }
+        }
         // Cached-first: paint last session's streams instantly, before any network.
         viewModelScope.launch {
             cachedStreamDao.observeAll().collect { cached ->
@@ -181,7 +216,34 @@ class HomeViewModel(
                     error = if (!ok && it.topStreams.isEmpty()) "Couldn't load. Check your connection and try again." else null,
                 )
             }
+            refreshContinueLive()
         }
+    }
+
+    /**
+     * Which recently watched channels are live right now. The follows and top streams
+     * already answered for many of them; only the rest are asked about (one call, at most
+     * a dozen logins, and none when everyone is already known).
+     */
+    private suspend fun refreshContinueLive() {
+        val s = _state.value
+        val known = (s.followedLive + s.topStreams).associateBy { it.userLogin.lowercase() }
+        val ask = ContinueWatching.loginsToCheck(recentChannels, known.keys)
+        lookedUpLive = if (ask.isEmpty()) {
+            emptyMap()
+        } else {
+            runCatching { streamRepository.streamsForChannels(ask) }
+                .map { found -> found.associateBy { it.userLogin.lowercase() } }
+                .getOrDefault(lookedUpLive)
+        }
+        rebuildContinueWatching()
+    }
+
+    private fun rebuildContinueWatching() {
+        val s = _state.value
+        val live = (s.topStreams + s.followedLive + lookedUpLive.values).associateBy { it.userLogin.lowercase() }
+        val items = ContinueWatching.build(recentChannels, resumableVods, live)
+        _state.update { if (it.continueWatching == items) it else it.copy(continueWatching = items) }
     }
 
     /**
@@ -470,6 +532,7 @@ class StreamViewModel(
     private val sevenTvEventClient: SevenTvEventClient,
     private val liveFollows: LiveFollowsMonitor,
     private val flipOrigin: FlipOrigin,
+    private val watchHistoryDao: WatchHistoryDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(StreamUiState(channelLogin = channelLogin))
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -507,6 +570,39 @@ class StreamViewModel(
     private var sleepJob: Job? = null
     private var lastFlipDirection = FlipDirection.NEXT
     @Volatile private var signedIn = false
+
+    // Watch history ("Continue watching" on Home). A channel counts once its first frame
+    // is up, and its time is added when the viewer flips away or leaves. The writes
+    // outlive the view model on purpose: leaving the screen cancels viewModelScope.
+    private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var watchedLogin: String? = null
+    private var watchStartedAtMs = 0L
+
+    private fun startWatchHistory() {
+        if (watchedLogin != null) return
+        val login = currentLogin
+        val name = _state.value.channel?.displayName?.takeIf { it.isNotBlank() } ?: login
+        val now = System.currentTimeMillis()
+        watchedLogin = login
+        watchStartedAtMs = now
+        historyScope.launch {
+            // Never an upsert: that would reset the channel's watch time on every visit.
+            runCatching {
+                watchHistoryDao.insertIfAbsent(WatchHistoryEntry(login, name, now, 0L))
+                watchHistoryDao.touch(login, name, now)
+                watchHistoryDao.prune()
+            }
+        }
+    }
+
+    private fun endWatchHistory() {
+        val login = watchedLogin ?: return
+        watchedLogin = null
+        val now = System.currentTimeMillis()
+        val watchedMs = now - watchStartedAtMs
+        if (watchedMs <= 0) return
+        historyScope.launch { runCatching { watchHistoryDao.addWatchTime(login, watchedMs, now) } }
+    }
 
     private fun newChatTimeline(login: String) =
         ChatTimeline(login, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
@@ -552,6 +648,7 @@ class StreamViewModel(
      */
     private fun openChannel(login: String) {
         channelJob?.cancel()
+        endWatchHistory()
         currentLogin = login
         openTiming = StreamOpenTiming(login)
         chatTimeline = newChatTimeline(login)
@@ -833,7 +930,10 @@ class StreamViewModel(
     }
 
     /** The player put this stream's first frame on screen (local timing only). */
-    fun onFirstFrame() = openTiming.mark("first_frame")
+    fun onFirstFrame() {
+        openTiming.mark("first_frame")
+        startWatchHistory()
+    }
 
     /** A quality picked in the player: applied by the screen and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
@@ -849,6 +949,7 @@ class StreamViewModel(
 
     override fun onCleared() {
         super.onCleared()
+        endWatchHistory()
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
     }

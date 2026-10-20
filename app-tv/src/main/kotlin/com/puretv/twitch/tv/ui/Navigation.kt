@@ -65,6 +65,7 @@ fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) 
             TvHomeScreen(
                 onOpenStream = { navController.navigate(Routes.stream(it)) },
                 onOpenChannel = { navController.navigate(Routes.channel(it)) },
+                onOpenVod = { navController.navigate(Routes.vod(it)) },
                 onOpenFollowing = { navController.navigate(Routes.FOLLOWING) },
                 onOpenBrowse = { navController.navigate(Routes.BROWSE) },
                 onOpenSearch = { navController.navigate(Routes.SEARCH) },

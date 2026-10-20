@@ -67,6 +67,7 @@ class PlayerShortcutsTest {
     @Test fun everyActionHasARowInTheSheet() {
         val text = PlayerShortcuts.help.joinToString("|") { it.keys + " " + it.what }
         assertTrue("Page Up" in text && "Volume" in text && "Mute" in text && "Sleep" in text && "?" in text)
-        assertTrue(PlayerShortcuts.help.none { '–' in it.what || '—' in it.what })
+        // No en or em dashes in anything the viewer reads (code points 0x2013 and 0x2014).
+        assertTrue(PlayerShortcuts.help.none { row -> (row.keys + row.what).any { it.code == 0x2013 || it.code == 0x2014 } })
     }
 }

@@ -28,9 +28,11 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mood
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.OpenInFull
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -104,6 +106,8 @@ object ExpressiveIcons {
     val Fullscreen: ImageVector = Icons.Filled.Fullscreen
     val FullscreenExit: ImageVector = Icons.Filled.FullscreenExit
     val Chat: ImageVector = Icons.AutoMirrored.Filled.Chat
+    val MiniPlayer: ImageVector = Icons.Filled.PictureInPictureAlt
+    val Expand: ImageVector = Icons.Filled.OpenInFull
     val Emote: ImageVector = Icons.Filled.Mood
     val Send: ImageVector = Icons.AutoMirrored.Filled.Send
 

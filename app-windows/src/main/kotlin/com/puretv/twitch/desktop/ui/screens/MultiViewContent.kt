@@ -1,6 +1,8 @@
 package com.puretv.twitch.desktop.ui.screens
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -12,6 +14,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -34,6 +39,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.Layout
@@ -43,6 +49,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.adblock.AdBlockStatus
+import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.core.model.ChatTextSize
+import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.ui.LocalAppShell
+import com.puretv.twitch.desktop.ui.chat.ChatAppearance
+import com.puretv.twitch.desktop.ui.chat.ChatScale
+import com.puretv.twitch.desktop.ui.chat.LocalChatAppearance
+import com.puretv.twitch.desktop.ui.components.LocalBadgeIndex
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
 import com.puretv.twitch.desktop.ui.MultiTile
@@ -89,6 +104,7 @@ fun MultiViewContent(
     initialLogin: String,
     onBack: () -> Unit,
     onWatchSingle: (String) -> Unit,
+    onRequestSignIn: () -> Unit = {},
 ) {
     val viewModel = rememberDesktopViewModel(initialLogin) {
         koin.get<MultiViewViewModel> { parametersOf(initialLogin) }
@@ -108,64 +124,179 @@ fun MultiViewContent(
         }
     }
 
-    Column(
-        modifier = Modifier.fillMaxSize().background(c.surfaceLowest).padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        MultiTopBar(
-            state = state,
-            pickerOpen = pickerOpen,
-            onBack = onBack,
-            onTogglePicker = { pickerOpen = !pickerOpen },
-            onVolume = viewModel::setVolume,
-            onToggleMute = viewModel::toggleMute,
-        )
+    val appSettings by remember { koin.get<DesktopSettingsStore>() }.settings.collectAsState()
+    val shell = LocalAppShell.current
+    val chatOpen = shell.isChatOpen
+    val chatWidth by animateDpAsState(
+        targetValue = if (chatOpen) CHAT_WIDTH else 0.dp,
+        animationSpec = tween(PureTvMotion.Medium),
+        label = "multiChatWidth",
+    )
+    val chatGap by animateDpAsState(
+        targetValue = if (chatOpen) TILE_GAP else 0.dp,
+        animationSpec = tween(PureTvMotion.Medium),
+        label = "multiChatGap",
+    )
 
-        AnimatedVisibility(
-            visible = pickerOpen && layout.canAdd,
-            enter = expandVertically() + fadeIn(),
-            exit = shrinkVertically() + fadeOut(),
+    Row(modifier = Modifier.fillMaxSize().background(c.surfaceLowest).padding(8.dp)) {
+        Column(
+            modifier = Modifier.weight(1f).fillMaxHeight(),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            AddChannelPanel(
-                koin = koin,
-                shown = layout,
-                onAdd = { login ->
-                    if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
-                },
+            MultiTopBar(
+                state = state,
+                pickerOpen = pickerOpen,
+                chatOpen = chatOpen,
+                onToggleChat = { shell.toggleChat() },
+                onBack = onBack,
+                onTogglePicker = { pickerOpen = !pickerOpen },
+                onVolume = viewModel::setVolume,
+                onToggleMute = viewModel::toggleMute,
             )
-        }
 
-        if (state.fatalError != null) {
-            Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black), contentAlignment = Alignment.Center) {
-                Text(
-                    state.fatalError!!,
-                    color = c.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.padding(24.dp),
+            AnimatedVisibility(
+                visible = pickerOpen && layout.canAdd,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut(),
+            ) {
+                AddChannelPanel(
+                    koin = koin,
+                    shown = layout,
+                    onAdd = { login ->
+                        if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
+                    },
                 )
             }
-        } else {
-            TileGrid(count = layout.count, modifier = Modifier.weight(1f).fillMaxWidth()) {
-                // Keyed by tile id so a tile keeps its video surface when the grid is
-                // rearranged: moving a surface to a new parent would destroy its window.
-                layout.tiles.forEach { tile ->
-                    key(tile.id) {
-                        val info = state.info[tile.id]
-                        if (info != null) {
-                            Tile(
-                                tile = tile,
-                                info = info,
-                                isActive = tile.id == layout.activeId,
-                                onActivate = { viewModel.setActive(tile.id) },
-                                onClose = { closeTile(tile.id) },
-                            )
-                        } else {
-                            Box(Modifier)
+
+            if (state.fatalError != null) {
+                Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black), contentAlignment = Alignment.Center) {
+                    Text(
+                        state.fatalError!!,
+                        color = c.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(24.dp),
+                    )
+                }
+            } else {
+                TileGrid(count = layout.count, modifier = Modifier.weight(1f).fillMaxWidth()) {
+                    // Keyed by tile id so a tile keeps its video surface when the grid is
+                    // rearranged: moving a surface to a new parent would destroy its window.
+                    layout.tiles.forEach { tile ->
+                        key(tile.id) {
+                            val info = state.info[tile.id]
+                            if (info != null) {
+                                Tile(
+                                    tile = tile,
+                                    info = info,
+                                    isActive = tile.id == layout.activeId,
+                                    onActivate = { viewModel.setActive(tile.id) },
+                                    onClose = { closeTile(tile.id) },
+                                )
+                            } else {
+                                Box(Modifier)
+                            }
                         }
                     }
                 }
             }
         }
+
+        Spacer(Modifier.width(chatGap))
+
+        // Chat for the active tile only; it follows the sound. Width animates to 0 when
+        // closed, and the connection stays so reopening shows the room as it is.
+        Box(Modifier.width(chatWidth).fillMaxHeight().clipToBounds()) {
+            MultiChatColumn(
+                viewModel = viewModel,
+                appSettings = appSettings,
+                channelName = layout.active?.let { state.info[it.id]?.displayName ?: it.login },
+                onClose = { shell.toggleChat() },
+                onRequestSignIn = onRequestSignIn,
+            )
+        }
+    }
+}
+
+private val CHAT_WIDTH = 392.dp
+private val CHAT_RADIUS = 24.dp
+
+@Composable
+private fun MultiChatColumn(
+    viewModel: MultiViewViewModel,
+    appSettings: AppSettings,
+    channelName: String?,
+    onClose: () -> Unit,
+    onRequestSignIn: () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    val chat by viewModel.chatState.collectAsState()
+    Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .clip(RoundedCornerShape(CHAT_RADIUS))
+                .background(c.surfaceContainer)
+                .padding(start = 20.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Chat", style = MaterialTheme.typography.titleMedium, color = c.onSurface, maxLines = 1)
+                Text(
+                    channelName ?: "No channel",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            ExpressiveIconButton(
+                icon = ExpressiveIcons.Close,
+                contentDescription = "Close chat",
+                onClick = onClose,
+                boxSize = 48.dp,
+                iconSize = 22.dp,
+            )
+        }
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(CHAT_RADIUS))
+                .background(c.surfaceContainer),
+        ) {
+            CompositionLocalProvider(
+                LocalBadgeIndex provides chat.badges,
+                LocalChatAppearance provides ChatAppearance(
+                    showTimestamps = appSettings.chatTimestamps,
+                    showBadges = appSettings.showBadges,
+                    compact = appSettings.compactMode,
+                ),
+            ) {
+                ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {
+                    // The room changes with the active tile: a fresh list state per channel.
+                    key(chat.channel) {
+                        ChatMessageList(
+                            messages = chat.messages,
+                            onReply = viewModel::startReply,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                }
+            }
+        }
+        RoomModeChips(chat.modes)
+        ChatInputBar(
+            canChat = chat.canChat,
+            emotes = chat.emotes,
+            recentMessages = chat.messages,
+            selfLogin = chat.selfLogin,
+            replyingTo = chat.replyingTo,
+            onCancelReply = viewModel::cancelReply,
+            onSend = viewModel::sendChat,
+            onRequestSignIn = onRequestSignIn,
+        )
     }
 }
 
@@ -270,6 +401,8 @@ private fun Tile(
 private fun MultiTopBar(
     state: MultiViewUiState,
     pickerOpen: Boolean,
+    chatOpen: Boolean,
+    onToggleChat: () -> Unit,
     onBack: () -> Unit,
     onTogglePicker: () -> Unit,
     onVolume: (Int) -> Unit,
@@ -322,6 +455,14 @@ private fun MultiTopBar(
             size = ExpressiveButtonSize.Medium,
             icon = ExpressiveIcons.Add,
             enabled = layout.canAdd,
+        )
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.Chat,
+            contentDescription = if (chatOpen) "Hide chat" else "Show chat",
+            onClick = onToggleChat,
+            boxSize = 48.dp,
+            iconSize = 24.dp,
+            tint = if (chatOpen) c.primary else c.onSurfaceVariant,
         )
     }
 }

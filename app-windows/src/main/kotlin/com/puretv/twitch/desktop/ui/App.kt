@@ -322,6 +322,10 @@ fun App(
                                     initialLogin = r.login,
                                     onBack = { route = Route.Channel(r.login) },
                                     onWatchSingle = { login -> route = Route.Stream(login) },
+                                    onRequestSignIn = {
+                                        destination = Destination.ACCOUNT
+                                        route = Route.Top
+                                    },
                                 )
                                 is Route.Vod -> VodPlayerContent(
                                     koin = koin,

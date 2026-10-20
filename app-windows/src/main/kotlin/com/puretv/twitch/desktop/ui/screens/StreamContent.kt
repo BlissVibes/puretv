@@ -546,7 +546,7 @@ fun StreamContent(
  * is explained before it is typed. Takes no space when the room is open.
  */
 @Composable
-private fun RoomModeChips(modes: ChatRoomModes) {
+internal fun RoomModeChips(modes: ChatRoomModes) {
     val labels = remember(modes) { modes.labels() }
     if (labels.isEmpty()) return
     val c = PureTvTheme.colors
@@ -932,7 +932,7 @@ private fun MentionsEmptyState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ChatMessageList(
+internal fun ChatMessageList(
     messages: List<ChatMessage>,
     onReply: (ChatMessage) -> Unit,
     modifier: Modifier = Modifier,
@@ -1010,7 +1010,7 @@ private fun ChatMessageList(
 }
 
 @Composable
-private fun ChatInputBar(
+internal fun ChatInputBar(
     canChat: Boolean,
     emotes: List<PickableEmote>,
     onSend: (String) -> Unit,

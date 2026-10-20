@@ -2,6 +2,11 @@ package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdBlockStatus
+import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.chat.BadgeRepository
+import com.puretv.twitch.core.chat.TwitchChatClient
+import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.stream.PlayableStreamCache
@@ -70,12 +75,25 @@ class MultiViewViewModel(
     private val playableStreamCache: PlayableStreamCache,
     private val settingsStore: DesktopSettingsStore,
     private val channelRepository: ChannelRepository,
+    chatClient: TwitchChatClient,
+    emoteRepository: EmoteRepository,
+    badgeRepository: BadgeRepository,
+    apiClient: TwitchApiClient,
 ) : DesktopViewModel() {
 
     private val _state = MutableStateFlow(
         MultiViewUiState(layout = MultiViewState().add(initialLogin)),
     )
     val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
+
+    // One chat connection for the whole screen, following the active tile.
+    private val chat = MultiChatSession(
+        chatClient, emoteRepository, badgeRepository, channelRepository, apiClient, settingsStore, scope,
+    )
+    val chatState: StateFlow<MultiChatState> = chat.state
+    fun startReply(message: ChatMessage) = chat.startReply(message)
+    fun cancelReply() = chat.cancelReply()
+    fun sendChat(text: String) = chat.send(text)
 
     /** What runs behind one tile. Touched on several coroutines, so only under [lock]. */
     private class Runtime(
@@ -99,6 +117,10 @@ class MultiViewViewModel(
     init {
         scope.launch { startProxy() }
         _state.value.layout.tiles.forEach { openRuntime(it) }
+        // Chat belongs to the active tile: when the sound moves, so does the chat.
+        scope.launch {
+            _state.map { it.layout.active?.login }.distinctUntilChanged().collect { chat.switchTo(it) }
+        }
         // One loop watches every tile for a picture that froze while still "playing".
         scope.launch {
             while (true) {
@@ -328,6 +350,7 @@ class MultiViewViewModel(
 
     /** Stops and frees every tile, so leaving the screen leaves nothing playing or decoding. */
     override fun onCleared() {
+        chat.close()
         val ids = synchronized(lock) { runtimes.keys.toList() }
         ids.forEach { closeRuntime(it) }
     }

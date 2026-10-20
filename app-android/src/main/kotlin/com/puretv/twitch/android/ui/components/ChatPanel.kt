@@ -75,6 +75,8 @@ import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.RankChip
+import com.puretv.twitch.core.chat.missingRankChips
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ComposerSuggestion
 import com.puretv.twitch.core.chat.completeWord
@@ -371,23 +373,21 @@ private fun ChatMessageRow(
                 if (badges === BadgeIndex.EMPTY) emptyList()
                 else message.badges.mapNotNull { badges.resolve(it.setId, it.version) }
             }
+            val missingChips = remember(message, badges) { missingRankChips(message, badges) }
             if (!showBadges) {
                 // Badges turned off: name and message only.
-            } else if (resolvedBadges.isNotEmpty()) {
+            } else {
                 // Badge art is square (BadgeIndex picks the 2x CDN image).
                 resolvedBadges.forEach { badge ->
                     AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(18.dp))
                 }
-            } else {
-                // Art not loaded yet (or this channel returned none): text chips keep
-                // rank legible meanwhile.
-                if (message.isBroadcaster) {
-                    ChatBadgeChip("HOST", c.primary, c.onPrimary)
-                } else if (message.isModerator) {
-                    ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
-                }
-                if (message.isSubscriber) {
-                    ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+                // Art not loaded yet (or missing for this rank): a text chip keeps it legible.
+                missingChips.forEach { chip ->
+                    when (chip) {
+                        RankChip.HOST -> ChatBadgeChip("HOST", c.primary, c.onPrimary)
+                        RankChip.MOD -> ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+                        RankChip.SUB -> ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+                    }
                 }
             }
             Text(

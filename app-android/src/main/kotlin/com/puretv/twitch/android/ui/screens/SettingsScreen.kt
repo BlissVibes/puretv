@@ -143,6 +143,8 @@ fun SettingsScreen(onBack: () -> Unit) {
         ChatPanel(
             selected = ChatTextSize.from(state.settings.chatFontSize),
             onSelect = viewModel::setChatTextSize,
+            showBadges = state.settings.showBadges,
+            onShowBadgesChange = viewModel::setShowBadges,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -566,7 +568,12 @@ private fun NotificationsPanel(
  * Android and are not restored here.
  */
 @Composable
-private fun ChatPanel(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) {
+private fun ChatPanel(
+    selected: ChatTextSize,
+    onSelect: (ChatTextSize) -> Unit,
+    showBadges: Boolean,
+    onShowBadgesChange: (Boolean) -> Unit,
+) {
     val c = PureTvTheme.colors
     ExpressivePanel {
         Column {
@@ -584,6 +591,22 @@ private fun ChatPanel(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) 
                 items(ChatTextSize.entries) { size ->
                     ExpressiveFilterChip(label = size.label, selected = size == selected, onClick = { onSelect(size) })
                 }
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Show badges", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "Show subscriber, moderator and other badges next to names. Off keeps chat to names and messages.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = showBadges, onCheckedChange = onShowBadgesChange)
             }
         }
     }

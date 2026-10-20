@@ -106,10 +106,11 @@ class ChatTimeline(
             when (event) {
                 is ChatEvent.Message -> out += ChatChange.Add(incoming(event.message, decorate))
                 is ChatEvent.SelfState -> onSelfState(event)
-                // A moderator timed out or banned someone (target set) or cleared the
-                // whole room (no target). Twitch drops that history, so the rows are
-                // tombstoned rather than removed: "<message deleted>" keeps the
-                // conversation around them readable, as Chatterino does.
+                // A moderator timed out or banned someone (target set): that user's rows
+                // are tombstoned rather than removed, so "<message deleted>" keeps the
+                // conversation around them readable, as Chatterino does. A full /clear
+                // (no target) only appends a "Chat cleared by a moderator" row; the
+                // existing rows stay as they are.
                 is ChatEvent.ClearChat -> out += event.targetUser
                     ?.let { ChatChange.DeleteUser(it) }
                     ?: ChatChange.Add(systemRow("Chat cleared by a moderator"))

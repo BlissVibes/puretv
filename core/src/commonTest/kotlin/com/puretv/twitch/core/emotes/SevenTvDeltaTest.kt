@@ -58,3 +58,26 @@ class SevenTvDeltaTest {
         assertNull(applySevenTvDelta(current, SevenTvEmoteDelta()))
     }
 }
+
+class SevenTvReplayTest {
+
+    private fun emote(name: String) =
+        ChannelEmote(id = name, name = name, url = "https://cdn/$name", provider = EmoteProvider.SEVENTV, animated = false)
+
+    @Test
+    fun aFreshListKeepsChangesPushedWhileItLoaded() {
+        val deltas = listOf(
+            SevenTvEmoteDelta(added = listOf(emote("new"))),
+            SevenTvEmoteDelta(removed = listOf(emote("old"))),
+        )
+        val result = replaySevenTvDeltas(listOf(emote("old"), emote("keep")), deltas)
+        assertEquals(listOf("keep", "new"), result.map { it.name })
+    }
+
+    @Test
+    fun aListThatAlreadyHasTheChangesComesOutTheSame() {
+        val deltas = listOf(SevenTvEmoteDelta(added = listOf(emote("new")), removed = listOf(emote("old"))))
+        val base = listOf(emote("keep"), emote("new"))
+        assertEquals(base, replaySevenTvDeltas(base, deltas))
+    }
+}

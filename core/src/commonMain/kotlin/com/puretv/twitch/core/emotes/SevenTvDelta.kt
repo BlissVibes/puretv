@@ -27,3 +27,12 @@ fun applySevenTvDelta(current: List<ChannelEmote>, delta: SevenTvEmoteDelta): Li
     if (afterRemoval.size == current.size && additions.isEmpty()) return null
     return afterRemoval + additions
 }
+
+/**
+ * Lay the live [deltas] that arrived while [base] was being fetched back over it,
+ * in order, so a fresh REST list does not undo an emote change the EventAPI already
+ * pushed. The deltas are idempotent, so a base that already includes some of them
+ * comes out the same.
+ */
+fun replaySevenTvDeltas(base: List<ChannelEmote>, deltas: List<SevenTvEmoteDelta>): List<ChannelEmote> =
+    deltas.fold(base) { acc, delta -> applySevenTvDelta(acc, delta) ?: acc }

@@ -235,7 +235,6 @@ fun TvStreamScreen(
                         chatVisible = chatVisible,
                         hasError = current.playbackError != null,
                         upDownFlips = current.upDownFlips,
-                        okPauses = current.okPauses,
                     ),
                 )
                 if (RemoteKeys.isActivity(key)) {

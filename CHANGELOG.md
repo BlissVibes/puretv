@@ -36,6 +36,21 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
   the picture back when you return. You can turn this off in Settings.
 - **Quality menu on the phone player.** Pick Auto, Source, a resolution, or
   Audio only right from the player.
+- **Flip channels without leaving the picture.** On TV, press Up or Down
+  while you watch (or the Channel keys on your remote) to jump to the next or
+  previous channel. On Windows, use Page Up and Page Down. It flips through the
+  channels you follow that are live, or else the row you opened the stream from,
+  and the next channels are made ready ahead of time so a flip is quick. On TV,
+  OK now shows the controls instead of pausing, and Settings can turn the
+  Up/Down flipping off.
+- **Sleep timer (TV and Windows).** Pick 15, 30, 60, 90 or 120 minutes and the
+  stream stops by itself. A minute before the end PureTV says so, and any key
+  press (or moving the mouse on Windows) gives you another 15 minutes.
+- **Keyboard shortcuts on Windows.** Up and Down change the volume, M mutes,
+  Z sets the sleep timer, and ? shows all the shortcuts.
+- **Continue watching on TV.** Home now shows channels you watched recently
+  (live ones first, with their live picture) and past broadcasts you left part
+  way, so you can pick up where you were.
 
 ### Improved
 - **Streams start sooner.** The video starts loading the moment you open a
@@ -95,6 +110,12 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **The ad-block badge tells the truth.** It no longer carries the last
   channel's state over to a new one, and on Windows it no longer stays green
   while an ad is being skipped. It says "SKIPPING AD" while that happens.
+- **Moving from one stream to another on Windows could stop the new stream.**
+  Clicking another channel in the rail while watching could end with the new
+  stream stopped. The old stream's clean-up no longer gets in the way.
+- **TV Back button now steps out gently.** Back closes chat first, then hides
+  the controls, then leaves the stream. The quality buttons can be reached with
+  the D-pad now.
 
 ## 1.12.1 - 2026-10-17
 

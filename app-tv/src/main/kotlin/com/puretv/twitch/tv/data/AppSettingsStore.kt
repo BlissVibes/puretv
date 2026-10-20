@@ -74,7 +74,6 @@ class AppSettingsStore(
 
         // Remote control (Wave 4).
         val TV_REMOTE_FLIP = booleanPreferencesKey("tv_remote_flip")
-        val TV_OK_PAUSES = booleanPreferencesKey("tv_ok_pauses")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -119,7 +118,6 @@ class AppSettingsStore(
             audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
             // Remote control (Wave 4).
             tvRemoteFlip = prefs[Keys.TV_REMOTE_FLIP] ?: AppSettings().tvRemoteFlip,
-            tvOkPauses = prefs[Keys.TV_OK_PAUSES] ?: AppSettings().tvOkPauses,
         )
     }
         // The corruption handler above covers a file DataStore can parse but not
@@ -167,7 +165,6 @@ class AppSettingsStore(
             prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
             // Remote control (Wave 4).
             prefs[Keys.TV_REMOTE_FLIP] = next.tvRemoteFlip
-            prefs[Keys.TV_OK_PAUSES] = next.tvOkPauses
         }
     }
 

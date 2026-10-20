@@ -35,11 +35,10 @@ class RemoteKeysTest {
         }
     }
 
-    @Test fun okShowsTheControlsUnlessItIsSetToPause() {
+    @Test fun okShowsTheControlsWhenHiddenAndPressesTheFocusedOneWhenVisible() {
         assertEquals(RemoteAction.ShowControls, decide(RemoteKey.Center, hidden))
-        assertEquals(RemoteAction.TogglePlayPause, decide(RemoteKey.Center, hidden.copy(okPauses = true)))
-        // With the controls up, OK is the focused control's, even when it is set to pause.
-        assertEquals(RemoteAction.PassThrough, decide(RemoteKey.Center, shown.copy(okPauses = true)))
+        assertEquals(RemoteAction.ShowControls, decide(RemoteKey.Center, chat))
+        assertEquals(RemoteAction.PassThrough, decide(RemoteKey.Center, shown))
     }
 
     @Test fun okRetriesAFailedStreamEverywhere() {

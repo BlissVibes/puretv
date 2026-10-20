@@ -40,8 +40,6 @@ data class RemoteState(
     val hasError: Boolean = false,
     /** Settings > Up and Down change channel. Off, they show the controls instead. */
     val upDownFlips: Boolean = true,
-    /** Settings > OK pauses while the controls are hidden, instead of showing them. */
-    val okPauses: Boolean = false,
 )
 
 /**
@@ -69,7 +67,6 @@ object RemoteKeys {
         RemoteKey.Center -> when {
             state.hasError -> RemoteAction.Retry
             state.controlsVisible -> RemoteAction.PassThrough
-            state.okPauses -> RemoteAction.TogglePlayPause
             else -> RemoteAction.ShowControls
         }
         RemoteKey.Up, RemoteKey.Down -> when {

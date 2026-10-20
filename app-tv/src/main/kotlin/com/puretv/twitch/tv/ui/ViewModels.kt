@@ -495,8 +495,6 @@ data class StreamUiState(
 
     /** Settings > Up and Down change channel (off: they show the controls instead). */
     val upDownFlips: Boolean = true,
-    /** Settings > OK pauses while the controls are hidden, instead of showing them. */
-    val okPauses: Boolean = false,
 
     // Channel flipping. The channel can change without leaving the screen (see
     // StreamViewModel.flip), so the screen reads the login from here, not from its route.
@@ -631,7 +629,6 @@ class StreamViewModel(
                         // owns it from then on.
                         quality = it.quality ?: StreamQuality.fromSetting(settings.preferredQuality),
                         upDownFlips = settings.tvRemoteFlip,
-                        okPauses = settings.tvOkPauses,
                     )
                 }
             }
@@ -1067,6 +1064,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
     // PureTvTvApp hands the saved value to the player, which applies it live.
     fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(audioNormalizer = enabled) }
+    }
+
+    fun setTvRemoteFlip(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvRemoteFlip = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

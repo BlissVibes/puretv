@@ -146,6 +146,8 @@ fun App(
     awtWindow: AwtWindow,
     onWatching: (String?) -> Unit = {},
     windowVisible: Boolean = true,
+    // Counts requests to bring the window forward (the tray's Open PureTV, a second launch).
+    frontRequests: Int = 0,
 ) {
     // coil3's setSingletonImageLoaderFactory is itself @Composable and internally
     // memoizes the singleton, so calling it here in the composable body (idempotent
@@ -218,6 +220,10 @@ fun App(
                 val r = route
                 onWatching(if (windowVisible && r is Route.Stream) r.login else null)
             }
+            // The mini player is only ever a stream's: any other screen, and any request to bring
+            // PureTV forward, puts the normal window back, so it can never be left stuck small.
+            LaunchedEffect(route) { if (route !is Route.Stream) shell.exitMini() }
+            LaunchedEffect(frontRequests) { if (frontRequests > 0) shell.exitMini() }
             // Hidden in the tray, nothing should keep playing or keep chat sockets open:
             // leaving the stream (or VOD) route disposes its player and chat.
             LaunchedEffect(windowVisible) {
@@ -233,7 +239,7 @@ fun App(
             // darker ground they would just look like arbitrary rounding.
             Surface(modifier = Modifier.fillMaxSize(), color = c.surfaceLowest) {
                 Column(modifier = Modifier.fillMaxSize()) {
-                    if (shell.playerMode != PlayerMode.FULLSCREEN) {
+                    if (shell.playerMode != PlayerMode.FULLSCREEN && shell.playerMode != PlayerMode.MINI) {
                         CustomTitleBar(shell = shell, onClose = onClose, awtWindow = awtWindow)
                         if (!updateDismissed) {
                             UpdateBanner(

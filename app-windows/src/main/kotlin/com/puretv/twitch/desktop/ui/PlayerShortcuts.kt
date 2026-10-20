@@ -17,6 +17,7 @@ enum class ShortcutAction {
     ToggleMute,
     CycleSleepTimer,
     ToggleHelp,
+    ToggleMini,
 }
 
 /**
@@ -27,7 +28,8 @@ enum class ShortcutAction {
  *
  * F fullscreen, T theater, C chat, Space play/pause, Esc leaves fullscreen or theater
  * (and closes the shortcuts sheet), F3 upscaling stats (mpv), PageUp/PageDown change
- * channel, Up/Down volume, M mute, Z sleep timer, ? (Shift+/) or F1 this list.
+ * channel, Up/Down volume, M mute, Z sleep timer, I mini player (Esc leaves it too),
+ * ? (Shift+/) or F1 this list.
  * Hold X compares the upscaler off and is handled separately because it needs the
  * release event too.
  */
@@ -91,8 +93,24 @@ object PlayerShortcuts {
             KeyEvent.VK_DOWN -> ShortcutAction.VolumeDown
             KeyEvent.VK_M -> ShortcutAction.ToggleMute
             KeyEvent.VK_Z -> ShortcutAction.CycleSleepTimer
+            KeyEvent.VK_I -> ShortcutAction.ToggleMini
             else -> null
         }
+    }
+
+    /**
+     * Whether [action] means anything in the mini player, which has no chat, no menus and
+     * no room for the shortcuts sheet. Those keys are swallowed there rather than left to
+     * change state the viewer cannot see.
+     */
+    fun worksInMini(action: ShortcutAction): Boolean = when (action) {
+        ShortcutAction.ToggleFullscreen,
+        ShortcutAction.ToggleTheater,
+        ShortcutAction.ToggleChat,
+        ShortcutAction.ToggleStats,
+        ShortcutAction.ToggleHelp,
+        -> false
+        else -> true
     }
 
     /** The volume after one Up or Down press from [volume] (0 to 100). */
@@ -107,7 +125,8 @@ object PlayerShortcuts {
         Help("F", "Fullscreen"),
         Help("T", "Theater mode"),
         Help("C", "Show or hide chat"),
-        Help("Esc", "Leave fullscreen or theater"),
+        Help("I", "Mini player"),
+        Help("Esc", "Leave fullscreen, theater or the mini player"),
         Help("Page Up / Page Down", "Next or previous channel"),
         Help("Up / Down", "Volume"),
         Help("M", "Mute"),

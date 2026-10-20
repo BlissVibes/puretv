@@ -248,6 +248,7 @@ fun main(args: Array<String>) {
                 onWatching = { notifier.watchingLogin = it },
                 awtWindow = window,
                 windowVisible = windowVisible,
+                frontRequests = frontRequests,
             )
         }
     }

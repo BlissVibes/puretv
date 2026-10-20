@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -105,7 +106,9 @@ import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.player.VlcPlayerView
+import com.puretv.twitch.desktop.ui.DoubleClickDetector
 import com.puretv.twitch.desktop.ui.LocalAppShell
+import com.puretv.twitch.desktop.ui.MiniControlStrip
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
 import com.puretv.twitch.desktop.ui.ShortcutAction
@@ -174,6 +177,7 @@ private val CHAT_PANEL_RADIUS = 24.dp
  *   F3     upscaling stats (mpv)  Esc    exit immersive
  *   PageUp/PageDown  next/previous channel (see [onFlip])
  *   Up/Down  volume                M  mute      Z  sleep timer      ?  all shortcuts
+ *   I      mini player (the window shrinks into a corner; Esc or the expand button returns)
  * The keys themselves are decided by [PlayerShortcuts].
  *
  * [onFlip] asks the app to open another channel's stream. Flipping rebuilds this
@@ -213,7 +217,8 @@ fun StreamContent(
     val appSettings by settingsStore.settings.collectAsState()
     val shell = LocalAppShell.current
     val mode = shell.playerMode
-    val isChatOpen = shell.isChatOpen
+    val mini = mode == PlayerMode.MINI
+    val isChatOpen = shell.isChatOpen && !mini
     val c = PureTvTheme.colors
 
     // The App shell itself collapses its own outer inset and pane rounding to 0 in
@@ -344,6 +349,18 @@ fun StreamContent(
     // In-player Playback menu (gear): resolution / scaling / engine.
     var settingsMenuOpen by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
+    // The mini player has no room for the menu or the shortcuts list.
+    // Chat is hidden there too: drop its focus so the keys reach the player, not an invisible box.
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(mini) {
+        if (mini) {
+            settingsMenuOpen = false
+            helpOpen = false
+            chatInputFocused = false
+            focusManager.clearFocus(force = true)
+        }
+    }
+    val miniDoubleClick = remember { DoubleClickDetector() }
     val latestHelpOpen = rememberUpdatedState(helpOpen)
     val latestVolume = rememberUpdatedState(playerStatus.volume)
     val latestMuted = rememberUpdatedState(playerStatus.isMuted)
@@ -387,6 +404,7 @@ fun StreamContent(
                 menuOpen = latestMenuOpen.value,
                 isRepeat = isRepeat,
             ) ?: return@KeyEventDispatcher false
+            if (m == PlayerMode.MINI && !PlayerShortcuts.worksInMini(action)) return@KeyEventDispatcher true
             when (action) {
                 ShortcutAction.ToggleFullscreen -> shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN)
                 ShortcutAction.ToggleTheater -> shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER)
@@ -410,6 +428,7 @@ fun StreamContent(
                 }
                 ShortcutAction.ToggleMute -> { latestViewModel.value.toggleMute(); resetControls() }
                 ShortcutAction.CycleSleepTimer -> { sleepUi = sleepController.cycle(); resetControls() }
+                ShortcutAction.ToggleMini -> shell.setPlayerMode(if (m == PlayerMode.MINI) PlayerMode.DEFAULT else PlayerMode.MINI)
             }
             true
         }
@@ -471,7 +490,7 @@ fun StreamContent(
             ) {
                 // Top bar: always in DEFAULT, slides up when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
-                    visible = controlsVisible || mode == PlayerMode.DEFAULT,
+                    visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
                     enter = slideInVertically { -it } + fadeIn(),
                     exit = slideOutVertically { -it } + fadeOut(),
                 ) {
@@ -537,6 +556,10 @@ fun StreamContent(
                                 // them back so moving the mouse reveals the controls,
                                 // including in fullscreen, where the surface covers all.
                                 onUserActivity = { resetControls() },
+                                // Mini player: a double click on the video goes back to the full window.
+                                onClick = if (mini) {
+                                    { if (miniDoubleClick.click(System.currentTimeMillis())) shell.setPlayerMode(PlayerMode.DEFAULT) }
+                                } else null,
                             )
                             else -> Text(
                                 if (state.isLoading) "Loading stream…" else "This channel is offline.",
@@ -570,14 +593,14 @@ fun StreamContent(
                     // Flip banner and the sleep timer's last-minute warning, then the
                     // shortcuts list: between the video and the controls like the menu above.
                     PlayerNoticeStrip(
-                        text = flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleepUi.warning,
+                        text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleepUi.warning,
                     )
                     ShortcutsSheet(visible = helpOpen)
                 }
 
                 // Controls bar: always in DEFAULT, slides down when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
-                    visible = controlsVisible || mode == PlayerMode.DEFAULT,
+                    visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
                     enter = slideInVertically { it } + fadeIn(),
                     exit = slideOutVertically { it } + fadeOut(),
                 ) {
@@ -595,7 +618,23 @@ fun StreamContent(
                         onToggleChat = { shell.toggleChat() },
                         onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
                         onToggleFullscreen = { shell.setPlayerMode(if (mode == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN) },
+                        onToggleMini = { shell.setPlayerMode(PlayerMode.MINI) },
                         radius = panelRadius,
+                    )
+                }
+
+                if (mini) {
+                    MiniControlStrip(
+                        shell = shell,
+                        title = flipTarget?.let { "Switching to $it" } ?: state.channel?.displayName ?: channelLogin,
+                        isPlaying = playerStatus.isPlaying,
+                        volume = playerStatus.volume,
+                        isMuted = playerStatus.isMuted,
+                        onTogglePlayPause = viewModel::togglePlayPause,
+                        onToggleMute = viewModel::toggleMute,
+                        onVolumeChange = viewModel::setVolume,
+                        onExpand = { shell.setPlayerMode(PlayerMode.DEFAULT) },
+                        onClose = { shell.exitMini(); latestOnBack() },
                     )
                 }
             }
@@ -801,6 +840,7 @@ private fun PlaybackControls(
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onToggleMini: () -> Unit,
     radius: Dp,
 ) {
     val c = PureTvTheme.colors
@@ -832,6 +872,7 @@ private fun PlaybackControls(
             onToggleChat = onToggleChat,
             onToggleTheater = onToggleTheater,
             onToggleFullscreen = onToggleFullscreen,
+            onToggleMini = onToggleMini,
         )
     }
 }
@@ -903,6 +944,7 @@ private fun ConnectedControlsGroup(
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
     onToggleFullscreen: () -> Unit,
+    onToggleMini: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     Row(
@@ -921,6 +963,8 @@ private fun ConnectedControlsGroup(
         ControlsGroupButton(ExpressiveIcons.Chat, "Toggle chat", onToggleChat, tint = if (isChatOpen) c.primary else null)
         GroupDivider()
         ControlsGroupButton(ExpressiveIcons.AspectRatio, "Theater mode", onToggleTheater, tint = if (mode == PlayerMode.THEATER) c.primary else null)
+        GroupDivider()
+        ControlsGroupButton(ExpressiveIcons.MiniPlayer, "Mini player", onToggleMini)
         GroupDivider()
         ControlsGroupButton(
             icon = if (mode == PlayerMode.FULLSCREEN) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,

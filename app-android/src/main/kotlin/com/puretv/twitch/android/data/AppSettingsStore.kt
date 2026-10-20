@@ -67,6 +67,9 @@ class AppSettingsStore(
         val BACKGROUND_PLAY = booleanPreferencesKey("background_play")
         val PIP_ON_LEAVE = booleanPreferencesKey("pip_on_leave")
         val AUDIO_ONLY_IN_BACKGROUND = booleanPreferencesKey("audio_only_in_background")
+
+        // Audio normalizer (Wave 4).
+        val AUDIO_NORMALIZER = booleanPreferencesKey("audio_normalizer")
     }
 
     /** Mirrors [SecureTokenStore]; updated explicitly by [setSession]/[clearSession]. */
@@ -123,6 +126,8 @@ class AppSettingsStore(
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
+            // Audio normalizer (Wave 4).
+            audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
         )
     }
         // The corruption handler on the delegate covers a file DataStore can
@@ -168,6 +173,8 @@ class AppSettingsStore(
             prefs[Keys.BACKGROUND_PLAY] = next.backgroundPlay
             prefs[Keys.PIP_ON_LEAVE] = next.pipOnLeave
             prefs[Keys.AUDIO_ONLY_IN_BACKGROUND] = next.audioOnlyInBackground
+            // Audio normalizer (Wave 4).
+            prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
         }
     }
 

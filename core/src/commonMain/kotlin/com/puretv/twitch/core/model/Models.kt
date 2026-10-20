@@ -293,4 +293,9 @@ data class AppSettings(
     // 7TV name paints (Windows only for now)
     // Draw chatters' 7TV name paints (gradient names) in chat.
     val showSevenTvPaints: Boolean = true,
+
+    // Audio normalizer (Wave 4): evens out loud and quiet audio with the shared
+    // curve in `audio.AudioNormalizerProfile`. Off by default because it changes
+    // the broadcaster's mix. Instant on mpv, phone and TV; VLC after a restart.
+    val audioNormalizer: Boolean = false,
 )

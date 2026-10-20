@@ -289,4 +289,8 @@ data class AppSettings(
     val tvChatMode: String = TV_CHAT_OVER_VIDEO,
     // How solid the chat panel is, from 0.4 (see-through) to 1.
     val tvChatOpacity: Float = 0.85f,
+
+    // 7TV name paints (Windows only for now)
+    // Draw chatters' 7TV name paints (gradient names) in chat.
+    val showSevenTvPaints: Boolean = true,
 )

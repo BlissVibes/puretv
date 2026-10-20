@@ -169,6 +169,7 @@ class DesktopSettingsStore(
         val compactMode: Boolean = false,
         val upscalingMode: String = "off",
         val playbackBackend: String = "vlc",
+        val showSevenTvPaints: Boolean = true,
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -190,6 +191,7 @@ class DesktopSettingsStore(
         compactMode = compactMode,
         upscalingMode = parseUpscalingMode(upscalingMode),
         playbackBackend = parsePlaybackBackend(playbackBackend),
+        showSevenTvPaints = showSevenTvPaints,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -213,6 +215,7 @@ class DesktopSettingsStore(
         compactMode = compactMode,
         upscalingMode = upscalingMode.name.lowercase(),
         playbackBackend = playbackBackend.name.lowercase(),
+        showSevenTvPaints = showSevenTvPaints,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

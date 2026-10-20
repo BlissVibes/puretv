@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.ui.CategoryViewModel
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
@@ -81,6 +82,7 @@ fun CategoryContent(
         koin.get<CategoryViewModel> { parametersOf(gameId, gameName) }
     }
     val state by viewModel.state.collectAsState()
+    val flipOrigin = remember { koin.get<FlipOrigin>() }
     val displayName = state.gameName.ifBlank { gameName }
 
     LazyVerticalGrid(
@@ -122,7 +124,14 @@ fun CategoryContent(
             }
 
             else -> items(state.streams, key = { it.id }) { stream ->
-                CategoryStreamCard(stream = stream, onClick = { onOpenChannel(stream.userLogin) })
+                CategoryStreamCard(
+                    stream = stream,
+                    onClick = {
+                        // PageUp/PageDown in the player flip through this category.
+                        flipOrigin.record(state.streams.map { it.userLogin })
+                        onOpenChannel(stream.userLogin)
+                    },
+                )
             }
         }
     }

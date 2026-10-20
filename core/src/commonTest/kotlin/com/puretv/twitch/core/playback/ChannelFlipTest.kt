@@ -42,9 +42,10 @@ class ChannelFlipTest {
         assertEquals(opened, ChannelFlip.ringFor("q", listOf("x", "y"), opened))
     }
 
-    @Test fun aRingWithoutTheCurrentChannelGetsItInFront() {
-        assertEquals(listOf("lone", "p", "q"), ChannelFlip.ringFor("lone", null, listOf("p", "q")))
+    @Test fun aChannelInNeitherRowFlipsThroughNothing() {
+        assertEquals(listOf("lone"), ChannelFlip.ringFor("lone", listOf("x"), listOf("p", "q")))
         assertEquals(listOf("lone"), ChannelFlip.ringFor("lone", null, emptyList()))
+        assertNull(ChannelFlip.step(ChannelFlip.ringFor("lone", null, listOf("p")), "lone", FlipDirection.NEXT))
     }
 
     @Test fun duplicatesAreDroppedKeepingTheFirst() {

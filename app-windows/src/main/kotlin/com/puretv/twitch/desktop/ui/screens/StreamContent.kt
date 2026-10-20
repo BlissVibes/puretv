@@ -95,11 +95,22 @@ import com.puretv.twitch.desktop.ui.chat.LocalChatAppearance
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.UpscalingMode
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import com.puretv.twitch.core.playback.ChannelFlip
+import com.puretv.twitch.core.playback.FlipDirection
+import com.puretv.twitch.core.playback.FlipOrigin
+import com.puretv.twitch.core.playback.PendingFlip
+import com.puretv.twitch.core.playback.PrewarmGate
+import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.PlayerMode
+import com.puretv.twitch.desktop.ui.PlayerShortcuts
+import com.puretv.twitch.desktop.ui.ShortcutAction
+import com.puretv.twitch.desktop.ui.SleepTimerController
+import com.puretv.twitch.desktop.ui.SleepUi
 import com.puretv.twitch.desktop.ui.StreamViewModel
 import com.puretv.twitch.desktop.ui.chat.ComposerKeyAction
 import com.puretv.twitch.desktop.ui.chat.composerKeyAction
@@ -118,7 +129,9 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
 import com.puretv.twitch.desktop.ui.components.LivePill
 import com.puretv.twitch.desktop.ui.components.LocalBadgeIndex
+import com.puretv.twitch.desktop.ui.components.PlayerNoticeStrip
 import com.puretv.twitch.desktop.ui.components.PlayerSettingsMenu
+import com.puretv.twitch.desktop.ui.components.ShortcutsSheet
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
@@ -159,15 +172,31 @@ private val CHAT_PANEL_RADIUS = 24.dp
  *   F      toggle fullscreen      T  toggle theater
  *   C      toggle chat            Space  play/pause
  *   F3     upscaling stats (mpv)  Esc    exit immersive
+ *   PageUp/PageDown  next/previous channel (see [onFlip])
+ *   Up/Down  volume                M  mute      Z  sleep timer      ?  all shortcuts
+ * The keys themselves are decided by [PlayerShortcuts].
+ *
+ * [onFlip] asks the app to open another channel's stream. Flipping rebuilds this
+ * screen's view model for the new channel while this composable (and the video
+ * surface) stays in place.
  */
 @Composable
-fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onRequestSignIn: () -> Unit = {}) {
+fun StreamContent(
+    koin: Koin,
+    channelLogin: String,
+    onBack: () -> Unit,
+    onRequestSignIn: () -> Unit = {},
+    onFlip: (String) -> Unit = {},
+) {
     val viewModel = rememberDesktopViewModel(channelLogin) {
         koin.get<StreamViewModel> { parametersOf(channelLogin) }
     }
     val state by viewModel.state.collectAsState()
     val isFollowed by viewModel.isFollowed.collectAsState()
     val vlcPlayer = remember { koin.get<DesktopPlayer>() }
+    // Once a stream has had a video surface, a flip to the next channel keeps it mounted.
+    var keepSurface by remember { mutableStateOf(false) }
+    if (state.playableUrl != null && !keepSurface) keepSurface = true
     // The live screen never reads positionMs/durationMs, yet the backend emits a new
     // PlayerStatus on every time tick (VLC ~4Hz, mpv several Hz). Collecting the raw
     // flow here would recompose the ENTIRE screen, including the 200-row chat
@@ -214,6 +243,12 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
     var hideJob by remember { mutableStateOf<Job?>(null) }
     val currentMode by rememberUpdatedState(mode)
 
+    // Sleep timer (Z, or the Playback menu). Mouse moves and key presses are the "still
+    // here" signal: in the last minute they add 15 minutes. At the end the stream is left.
+    val sleepController = remember { SleepTimerController(System::currentTimeMillis) }
+    var sleepUi by remember { mutableStateOf(SleepUi()) }
+    val latestOnBack by rememberUpdatedState(onBack)
+
     fun resetControls() {
         controlsVisible = true
         hideJob?.cancel()
@@ -223,8 +258,67 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                 controlsVisible = false
             }
         }
+        sleepController.onActivity()?.let { sleepUi = it }
     }
     LaunchedEffect(mode) { resetControls() }
+
+    LaunchedEffect(sleepUi.running) {
+        while (sleepUi.running) {
+            delay(1_000)
+            val next = sleepController.tick()
+            sleepUi = next
+            if (next.expired) {
+                shell.exitImmersive()
+                latestOnBack()
+            }
+        }
+    }
+
+    // Channel flipping: PageUp/PageDown walk a ring of channels and only the settled
+    // target is opened (see PendingFlip). The ring is the viewer's live follows when
+    // they are signed in and watching one of them, otherwise the row the stream was
+    // opened from. A channel is prewarmed only on intent (see PrewarmGate).
+    val flipOrigin = remember { koin.get<FlipOrigin>() }
+    val liveFollows = remember { koin.get<LiveFollowsMonitor>() }
+    val streamCache = remember { koin.get<PlayableStreamCache>() }
+    val pendingFlip = remember { PendingFlip() }
+    val prewarmGate = remember { PrewarmGate(System::currentTimeMillis) }
+    var flipTarget by remember { mutableStateOf<String?>(null) }
+    var flipNote by remember { mutableStateOf<String?>(null) }
+    var flipJob by remember { mutableStateOf<Job?>(null) }
+    val latestChannel by rememberUpdatedState(channelLogin)
+    val latestOnFlip by rememberUpdatedState(onFlip)
+    // The new channel is on screen: the banner has done its job.
+    LaunchedEffect(channelLogin) { flipTarget = null }
+
+    fun flip(direction: FlipDirection) {
+        val follows = if (settingsStore.isLoggedIn) liveFollows.liveNow.value.map { it.userLogin } else null
+        val ring = ChannelFlip.ringFor(latestChannel, follows, flipOrigin.logins)
+        val target = pendingFlip.press(ring, latestChannel, direction, System.currentTimeMillis())
+        if (target == null) {
+            flipNote = "No other channel to switch to"
+            scope.launch {
+                delay(2_500)
+                flipNote = null
+            }
+            return
+        }
+        // Both neighbours are warm by the time the viewer settles on one.
+        prewarmGate.take(ChannelFlip.neighbours(ring, latestChannel) + target).forEach(streamCache::prewarm)
+        flipTarget = target
+        flipJob?.cancel()
+        flipJob = scope.launch {
+            delay(PendingFlip.SETTLE_MS)
+            val next = pendingFlip.takeDue(latestChannel, System.currentTimeMillis())
+            if (next == null) {
+                flipTarget = null
+                return@launch
+            }
+            // Heading the same way, the channel after this one is the likeliest next.
+            ChannelFlip.step(ring, next, direction)?.let { prewarmGate.take(listOf(it)).forEach(streamCache::prewarm) }
+            latestOnFlip(next)
+        }
+    }
 
     // Player hotkeys (F/T/C/Space/Esc) are handled at the AWT KeyboardFocusManager
     // level, NOT via Compose's onKeyEvent. The heavyweight VLC video Canvas is a
@@ -245,8 +339,14 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
     var showStats by remember { mutableStateOf(false) }
     // In-player Playback menu (gear): resolution / scaling / engine.
     var settingsMenuOpen by remember { mutableStateOf(false) }
+    var helpOpen by remember { mutableStateOf(false) }
+    val latestHelpOpen = rememberUpdatedState(helpOpen)
+    val latestVolume = rememberUpdatedState(playerStatus.volume)
+    val latestViewModel = rememberUpdatedState(viewModel)
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
+            // Any key press is the viewer being there (sleep timer), typing in chat included.
+            if (e.id == KeyEvent.KEY_PRESSED) sleepController.onActivity()?.let { sleepUi = it }
             if (latestChatFocused.value) return@KeyEventDispatcher false
             // Hold-to-compare (X): preview Off while held, restore the saved mode on
             // release: instant live A/B of the upscaler. Handled before the
@@ -263,17 +363,33 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
             }
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             val m = latestMode.value
-            when (e.keyCode) {
-                KeyEvent.VK_F -> { shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN); true }
-                KeyEvent.VK_T -> { shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER); true }
-                KeyEvent.VK_C -> { shell.toggleChat(); true }
-                KeyEvent.VK_SPACE -> { viewModel.togglePlayPause(); true }
-                // Esc only acts when immersive, so it doesn't swallow a stray Esc
-                // elsewhere; in DEFAULT mode it passes through untouched.
-                KeyEvent.VK_ESCAPE -> if (m != PlayerMode.DEFAULT) { shell.exitImmersive(); true } else false
-                KeyEvent.VK_F3 -> { showStats = !showStats; true }
-                else -> false
+            val action = PlayerShortcuts.actionFor(
+                keyCode = e.keyCode,
+                keyChar = e.keyChar,
+                ctrlOrAlt = e.isControlDown || e.isAltDown,
+                immersive = m != PlayerMode.DEFAULT,
+                helpOpen = latestHelpOpen.value,
+            ) ?: return@KeyEventDispatcher false
+            when (action) {
+                ShortcutAction.ToggleFullscreen -> shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN)
+                ShortcutAction.ToggleTheater -> shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER)
+                ShortcutAction.ToggleChat -> shell.toggleChat()
+                ShortcutAction.TogglePlayPause -> latestViewModel.value.togglePlayPause()
+                ShortcutAction.ExitImmersive -> shell.exitImmersive()
+                ShortcutAction.ToggleStats -> showStats = !showStats
+                ShortcutAction.ToggleHelp -> helpOpen = !helpOpen
+                ShortcutAction.FlipNext -> flip(FlipDirection.NEXT)
+                ShortcutAction.FlipPrevious -> flip(FlipDirection.PREVIOUS)
+                ShortcutAction.VolumeUp, ShortcutAction.VolumeDown -> {
+                    latestViewModel.value.setVolume(
+                        PlayerShortcuts.steppedVolume(latestVolume.value, up = action == ShortcutAction.VolumeUp),
+                    )
+                    resetControls() // the volume slider is the feedback
+                }
+                ShortcutAction.ToggleMute -> { latestViewModel.value.toggleMute(); resetControls() }
+                ShortcutAction.CycleSleepTimer -> { sleepUi = sleepController.cycle(); resetControls() }
             }
+            true
         }
         val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
         kfm.addKeyEventDispatcher(dispatcher)
@@ -389,7 +505,9 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                                 style = MaterialTheme.typography.bodyLarge,
                                 modifier = Modifier.padding(24.dp),
                             )
-                            state.playableUrl != null -> VlcPlayerView(
+                            // keepSurface: a flip builds the next channel's state with no URL for a
+                            // moment, and the surface must not be torn down and rebuilt for it.
+                            state.playableUrl != null || keepSurface -> VlcPlayerView(
                                 vlcPlayer = vlcPlayer,
                                 modifier = Modifier.fillMaxSize(),
                                 // The heavyweight video surface eats mouse events; bridge
@@ -421,8 +539,17 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                             scalingEnabled = vlcPlayer.supportsUpscaling,
                             backend = appSettings.playbackBackend,
                             onBackendSelected = viewModel::setPlaybackBackend,
+                            sleepMinutes = sleepUi.minutes,
+                            onSleepSelected = { sleepUi = sleepController.set(it) },
                         )
                     }
+
+                    // Flip banner and the sleep timer's last-minute warning, then the
+                    // shortcuts list: between the video and the controls like the menu above.
+                    PlayerNoticeStrip(
+                        text = flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleepUi.warning,
+                    )
+                    ShortcutsSheet(visible = helpOpen)
                 }
 
                 // Controls bar: always in DEFAULT, slides down when idle in THEATER/FULLSCREEN

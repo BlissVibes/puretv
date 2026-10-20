@@ -12,6 +12,7 @@ import com.puretv.twitch.core.vod.WatchProgress
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.player.DesktopPlayer
+import com.puretv.twitch.desktop.player.PlayTicket
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,7 +39,12 @@ class VodPlayerViewModel(
     private val vodRepository: VodRepository,
     private val store: WatchProgressStore,
     private val settingsStore: DesktopSettingsStore,
+    private val playTicket: PlayTicket,
 ) : DesktopViewModel() {
+
+    // Taken when built, before a previous stream's view model is cleaned up, so its
+    // stop cannot reach this VOD (see PlayTicket).
+    private val ticket = playTicket.issue()
 
     private val vodId: String get() = launch.vodId
 
@@ -150,6 +156,6 @@ class VodPlayerViewModel(
     // the Stream and Vod routes are mutually exclusive). Mirrors StreamViewModel.
     override fun onCleared() {
         runCatching { persistProgress() }
-        player.stop()
+        playTicket.stopIfCurrent(ticket) { player.stop() }
     }
 }

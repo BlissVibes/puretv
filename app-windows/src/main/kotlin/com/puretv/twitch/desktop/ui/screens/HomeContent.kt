@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.FollowedChannel
 import com.puretv.twitch.core.vod.WatchProgress
@@ -109,6 +110,7 @@ fun HomeContent(
     val viewModel = rememberDesktopViewModel { koin.get<HomeViewModel>() }
     val state by viewModel.state.collectAsState()
 
+    val flipOrigin = remember { koin.get<FlipOrigin>() }
     val watchStore = remember { koin.get<WatchProgressStore>() }
     val progressMap by watchStore.progress.collectAsState()
     val continueItems = remember(progressMap) { watchStore.continueWatching() }
@@ -248,7 +250,11 @@ fun HomeContent(
                             viewerCount = stream.viewerCount,
                             game = stream.gameName,
                             title = stream.title,
-                            onClick = { onOpenChannel(stream.userLogin) },
+                            onClick = {
+                                // PageUp/PageDown in the player flip through this row.
+                                flipOrigin.record(state.topStreams.map { it.userLogin })
+                                onOpenChannel(stream.userLogin)
+                            },
                             modifier = Modifier.prewarmStreamOnHover(stream.userLogin),
                         )
                     }

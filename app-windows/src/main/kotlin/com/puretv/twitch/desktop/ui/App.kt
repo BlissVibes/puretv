@@ -309,6 +309,8 @@ fun App(
                                         destination = Destination.ACCOUNT
                                         route = Route.Top
                                     },
+                                    // Channel flipping swaps the stream in place.
+                                    onFlip = { login -> route = Route.Stream(login) },
                                 )
                                 is Route.Vod -> VodPlayerContent(
                                     koin = koin,

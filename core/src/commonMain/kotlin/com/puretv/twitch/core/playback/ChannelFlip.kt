@@ -33,18 +33,19 @@ object ChannelFlip {
      * The ring to flip through for [current].
      *
      * [liveFollows] are the signed-in viewer's live follows (empty or null when signed
-     * out); [opened] is the row the stream was opened from. A ring that does not hold
-     * [current] gets it put in front, so flipping from a channel page still reaches
-     * the first channel of the row instead of doing nothing. The result never repeats a login.
+     * out); [opened] is the row the stream was opened from. When [current] is in neither
+     * (a channel reached some other way, with an older row still remembered) there is
+     * nothing honest to flip through, so the ring is just [current] and a flip says so.
+     * The result never repeats a login.
      */
     fun ringFor(current: String, liveFollows: List<String>?, opened: List<String>): List<String> {
-        val base = if (!liveFollows.isNullOrEmpty() && liveFollows.any { it.equals(current, ignoreCase = true) }) {
-            liveFollows
-        } else {
-            opened
+        fun holds(row: List<String>?) = row != null && row.any { it.equals(current, ignoreCase = true) }
+        val base = when {
+            holds(liveFollows) -> liveFollows!!
+            holds(opened) -> opened
+            else -> return listOf(current)
         }
-        val ring = base.distinctBy { it.lowercase() }
-        return if (ring.any { it.equals(current, ignoreCase = true) }) ring else listOf(current) + ring
+        return base.distinctBy { it.lowercase() }
     }
 }
 

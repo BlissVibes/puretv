@@ -8,6 +8,8 @@ import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import com.puretv.twitch.core.playback.FlipOrigin
+import com.puretv.twitch.desktop.player.PlayTicket
 import androidx.compose.ui.window.TrayState
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
@@ -162,8 +164,12 @@ val desktopModule = module {
     // Category drill-down takes (gameId, gameName) from the tapped Browse card.
     factory { (gameId: String, gameName: String) -> CategoryViewModel(gameId, gameName, get()) }
     factory { SearchViewModel(get()) }
+    // Tells a stale stop from a current one when one stream replaces another (flip, rail click).
+    single { PlayTicket() }
+    // The row a stream was opened from (Home, a category), so the keyboard can flip through it.
+    single { FlipOrigin() }
     factory { (channelLogin: String) ->
-        StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }
@@ -177,7 +183,7 @@ val desktopModule = module {
     // resolving the broadcaster's own userId/login via GET /users).
     factory { LoginViewModel(get(), get(), get(), get(), get()) }
     factory { (userId: String) -> VodListViewModel(userId, get()) }
-    factory { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get()) }
+    factory { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get(), get()) }
     factory { (vodId: String, channelLogin: String) -> VodChatViewModel(vodId, channelLogin, get(), get(), get(), get()) }
 }
 

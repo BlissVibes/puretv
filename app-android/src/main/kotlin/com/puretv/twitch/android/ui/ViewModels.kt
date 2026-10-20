@@ -385,14 +385,25 @@ class StreamViewModel(
     private var selfEchoIndex: Map<String, ResolvedEmote> = emptyMap()
 
     private val openTiming = StreamOpenTiming(channelLogin)
-    private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
-    private val gaveUpListener: (androidx.media3.common.PlaybackException) -> Unit = { onPlaybackGaveUp() }
+
+    // The quality this screen last set on the player; null until it has set one.
+    @Volatile private var appliedQuality: StreamQuality? = null
+
+    /**
+     * This screen's claim on the shared player, handed to PlayerSurface. Callbacks
+     * are installed when playback actually starts, not here, so a stream opened on
+     * top of another does not take them before it plays and gets no say in them
+     * after the screen below has taken the player back.
+     */
+    val playTicket = TwitchPlayer.PlayTicket(
+        onFirstFrame = { openTiming.mark("first_frame") },
+        onGaveUp = { onPlaybackGaveUp() },
+        quality = { appliedQuality },
+    )
     private var freshSessionRetries = 0
 
     init {
         adBlockEngine.resetForNewStream()
-        twitchPlayer.onFirstFrame = firstFrameListener
-        twitchPlayer.onGaveUp = gaveUpListener
         // Playback first: resolving the stream does not need the channel info
         // below, so the player starts while the metadata and emotes load.
         viewModelScope.launch { resolvePlayable() }
@@ -466,6 +477,7 @@ class StreamViewModel(
             val settings = settingsStore.flow.first()
             val preferred = StreamQuality.fromSetting(settings.preferredQuality)
             twitchPlayer.setQuality(preferred)
+            appliedQuality = preferred
             _state.update {
                 it.copy(
                     chatFraction = settings.chatFraction,
@@ -567,6 +579,7 @@ class StreamViewModel(
     /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
         twitchPlayer.setQuality(quality)
+        appliedQuality = quality
         _state.update { it.copy(quality = quality) }
         StreamQuality.preferenceFor(quality)?.let { preference ->
             viewModelScope.launch { settingsStore.update { it.copy(preferredQuality = preference) } }
@@ -587,13 +600,14 @@ class StreamViewModel(
         // Teardown lives here, not in PlayerSurface.onDispose: onCleared fires only
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
-        twitchPlayer.stop()
-        // A stream opened on top of this one may already own the callbacks.
-        if (twitchPlayer.onFirstFrame === firstFrameListener) twitchPlayer.onFirstFrame = null
-        if (twitchPlayer.onGaveUp === gaveUpListener) twitchPlayer.onGaveUp = null
-        // In-app Back means done watching, not "keep playing in the background":
-        // the media notification goes with the stream.
-        backgroundPlayback.onStreamClosed()
+        // Only while this screen still owns the player: when a stream opened on top of
+        // another is popped, the one below has usually taken the player back by now,
+        // and clearing it here would leave that one black.
+        if (twitchPlayer.stopIfOwner(playTicket)) {
+            // In-app Back means done watching, not "keep playing in the background":
+            // the media notification goes with the stream.
+            backgroundPlayback.onStreamClosed()
+        }
     }
 
     private companion object {

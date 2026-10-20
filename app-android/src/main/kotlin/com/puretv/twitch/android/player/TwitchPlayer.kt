@@ -77,6 +77,32 @@ class TwitchPlayer(
         .build()
 
     /**
+     * What one stream screen's view model hands the player when it starts playing
+     * for it: the callbacks to install, and the quality to come back to if another
+     * stream used the shared player meanwhile (see [PlayOwnership]).
+     */
+    class PlayTicket(
+        val onFirstFrame: () -> Unit,
+        val onGaveUp: (PlaybackException) -> Unit,
+        val quality: () -> StreamQuality?,
+    )
+
+    private val ownership = PlayOwnership<PlayTicket>()
+
+    /**
+     * Stops playback and clears the callbacks, but only if [ticket] is still the one
+     * the player plays for. A stream screen that was popped after the screen below it
+     * already took the player back gets false and changes nothing.
+     */
+    fun stopIfOwner(ticket: PlayTicket): Boolean {
+        if (!ownership.release(ticket)) return false
+        stop()
+        onFirstFrame = null
+        onGaveUp = null
+        return true
+    }
+
+    /**
      * Called when the first video frame of a stream is on screen. Feeds the local
      * time-to-first-frame mark; the stream view model sets and clears it.
      */
@@ -218,7 +244,19 @@ class TwitchPlayer(
      * [metadata] is what the media notification and lock screen show.
      * [lowLatency] plays closer to live (see [liveConfiguration]).
      */
-    fun playUrl(url: String, metadata: MediaMetadata = MediaMetadata.EMPTY, lowLatency: Boolean = false) {
+    fun playUrl(
+        url: String,
+        metadata: MediaMetadata = MediaMetadata.EMPTY,
+        lowLatency: Boolean = false,
+        ticket: PlayTicket? = null,
+    ) {
+        if (ticket != null) {
+            onFirstFrame = ticket.onFirstFrame
+            onGaveUp = ticket.onGaveUp
+            // The shared player carries the last stream's quality and audio-only flags;
+            // a stream taking it back from another one restores its own.
+            if (ownership.claim(ticket)) ticket.quality()?.let(::setQuality)
+        }
         errorRetries = 0
         mainHandler.removeCallbacks(retryRunnable)
         this.lowLatency = lowLatency

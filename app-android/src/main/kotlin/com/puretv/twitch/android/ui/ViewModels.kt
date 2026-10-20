@@ -50,9 +50,12 @@ import com.puretv.twitch.core.model.ChannelEmote
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.model.VideoType
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
+import com.puretv.twitch.core.repository.VodRepository
 import com.puretv.twitch.core.perf.StreamOpenTiming
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.StreamFailures
@@ -661,19 +664,72 @@ data class ChannelUiState(
     val isLive: Boolean = false,
     val isLoading: Boolean = true,
     val error: String? = null,
+    /** Past videos, newest first, of the [videoFilter] kind (null means all). */
+    val videos: List<VideoInfo> = emptyList(),
+    val videoFilter: VideoType? = null,
+    /** Helix cursor for the next page; null when there is nothing more. */
+    val videoCursor: String? = null,
+    val videosLoading: Boolean = false,
+    val videosError: String? = null,
 )
 
 class ChannelViewModel(
     private val channelLogin: String,
     private val channelRepository: ChannelRepository,
     private val streamRepository: StreamRepository,
+    private val vodRepository: VodRepository,
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChannelUiState())
     val state: StateFlow<ChannelUiState> = _state.asStateFlow()
 
+    // Cancel-and-replace: a filter change must not have an older page land after it.
+    private var videosJob: Job? = null
+
     init { load() }
 
     fun retry() = load()
+
+    /** Shows only one kind of video (null for all of them), from the first page. */
+    fun setVideoFilter(type: VideoType?) {
+        if (_state.value.videoFilter == type) return
+        _state.update { it.copy(videoFilter = type) }
+        loadVideos(reset = true)
+    }
+
+    fun loadMoreVideos() {
+        val s = _state.value
+        if (s.videosLoading || s.videoCursor == null) return
+        loadVideos(reset = false)
+    }
+
+    fun retryVideos() = loadVideos(reset = _state.value.videos.isEmpty())
+
+    /** Same paging rules as the Windows VodListViewModel. */
+    private fun loadVideos(reset: Boolean) {
+        val userId = _state.value.channel?.id ?: return
+        // The cursor is captured now (load more wants the page that was showing);
+        // the filter is read inside, so a filter change that lands first wins.
+        val cursor = if (reset) null else _state.value.videoCursor
+        if (reset) videosJob?.cancel()
+        _state.update { it.copy(videosLoading = true, videosError = null) }
+        videosJob = viewModelScope.launch {
+            runCatching { vodRepository.videosFor(userId = userId, type = _state.value.videoFilter, after = cursor) }
+                .onSuccess { page ->
+                    _state.update {
+                        it.copy(
+                            videos = if (reset) page.videos else it.videos + page.videos,
+                            videoCursor = page.cursor,
+                            videosLoading = false,
+                        )
+                    }
+                }
+                .onFailure { e ->
+                    _state.update {
+                        it.copy(videosLoading = false, videosError = StreamFailures.classify(e).sentence("Couldn't load videos"))
+                    }
+                }
+        }
+    }
 
     private fun load() = viewModelScope.launch {
         _state.update { it.copy(isLoading = true, error = null) }
@@ -693,6 +749,7 @@ class ChannelViewModel(
                     error = if (channel == null) "Channel not found." else null,
                 )
             }
+            if (channel != null) loadVideos(reset = true)
         }.onFailure { e ->
             _state.update { it.copy(isLoading = false, error = e.message ?: "Couldn't load this channel.") }
         }

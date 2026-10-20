@@ -21,6 +21,8 @@ import com.puretv.twitch.android.ui.LoginViewModel
 import com.puretv.twitch.android.ui.SearchViewModel
 import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.StreamViewModel
+import com.puretv.twitch.android.ui.VodLaunch
+import com.puretv.twitch.android.ui.VodPlayerViewModel
 import com.puretv.twitch.android.ui.WelcomeViewModel
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.emotes.EmoteCache
@@ -95,7 +97,8 @@ val androidModule = module {
     viewModel { SearchViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
+    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }
 }

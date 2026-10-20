@@ -115,7 +115,8 @@ class MainActivity : ComponentActivity() {
 
             LaunchedEffect(navController) {
                 navController.currentBackStackEntryFlow.collect { entry ->
-                    currentRouteIsStream = entry.destination.route == Routes.STREAM
+                    // A past broadcast floats and plays on in the background like a live stream.
+                    currentRouteIsStream = entry.destination.route == Routes.STREAM || entry.destination.route == Routes.VOD
                 }
             }
 

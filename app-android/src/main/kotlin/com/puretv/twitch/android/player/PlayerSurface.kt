@@ -63,6 +63,9 @@ fun PlayerSurface(
     // Settings > Low latency, applied when a new stream starts.
     lowLatency: Boolean = false,
     modifier: Modifier = Modifier,
+    // False when the caller already started [playableUrl] itself: a VOD is
+    // played by its view model through TwitchPlayer.playVod, never playUrl.
+    startsPlayback: Boolean = true,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -84,7 +87,7 @@ fun PlayerSurface(
         // playback would needlessly re-buffer. Only a genuinely new URL prepares
         // (which also resets the transient-error retry budget for the new stream).
         val currentUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
-        if (currentUri != url) {
+        if (startsPlayback && currentUri != url) {
             twitchPlayer.playUrl(url, currentMetadata, currentLowLatency)
         }
         // Still in the foreground here, which is the only place Android 12+ lets

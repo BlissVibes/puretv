@@ -7,6 +7,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.encodeURLParameter
+import io.ktor.http.isSuccess
 import kotlin.random.Random
 
 /**
@@ -23,10 +24,26 @@ class VodResolver(
     suspend fun fetchToken(vodId: String, oauthToken: String? = null): StreamToken =
         gqlClient.fetchVodToken(vodId, oauthToken)
 
+    /**
+     * Validated like [StreamResolver.resolveMasterPlaylist]: usher refuses a
+     * subscriber-only or deleted VOD with a JSON error body, which used to come
+     * back here as a "playlist" with no variants and a URL that never plays.
+     * Throwing [UsherPlaylistException] lets [VodFailures] say why instead.
+     */
     suspend fun resolveVodMasterPlaylist(vodId: String, oauthToken: String? = null): MasterPlaylistResult {
         val token = fetchToken(vodId, oauthToken)
         val url = buildVodMasterUrl(vodId, token)
-        val raw = httpClient.get(url).bodyAsText()
+        val response = httpClient.get(url)
+        val raw = response.bodyAsText()
+        if (!response.status.isSuccess() || !raw.trimStart().startsWith("#EXTM3U")) {
+            val firstLine = raw.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty().take(180)
+            throw UsherPlaylistException(
+                "usher refused VOD $vodId: HTTP ${response.status.value} ${response.status.description}. $firstLine",
+                status = response.status.value,
+                body = raw.take(2_000),
+                tokenValue = token.value,
+            )
+        }
         return MasterPlaylistResult(masterUrl = url, rawContent = raw, variants = HlsMasterParser.parseVariants(raw))
     }
 

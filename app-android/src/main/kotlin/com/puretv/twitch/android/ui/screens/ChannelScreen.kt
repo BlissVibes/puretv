@@ -1,6 +1,18 @@
 package com.puretv.twitch.android.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
+import com.puretv.twitch.android.ui.VodLaunch
+import com.puretv.twitch.android.ui.components.ExpressiveCard
+import com.puretv.twitch.android.ui.components.ExpressiveFilterChip
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.model.VideoType
+import com.puretv.twitch.core.vod.VodFormat
+import java.time.Instant
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,15 +65,14 @@ import org.koin.core.parameter.parametersOf
 /**
  * SECTION 06.4 — channel profile: a banner that fades into the surface, an
  * avatar straddling its lower edge, identity + live status, the watch CTA, and
- * an About panel.
+ * an About panel, then the channel's past videos.
  *
- * Android's [ChannelViewModel] carries no follow state and no past-broadcasts
- * list (unlike the desktop [ChannelViewModel], which owns a local FollowStore
- * and a VodListViewModel pairing), so neither a follow toggle nor a VOD section
- * appears here: adding either would be a control the view layer cannot back.
+ * Android's [ChannelViewModel] carries no follow state (unlike the desktop
+ * [ChannelViewModel], which owns a local FollowStore), so no follow toggle
+ * appears here: it would be a control the view layer cannot back.
  */
 @Composable
-fun ChannelScreen(channelLogin: String, onWatch: () -> Unit, onBack: () -> Unit) {
+fun ChannelScreen(channelLogin: String, onWatch: () -> Unit, onOpenVod: (VodLaunch) -> Unit, onBack: () -> Unit) {
     val viewModel: ChannelViewModel = koinViewModel(parameters = { parametersOf(channelLogin) })
     val state by viewModel.state.collectAsState()
     val c = PureTvTheme.colors
@@ -78,7 +89,21 @@ fun ChannelScreen(channelLogin: String, onWatch: () -> Unit, onBack: () -> Unit)
                 BackHeader(onBack)
                 ErrorState(message = state.error ?: "Channel not found.", onRetry = viewModel::retry)
             }
-            else -> ChannelBody(state = state, channelLogin = channelLogin, onWatch = onWatch, onBack = onBack)
+            else -> ChannelBody(
+                state = state,
+                channelLogin = channelLogin,
+                onWatch = onWatch,
+                onBack = onBack,
+                videos = {
+                    VideosSection(
+                        state = state,
+                        onFilter = viewModel::setVideoFilter,
+                        onLoadMore = viewModel::loadMoreVideos,
+                        onRetry = viewModel::retryVideos,
+                        onOpen = onOpenVod,
+                    )
+                },
+            )
         }
     }
 }
@@ -97,7 +122,13 @@ private fun BackHeader(onBack: () -> Unit) {
 }
 
 @Composable
-private fun ChannelBody(state: ChannelUiState, channelLogin: String, onWatch: () -> Unit, onBack: () -> Unit) {
+private fun ChannelBody(
+    state: ChannelUiState,
+    channelLogin: String,
+    onWatch: () -> Unit,
+    onBack: () -> Unit,
+    videos: @Composable () -> Unit,
+) {
     val c = PureTvTheme.colors
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin
@@ -138,6 +169,8 @@ private fun ChannelBody(state: ChannelUiState, channelLogin: String, onWatch: ()
             IdentityBlock(displayName = displayName, state = state, onWatch = onWatch)
             Spacer(Modifier.height(24.dp))
             AboutPanel(channel?.description)
+            Spacer(Modifier.height(24.dp))
+            videos()
             Spacer(Modifier.height(32.dp))
         }
     }
@@ -256,6 +289,132 @@ private fun AboutPanel(description: String?) {
                 style = MaterialTheme.typography.bodyLarge,
                 color = if (text != null) c.onSurfaceVariant else c.outline,
             )
+        }
+    }
+}
+
+/** The filter chips, in the order Twitch's own channel page uses. Null is "All". */
+private val VIDEO_FILTERS: List<VideoType?> = listOf(null, VideoType.ARCHIVE, VideoType.HIGHLIGHT, VideoType.UPLOAD)
+
+private fun filterLabel(type: VideoType?): String = when (type) {
+    null -> "All"
+    VideoType.ARCHIVE -> "Past broadcasts"
+    VideoType.HIGHLIGHT -> "Highlights"
+    VideoType.UPLOAD -> "Uploads"
+    VideoType.UNKNOWN -> "Other"
+}
+
+/**
+ * Past broadcasts, highlights and uploads (Helix /videos), a page at a time.
+ * A plain column rather than a lazy list: it sits inside the page's own scroll,
+ * and a page is only twenty cards.
+ */
+@Composable
+private fun VideosSection(
+    state: ChannelUiState,
+    onFilter: (VideoType?) -> Unit,
+    onLoadMore: () -> Unit,
+    onRetry: () -> Unit,
+    onOpen: (VodLaunch) -> Unit,
+) {
+    val c = PureTvTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Videos", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            VIDEO_FILTERS.forEach { type ->
+                ExpressiveFilterChip(
+                    label = filterLabel(type),
+                    selected = state.videoFilter == type,
+                    onClick = { onFilter(type) },
+                )
+            }
+        }
+
+        val now = remember { System.currentTimeMillis() }
+        state.videos.forEach { video ->
+            VideoCard(
+                video = video,
+                now = now,
+                onClick = {
+                    onOpen(
+                        VodLaunch(
+                            vodId = video.id,
+                            channelLogin = video.userLogin,
+                            title = video.title,
+                            thumbnailUrl = VodFormat.thumbnail(video.thumbnailUrl),
+                        ),
+                    )
+                },
+            )
+        }
+
+        when {
+            state.videosLoading -> Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(color = c.primary)
+            }
+            state.videosError != null -> {
+                Text(state.videosError, style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
+                ExpressiveButton(text = "Try again", onClick = onRetry, style = ExpressiveButtonStyle.Tonal)
+            }
+            state.videos.isEmpty() -> Text(
+                if (state.videoFilter == null) "No videos yet." else "No ${filterLabel(state.videoFilter).lowercase()} yet.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.outline,
+            )
+            state.videoCursor != null -> ExpressiveButton(
+                text = "Load more",
+                onClick = onLoadMore,
+                style = ExpressiveButtonStyle.Tonal,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/** One video: thumbnail with its length, then the title and when it aired. */
+@Composable
+private fun VideoCard(video: VideoInfo, now: Long, onClick: () -> Unit) {
+    val c = PureTvTheme.colors
+    val shapes = PureTvTheme.shapes
+    ExpressiveCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(modifier = Modifier.width(148.dp).aspectRatio(16f / 9f).clip(shapes.thumbShape).background(c.surfaceHigh)) {
+                AsyncImage(
+                    model = VodFormat.thumbnail(video.thumbnailUrl),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+                Text(
+                    VodFormat.timecode(video.durationSeconds * 1000),
+                    style = PureTvType.dataSmall,
+                    color = Color.White,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(Color.Black.copy(alpha = 0.6f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    video.title.ifBlank { "Untitled" },
+                    style = MaterialTheme.typography.titleSmall,
+                    color = c.onSurface,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val aired = runCatching { Instant.parse(video.createdAt).toEpochMilli() }.getOrNull()
+                val meta = listOfNotNull(
+                    aired?.let { VodFormat.age(it, now) },
+                    "${formatViewerCount(video.viewCount.toLong())} views",
+                )
+                Text(meta.joinToString("  ·  "), style = PureTvType.data, color = c.onSurfaceVariant, maxLines = 1)
+            }
         }
     }
 }

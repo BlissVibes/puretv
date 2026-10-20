@@ -51,6 +51,31 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **Continue watching on TV.** Home now shows channels you watched recently
   (live ones first, with their live picture) and past broadcasts you left part
   way, so you can pick up where you were.
+- **Past broadcasts on phone and TV.** Channel pages now list a streamer's
+  past broadcasts and highlights. You can scrub through them (with preview
+  pictures), pick up where you left off, and replay the chat alongside.
+  Phone Home shows a Continue watching card for each one you left part way.
+- **Browse without signing in (Windows and TV).** Live channels, categories,
+  search and a channel's past broadcasts all work before you sign in. Sign in
+  only when you want your follows, chat or alerts.
+- **Watch several streams at once (Windows).** Open multi-stream from a
+  stream's controls and add up to four channels in one window. Click a tile
+  to listen to it; the others stay muted without reloading. Chat follows the
+  tile you are listening to, and each tile shows its own ad-skip badge.
+- **Mini player (Windows).** Press I or the Mini player button to shrink
+  PureTV into a small always-on-top window in the corner of your screen.
+  Press I, Esc or Expand to come back.
+- **Even out loud and quiet audio.** A new setting turns down sudden loud
+  parts and brings up quiet ones. It is off to start with. On Windows with the
+  VLC engine it applies after a restart; everywhere else it switches at once.
+- **7TV name paints (Windows).** Chatters' coloured and gradient names from
+  7TV now show in chat. You can turn this off in Settings. PureTV only listens
+  for them and never tells 7TV what you are watching.
+- **Chat looks the same everywhere.** Phone and TV chat now show real badge
+  pictures, deleted messages, subs, raids and highlights for mentions, and
+  the room's slow, emote-only, followers-only and subscribers-only modes. 7TV
+  emote changes appear live. On TV you can put chat over the video or beside
+  it and choose how see-through it is.
 
 ### Improved
 - **Streams start sooner.** The video starts loading the moment you open a

@@ -6,6 +6,7 @@ import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.api.retryOnceIfUnauthorized
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.core.emotes.EmoteCache
 import com.puretv.twitch.core.emotes.PersistentEmoteCache
 import com.puretv.twitch.core.storage.FileTextStore
@@ -125,7 +126,8 @@ val tvModule = module {
     // HomeViewModel(streamRepo, userRepo, settings, cachedStreamDao, tokenRefresher,
     // liveFollows): cached-first paint/write-through, the on-failure token refresh
     // so "Live Now" survives token expiry, and the shared live follows monitor.
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
+    // + watchHistoryDao and vodProgressDao for the "Continue watching" row.
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get(), get()) }
     // TvFollowingViewModel(followedChannelsSource, settings): the Following
     // destination's own nav-rail screen, see TvFollowingScreen.
     viewModel { TvFollowingViewModel(get(), get()) }
@@ -134,7 +136,13 @@ val tvModule = module {
     viewModel { BrowseViewModel(get(), get()) }
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { SearchViewModel(get()) }
-    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
+    // The row a stream was opened from (Home, a category, Continue watching), so the
+    // remote can flip through it. Screens record it when a card is opened.
+    single { FlipOrigin() }
+    // StreamViewModel(login, streams, channels, chat, emotes, adBlock, settings, cache,
+    // badges, 7TV, liveFollows, flipOrigin, watchHistory): a channel flip switches inside
+    // this view model, and what is watched lands in the watch history.
+    viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get(), get()) }
     viewModel { (launch: VodLaunch) -> TvVodViewModel(launch, get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }

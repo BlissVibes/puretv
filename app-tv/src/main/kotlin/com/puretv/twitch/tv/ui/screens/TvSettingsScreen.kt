@@ -117,6 +117,14 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
         TvDivider()
 
         TvPanel {
+            RemoteControlSection(
+                upDownFlips = state.settings.tvRemoteFlip,
+                onUpDownFlipsChange = viewModel::setTvRemoteFlip,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
             ChatTextSizeSection(
                 selected = ChatTextSize.from(state.settings.chatFontSize),
                 onSelect = viewModel::setChatTextSize,
@@ -318,6 +326,36 @@ private fun StreamQualitySection(
                 )
             }
             Switch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
+        }
+    }
+}
+
+// ── Remote control ────────────────────────────────────────────────────────
+
+@Composable
+private fun RemoteControlSection(
+    upDownFlips: Boolean,
+    onUpDownFlipsChange: (Boolean) -> Unit,
+) {
+    val c = PureTvTvTheme.colors
+    Column {
+        Text("Remote control", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Up and Down change channel", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "While watching, press Up or Down to switch to the next or previous channel. " +
+                        "Turn this off to keep Up and Down for the controls. The Channel keys on your remote always switch channel.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = upDownFlips, onCheckedChange = onUpDownFlipsChange)
         }
     }
 }

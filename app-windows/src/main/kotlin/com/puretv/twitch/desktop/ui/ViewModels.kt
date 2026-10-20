@@ -58,6 +58,7 @@ import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.FollowedChannel
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
+import com.puretv.twitch.desktop.player.PlayTicket
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import io.ktor.client.HttpClient
@@ -412,9 +413,14 @@ class StreamViewModel(
     private val sevenTvEventClient: SevenTvEventClient,
     private val badgeRepository: BadgeRepository,
     private val playableStreamCache: PlayableStreamCache,
+    private val playTicket: PlayTicket,
 ) : DesktopViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
+
+    // Taken the moment this view model is built, which is before the previous screen's
+    // view model is cleaned up: its stop must not reach the stream started here.
+    private val ticket = playTicket.issue()
 
     // Identity for the optimistic local echo of our own sent messages — Twitch
     // never echoes your own PRIVMSG back. Captured from USERSTATE/GLOBALUSERSTATE.
@@ -794,7 +800,9 @@ class StreamViewModel(
     override fun onCleared() {
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
-        vlcPlayer.stop()
+        // Only when no newer screen has taken the player (a flip or a rail click builds
+        // the next stream's view model first), or the new stream would be stopped.
+        playTicket.stopIfCurrent(ticket) { vlcPlayer.stop() }
     }
 }
 

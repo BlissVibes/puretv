@@ -12,6 +12,8 @@ import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.UpscalingMode
+import com.puretv.twitch.core.playback.SleepTimer
+import com.puretv.twitch.core.playback.SleepTimerText
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 
@@ -36,6 +38,9 @@ fun PlayerSettingsMenu(
     backend: PlaybackBackend,
     onBackendSelected: (PlaybackBackend) -> Unit,
     modifier: Modifier = Modifier,
+    // Live streams only (the Z key cycles the same presets): the sleep timer's minutes, 0 for Off.
+    sleepMinutes: Int? = null,
+    onSleepSelected: (Int) -> Unit = {},
 ) {
     val c = PureTvTheme.colors
     Column(
@@ -67,6 +72,12 @@ fun PlayerSettingsMenu(
         PlayerMenuSection("Engine") {
             SegmentedControl(PlaybackBackend.entries.toList(), backend, { it.label }, onBackendSelected)
             Text("Applies after restart.", style = PureTvType.dataSmall, color = c.outline)
+        }
+        if (sleepMinutes != null) {
+            PlayerMenuSection("Sleep timer") {
+                SegmentedControl(SleepTimer.PRESETS_MINUTES, sleepMinutes, { SleepTimerText.preset(it) }, onSleepSelected)
+                Text("Stops playback when the time is up. Press Z to cycle.", style = PureTvType.dataSmall, color = c.outline)
+            }
         }
     }
 }

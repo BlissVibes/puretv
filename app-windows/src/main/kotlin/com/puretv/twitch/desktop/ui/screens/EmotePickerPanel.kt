@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -62,10 +63,14 @@ fun EmotePickerPanel(
     emotes: List<PickableEmote>,
     onPick: (PickableEmote) -> Unit,
     onDismiss: () -> Unit,
+    // True while the search field has focus, so the player hotkeys stand down while typing.
+    onSearchFocusChanged: (Boolean) -> Unit = {},
 ) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     var query by remember { mutableStateOf("") }
+    // A closed picker takes its focus with it without a final focus event.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onSearchFocusChanged(false) } }
     val filtered = remember(query, emotes) {
         if (query.isBlank()) emotes
         else emotes.filter { it.code.contains(query.trim(), ignoreCase = true) }
@@ -113,7 +118,9 @@ fun EmotePickerPanel(
                     singleLine = true,
                     textStyle = TextStyle(color = c.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                     cursorBrush = SolidColor(c.primary),
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { onSearchFocusChanged(it.isFocused) },
                 )
             }
             ExpressiveIconButton(

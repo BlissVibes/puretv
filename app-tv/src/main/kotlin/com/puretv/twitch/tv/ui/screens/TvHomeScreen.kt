@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -45,6 +46,12 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.playback.ContinueItem
+import com.puretv.twitch.core.playback.FlipOrigin
+import com.puretv.twitch.core.vod.WatchProgress
+import com.puretv.twitch.tv.ui.VodLaunch
+import com.puretv.twitch.tv.ui.components.TvRecentChannelCard
+import com.puretv.twitch.tv.ui.components.TvVodResumeCard
 import com.puretv.twitch.tv.ui.HomeViewModel
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
 import com.puretv.twitch.tv.ui.components.TvButtonSize
@@ -89,6 +96,7 @@ import org.koin.compose.koinInject
 fun TvHomeScreen(
     onOpenStream: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
+    onOpenVod: (VodLaunch) -> Unit,
     onOpenFollowing: () -> Unit,
     onOpenBrowse: () -> Unit,
     onOpenSearch: () -> Unit,
@@ -107,6 +115,14 @@ fun TvHomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val hero = state.followedLive.firstOrNull() ?: state.topStreams.firstOrNull()
+
+    // The row a stream is opened from is the set the remote flips through (when the
+    // channel is not one of the viewer's live follows, which are tried first).
+    val flipOrigin = koinInject<FlipOrigin>()
+    val openFrom = { row: List<StreamInfo>, login: String ->
+        flipOrigin.record(row.map { it.userLogin })
+        onOpenStream(login)
+    }
 
     // Data arrives asynchronously (cache, then network), so the very first
     // composition usually has nothing to focus yet. Keep retrying — cheaply,
@@ -195,24 +211,43 @@ fun TvHomeScreen(
                 HomeHero(
                     stream = h,
                     followedLive = state.followedLive.isNotEmpty(),
-                    onWatch = { onOpenStream(h.userLogin) },
+                    onWatch = { openFrom(if (state.followedLive.isNotEmpty()) state.followedLive else state.topStreams, h.userLogin) },
                     watchFocusRequester = heroFocusRequester,
                 )
             }
+
+            ContinueRow(
+                row = state.continueWatching,
+                onOpenChannel = { item ->
+                    if (item.stream != null) {
+                        // The remote flips through the live channels in this row.
+                        flipOrigin.record(
+                            state.continueWatching.filterIsInstance<ContinueItem.Channel>()
+                                .filter { it.stream != null }.map { it.login },
+                        )
+                        onOpenStream(item.login)
+                    } else {
+                        onOpenChannel(item.login)
+                    }
+                },
+                onOpenVod = { progress ->
+                    onOpenVod(VodLaunch(progress.vodId, progress.channelLogin, progress.title, progress.thumbnailUrl))
+                },
+            )
 
             if (state.followedLive.isNotEmpty()) {
                 ContentRow(
                     title = "Following · Live now",
                     streams = state.followedLive,
                     firstCardFocusRequester = if (hero == null) firstCardFocusRequester else null,
-                    onOpenStream = onOpenStream,
+                    onOpenStream = { openFrom(state.followedLive, it) },
                 )
             }
             ContentRow(
                 title = "Live Channels",
                 streams = state.topStreams,
                 firstCardFocusRequester = if (hero == null && state.followedLive.isEmpty()) firstCardFocusRequester else null,
-                onOpenStream = onOpenStream,
+                onOpenStream = { openFrom(state.topStreams, it) },
             )
 
             // Signed out, the shelves above fill from the public directory; only
@@ -388,6 +423,42 @@ private fun UpdateBanner(versionName: String, onOpenSettings: () -> Unit) {
             style = TvButtonStyle.FilledTertiary,
             size = TvButtonSize.Medium,
         )
+    }
+}
+
+/**
+ * "Continue watching": channels watched before (live ones first, with their live picture),
+ * broadcasts left part way, then channels that are offline now. Hidden until there is
+ * something to continue.
+ */
+@Composable
+private fun ContinueRow(
+    row: List<ContinueItem>,
+    onOpenChannel: (ContinueItem.Channel) -> Unit,
+    onOpenVod: (WatchProgress) -> Unit,
+) {
+    if (row.isEmpty()) return
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        TvSectionHeading("Continue watching")
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            contentPadding = PaddingValues(vertical = 8.dp),
+        ) {
+            items(
+                row,
+                key = { item ->
+                    when (item) {
+                        is ContinueItem.Channel -> "channel:${item.login}"
+                        is ContinueItem.Vod -> "vod:${item.progress.vodId}"
+                    }
+                },
+            ) { item ->
+                when (item) {
+                    is ContinueItem.Channel -> TvRecentChannelCard(item, onClick = { onOpenChannel(item) })
+                    is ContinueItem.Vod -> TvVodResumeCard(item, onClick = { onOpenVod(item.progress) })
+                }
+            }
+        }
     }
 }
 

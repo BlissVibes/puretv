@@ -1,0 +1,98 @@
+package com.puretv.twitch.desktop.ui
+
+import java.awt.event.KeyEvent
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+class PlayerShortcutsTest {
+    private fun action(code: Int, char: Char = KeyEvent.CHAR_UNDEFINED, ctrlOrAlt: Boolean = false, immersive: Boolean = false, help: Boolean = false) =
+        PlayerShortcuts.actionFor(code, char, ctrlOrAlt, immersive, help)
+
+    @Test fun existingShortcutsStillWork() {
+        assertEquals(ShortcutAction.ToggleFullscreen, action(KeyEvent.VK_F))
+        assertEquals(ShortcutAction.ToggleTheater, action(KeyEvent.VK_T))
+        assertEquals(ShortcutAction.ToggleChat, action(KeyEvent.VK_C))
+        assertEquals(ShortcutAction.TogglePlayPause, action(KeyEvent.VK_SPACE))
+        assertEquals(ShortcutAction.ToggleStats, action(KeyEvent.VK_F3))
+    }
+
+    @Test fun escapeOnlyActsWhenThereIsSomethingToLeave() {
+        assertNull(action(KeyEvent.VK_ESCAPE))
+        assertEquals(ShortcutAction.ExitImmersive, action(KeyEvent.VK_ESCAPE, immersive = true))
+    }
+
+    @Test fun escapeClosesTheShortcutsSheetBeforeLeavingFullscreen() {
+        assertEquals(ShortcutAction.ToggleHelp, action(KeyEvent.VK_ESCAPE, immersive = true, help = true))
+        assertEquals(ShortcutAction.ToggleHelp, action(KeyEvent.VK_ESCAPE, help = true))
+    }
+
+    @Test fun pageKeysFlipUpDownAreVolumeMAndZ() {
+        assertEquals(ShortcutAction.FlipNext, action(KeyEvent.VK_PAGE_UP))
+        assertEquals(ShortcutAction.FlipPrevious, action(KeyEvent.VK_PAGE_DOWN))
+        assertEquals(ShortcutAction.VolumeUp, action(KeyEvent.VK_UP))
+        assertEquals(ShortcutAction.VolumeDown, action(KeyEvent.VK_DOWN))
+        assertEquals(ShortcutAction.ToggleMute, action(KeyEvent.VK_M))
+        assertEquals(ShortcutAction.CycleSleepTimer, action(KeyEvent.VK_Z))
+    }
+
+    @Test fun theQuestionMarkOpensTheSheetOnAnyLayout() {
+        // Shift+/ on a US layout, and a layout where ? sits on another key.
+        assertEquals(ShortcutAction.ToggleHelp, action(KeyEvent.VK_SLASH, '?'))
+        assertEquals(ShortcutAction.ToggleHelp, action(KeyEvent.VK_UNDEFINED, '?'))
+        assertEquals(ShortcutAction.ToggleHelp, action(KeyEvent.VK_F1))
+        // A plain slash is not ours.
+        assertNull(action(KeyEvent.VK_SLASH, '/'))
+    }
+
+    @Test fun controlAndAltCombinationsAreLeftAlone() {
+        assertNull(action(KeyEvent.VK_C, ctrlOrAlt = true))
+        assertNull(action(KeyEvent.VK_F, ctrlOrAlt = true))
+        assertNull(action(KeyEvent.VK_F, '?', ctrlOrAlt = true))
+    }
+
+    @Test fun unknownKeysPassThrough() {
+        assertNull(action(KeyEvent.VK_A))
+        assertNull(action(KeyEvent.VK_ENTER))
+    }
+
+    @Test fun nothingFiresWhileATextBoxHasFocus() {
+        for (code in listOf(KeyEvent.VK_F, KeyEvent.VK_SPACE, KeyEvent.VK_Z, KeyEvent.VK_UP, KeyEvent.VK_PAGE_UP, KeyEvent.VK_ESCAPE)) {
+            assertNull(PlayerShortcuts.actionFor(code, KeyEvent.CHAR_UNDEFINED, false, true, textInputFocused = true))
+        }
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_SLASH, '?', false, false, textInputFocused = true))
+    }
+
+    @Test fun upAndDownBelongToThePlaybackMenuWhileItIsOpen() {
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_UP, KeyEvent.CHAR_UNDEFINED, false, false, menuOpen = true))
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_DOWN, KeyEvent.CHAR_UNDEFINED, false, false, menuOpen = true))
+        assertEquals(
+            ShortcutAction.ToggleMute,
+            PlayerShortcuts.actionFor(KeyEvent.VK_M, 'm', false, false, menuOpen = true),
+        )
+    }
+
+    @Test fun onlyVolumeRepeatsWhenAKeyIsHeld() {
+        assertEquals(
+            ShortcutAction.VolumeUp,
+            PlayerShortcuts.actionFor(KeyEvent.VK_UP, KeyEvent.CHAR_UNDEFINED, false, false, isRepeat = true),
+        )
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_Z, 'z', false, false, isRepeat = true))
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_PAGE_UP, KeyEvent.CHAR_UNDEFINED, false, false, isRepeat = true))
+    }
+
+    @Test fun volumeStepsByFiveAndStaysInRange() {
+        assertEquals(55, PlayerShortcuts.steppedVolume(50, up = true))
+        assertEquals(45, PlayerShortcuts.steppedVolume(50, up = false))
+        assertEquals(100, PlayerShortcuts.steppedVolume(98, up = true))
+        assertEquals(0, PlayerShortcuts.steppedVolume(3, up = false))
+    }
+
+    @Test fun everyActionHasARowInTheSheet() {
+        val text = PlayerShortcuts.help.joinToString("|") { it.keys + " " + it.what }
+        assertTrue("Page Up" in text && "Volume" in text && "Mute" in text && "Sleep" in text && "?" in text)
+        // No en or em dashes in anything the viewer reads (code points 0x2013 and 0x2014).
+        assertTrue(PlayerShortcuts.help.none { row -> (row.keys + row.what).any { it.code == 0x2013 || it.code == 0x2014 } })
+    }
+}

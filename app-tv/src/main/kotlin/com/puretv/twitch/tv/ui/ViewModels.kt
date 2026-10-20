@@ -33,6 +33,25 @@ import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import com.puretv.twitch.core.playback.ChannelFlip
+import com.puretv.twitch.core.playback.ContinueItem
+import com.puretv.twitch.core.playback.ContinueWatching
+import com.puretv.twitch.core.playback.RecentChannel
+import com.puretv.twitch.core.vod.WatchProgress
+import com.puretv.twitch.tv.data.db.VodProgressDao
+import com.puretv.twitch.tv.data.db.WatchHistoryDao
+import com.puretv.twitch.tv.data.db.WatchHistoryEntry
+import com.puretv.twitch.tv.data.db.toCore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import com.puretv.twitch.core.playback.FlipDirection
+import com.puretv.twitch.core.playback.FlipOrigin
+import com.puretv.twitch.core.playback.PendingFlip
+import com.puretv.twitch.core.playback.PrewarmGate
+import com.puretv.twitch.core.playback.SleepStatus
+import com.puretv.twitch.core.playback.SleepTimer
+import com.puretv.twitch.core.playback.SleepTimerText
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -74,6 +93,8 @@ data class HomeUiState(
     val topStreams: List<StreamInfo> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
+    /** The "Continue watching" row: live channels, then broadcasts to resume, then offline channels. */
+    val continueWatching: List<ContinueItem> = emptyList(),
 )
 
 /**
@@ -94,9 +115,18 @@ class HomeViewModel(
     private val cachedStreamDao: CachedStreamDao,
     private val tokenRefresher: TokenRefresher,
     private val liveFollows: LiveFollowsMonitor,
+    private val watchHistoryDao: WatchHistoryDao,
+    private val vodProgressDao: VodProgressDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
+
+    // The pieces of the "Continue watching" row. Each can change on its own (history
+    // and VOD positions are Room flows, live status arrives with a refresh), and the
+    // row is rebuilt from all of them by core's ContinueWatching.
+    private var recentChannels: List<RecentChannel> = emptyList()
+    private var resumableVods: List<WatchProgress> = emptyList()
+    private var lookedUpLive: Map<String, StreamInfo> = emptyMap()
 
     // Once the network returns a fresh top-streams list, stop letting the cached
     // snapshot overwrite it (the cache is only for the instant first paint).
@@ -107,6 +137,22 @@ class HomeViewModel(
     private var refreshJob: Job? = null
 
     init {
+        // "Continue watching": channels watched before, and broadcasts left part way.
+        viewModelScope.launch {
+            watchHistoryDao.observeRecent().collect { history ->
+                val before = recentChannels
+                recentChannels = history.map { RecentChannel(it.channelLogin, it.channelDisplayName) }
+                rebuildContinueWatching()
+                // A newly watched channel needs its live status now, not at the next refresh.
+                if (recentChannels.map { it.login } != before.map { it.login }) refreshContinueLive()
+            }
+        }
+        viewModelScope.launch {
+            vodProgressDao.observeRecent().collect { rows ->
+                resumableVods = rows.map { it.toCore() }
+                rebuildContinueWatching()
+            }
+        }
         // Cached-first: paint last session's streams instantly, before any network.
         viewModelScope.launch {
             cachedStreamDao.observeAll().collect { cached ->
@@ -173,7 +219,38 @@ class HomeViewModel(
                     error = if (!ok && it.topStreams.isEmpty()) "Couldn't load. Check your connection and try again." else null,
                 )
             }
+            refreshContinueLive()
         }
+    }
+
+    /**
+     * Which recently watched channels are live right now. The follows and top streams
+     * already answered for many of them; only the rest are asked about (one call, at most
+     * a dozen logins, and none when everyone is already known).
+     */
+    private suspend fun refreshContinueLive() {
+        val s = _state.value
+        val known = (s.followedLive + s.topStreams).associateBy { it.userLogin.lowercase() }
+        val ask = ContinueWatching.loginsToCheck(recentChannels, known.keys)
+        // Answers merge into what is known: a channel asked about now is replaced by the
+        // answer (live or not), the rest keep their last answer.
+        val asked = ask.mapTo(HashSet()) { it.lowercase() }
+        val stillKnown = lookedUpLive.filterKeys { it !in asked }
+        lookedUpLive = if (ask.isEmpty()) {
+            stillKnown.filterKeys { key -> recentChannels.any { it.login.equals(key, ignoreCase = true) } }
+        } else {
+            runCatching { streamRepository.streamsForChannels(ask) }
+                .map { found -> stillKnown + found.associateBy { it.userLogin.lowercase() } }
+                .getOrDefault(lookedUpLive)
+        }
+        rebuildContinueWatching()
+    }
+
+    private fun rebuildContinueWatching() {
+        val s = _state.value
+        val live = (s.topStreams + s.followedLive + lookedUpLive.values).associateBy { it.userLogin.lowercase() }
+        val items = ContinueWatching.build(recentChannels, resumableVods, live)
+        _state.update { if (it.continueWatching == items) it else it.copy(continueWatching = items) }
     }
 
     /**
@@ -422,6 +499,29 @@ data class StreamUiState(
     val quality: StreamQuality? = null,
     /** Settings > Low latency, read with the playable URL so they reach the player together. */
     val lowLatency: Boolean = false,
+
+    /** Settings > Up and Down change channel (off: they show the controls instead). */
+    val upDownFlips: Boolean = true,
+
+    // Channel flipping. The channel can change without leaving the screen (see
+    // StreamViewModel.flip), so the screen reads the login from here, not from its route.
+    /** The channel on screen. */
+    val channelLogin: String = "",
+    /** Counts resolved streams, so the screen starts playback once per resolution even when a URL repeats. */
+    val playGeneration: Int = 0,
+    /** Where a flip in progress will land, for the banner; null when none is pending. */
+    val flipTarget: String? = null,
+    /** A short note for the banner when a flip had nowhere to go. */
+    val flipNote: String? = null,
+
+    // Sleep timer. Text only, so the screen recomposes when the words change (once a
+    // minute, then once a second in the last minute), not on every tick.
+    /** The sleep control's label, for example "Sleep: Off" or "Sleep: 24 min left". */
+    val sleepLabel: String = "Sleep: Off",
+    /** The last-minute warning, or null when it is not showing. */
+    val sleepWarning: String? = null,
+    /** The time ran out: the screen stops watching. */
+    val sleepExpired: Boolean = false,
 )
 
 class StreamViewModel(
@@ -435,16 +535,27 @@ class StreamViewModel(
     private val playableStreamCache: PlayableStreamCache,
     private val badgeRepository: BadgeRepository,
     private val sevenTvEventClient: SevenTvEventClient,
+    private val liveFollows: LiveFollowsMonitor,
+    private val flipOrigin: FlipOrigin,
+    private val watchHistoryDao: WatchHistoryDao,
 ) : ViewModel() {
-    private val _state = MutableStateFlow(StreamUiState())
+    private val _state = MutableStateFlow(StreamUiState(channelLogin = channelLogin))
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
 
-    private val openTiming = StreamOpenTiming(channelLogin)
+    // The channel on screen. It starts as the route's and changes in place on a flip:
+    // the screen stays, and so does the shared player, because leaving the screen is
+    // what stops that player.
+    private var currentLogin = channelLogin
+    private var openTiming = StreamOpenTiming(channelLogin)
 
     // The signed-in viewer's login (null when watching anonymously), so a line
-    // that @-mentions them is highlighted. Written once, before chat connects.
+    // that @-mentions them is highlighted. Written before chat connects.
     private var selfLogin: String? = null
-    private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
+    private var chatTimeline = newChatTimeline(channelLogin)
+
+    // Everything that belongs to the channel on screen: the stream, its details,
+    // emotes and chat. A flip cancels it and starts again for the next channel.
+    private var channelJob: Job? = null
 
     // The third-party emote lists the row map is built from. Fields so a live 7TV
     // change can fold into the channel set without fetching again. Every reader
@@ -452,39 +563,58 @@ class StreamViewModel(
     private var tpChannelEmotes: List<ChannelEmote> = emptyList()
     private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
 
-    init {
-        adBlockEngine.resetForNewStream()
-        // Playback first: resolving the stream does not need the channel info
-        // below, so the picture starts while the metadata loads.
-        viewModelScope.launch { resolvePlayable() }
-        viewModelScope.launch {
-            val channelLookup = async { runCatching { channelRepository.getChannel(channelLogin) }.getOrNull() }
-            val liveLookup = async {
-                runCatching { streamRepository.streamsForChannels(listOf(channelLogin)).firstOrNull() }.getOrNull()
-            }
-            val channel = channelLookup.await()
-            _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
+    // Flipping: a burst of presses becomes one change (see PendingFlip), and a
+    // channel is prewarmed only when the viewer shows intent (see PrewarmGate).
+    private val pendingFlip = PendingFlip()
+    private val prewarmGate = PrewarmGate(System::currentTimeMillis)
+    private var settleJob: Job? = null
+    private var noteJob: Job? = null
 
-            // Badge art only needs the channel id, so it loads on its own coroutine.
-            // Best-effort: Helix wants a session, so a signed-out TV keeps the chips.
-            channel?.let { ch ->
-                launch {
-                    val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
-                    _state.update { it.copy(badges = badges) }
-                }
-            }
+    // Sleep timer: lives with the screen, so it carries across flips. Not saved.
+    private val sleepTimer = SleepTimer(System::currentTimeMillis)
+    private var sleepJob: Job? = null
+    private var lastFlipDirection = FlipDirection.NEXT
+    @Volatile private var signedIn = false
 
-            // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
-            // first, so the first lines already render, then the fresh set.
-            emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
-                tpChannelEmotes = emotes.channel
-                tpGlobalEmotes = emotes.global
-                rebuildEmotes()
-                openTiming.mark("emotes_ready")
+    // Watch history ("Continue watching" on Home). A channel counts once its first frame
+    // is up, and its time is added when the viewer flips away or leaves. The writes
+    // outlive the view model on purpose: leaving the screen cancels viewModelScope.
+    private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var watchedLogin: String? = null
+    // The channel whose stream URL the screen was last handed (see onFirstFrame).
+    private var readyLogin: String? = null
+    private var watchStartedAtMs = 0L
+
+    private fun startWatchHistory() {
+        if (watchedLogin != null) return
+        val login = currentLogin
+        val name = _state.value.channel?.displayName?.takeIf { it.isNotBlank() } ?: login
+        val now = System.currentTimeMillis()
+        watchedLogin = login
+        watchStartedAtMs = now
+        historyScope.launch {
+            // Never an upsert: that would reset the channel's watch time on every visit.
+            runCatching {
+                watchHistoryDao.insertIfAbsent(WatchHistoryEntry(login, name, now, 0L))
+                watchHistoryDao.touch(login, name, now)
+                watchHistoryDao.prune()
             }
-            // Live 7TV emote changes for as long as this stream is open.
-            channel?.let { sevenTvEventClient.connect(it.id) }
         }
+    }
+
+    private fun endWatchHistory() {
+        val login = watchedLogin ?: return
+        watchedLogin = null
+        val now = System.currentTimeMillis()
+        val watchedMs = now - watchStartedAtMs
+        if (watchedMs <= 0) return
+        historyScope.launch { runCatching { watchHistoryDao.addWatchTime(login, watchedMs, now) } }
+    }
+
+    private fun newChatTimeline(login: String) =
+        ChatTimeline(login, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
+
+    init {
         viewModelScope.launch {
             sevenTvEventClient.updates.collect { delta ->
                 tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
@@ -495,32 +625,221 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         viewModelScope.launch {
-            // Section 7.4: TV viewers are overwhelmingly unauthenticated/lean-back;
-            // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
-            // the phone app when no OAuth session is present (Section 5.1).
-            val settings = settingsStore.flow.first()
-            _state.update {
-                it.copy(
-                    chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
-                    showBadges = settings.showBadges,
-                    chatBesideVideo = settings.tvChatMode == TV_CHAT_BESIDE_VIDEO,
-                    chatOpacity = settings.tvChatOpacity.coerceIn(0.4f, 1f),
-                    quality = StreamQuality.fromSetting(settings.preferredQuality),
+            // Settings the whole screen shares, whichever channel is on.
+            settingsStore.flow.collect { settings ->
+                signedIn = settings.accessToken.isNotBlank()
+                _state.update {
+                    it.copy(
+                        chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
+                        showBadges = settings.showBadges,
+                        chatBesideVideo = settings.tvChatMode == TV_CHAT_BESIDE_VIDEO,
+                        chatOpacity = settings.tvChatOpacity.coerceIn(0.4f, 1f),
+                        // The saved quality is the starting point; a pick in the player
+                        // owns it from then on.
+                        quality = it.quality ?: StreamQuality.fromSetting(settings.preferredQuality),
+                        upDownFlips = settings.tvRemoteFlip,
+                    )
+                }
+            }
+        }
+        openChannel(channelLogin)
+    }
+
+    /**
+     * Starts the stream, details, emotes and chat for [login], replacing whatever the
+     * channel on screen had running. Used for the first channel and for every flip,
+     * so a flipped stream is opened exactly like a normal one: ad-block state and
+     * timing start over, chat reconnects to the new channel and nothing from the
+     * previous channel stays connected.
+     */
+    private fun openChannel(login: String) {
+        channelJob?.cancel()
+        endWatchHistory()
+        currentLogin = login
+        openTiming = StreamOpenTiming(login)
+        chatTimeline = newChatTimeline(login)
+        freshSessionRetries = 0
+        tpChannelEmotes = emptyList()
+        // The old channel's sockets go first, so nothing of it lands in the new one.
+        chatClient.disconnect()
+        sevenTvEventClient.disconnect()
+        adBlockEngine.resetForNewStream()
+        _state.update {
+            // The previous playableUrl stays until the new one arrives, so the old picture
+            // keeps playing instead of the player view being torn down and rebuilt.
+            it.copy(
+                channelLogin = login,
+                channel = null,
+                streamInfo = null,
+                chatMessages = emptyList(),
+                roomModes = ChatRoomModes(),
+                emotes = emptyMap(),
+                badges = BadgeIndex.EMPTY,
+                isLoading = true,
+                playbackError = null,
+            )
+        }
+        rebuildEmotes()
+        channelJob = viewModelScope.launch {
+            // Playback first: resolving the stream does not need the channel info
+            // below, so the picture starts while the metadata loads.
+            launch { resolvePlayable() }
+            launch {
+                val channelLookup = async { runCatching { channelRepository.getChannel(login) }.getOrNull() }
+                val liveLookup = async {
+                    runCatching { streamRepository.streamsForChannels(listOf(login)).firstOrNull() }.getOrNull()
+                }
+                val channel = channelLookup.await()
+                _state.update { it.copy(channel = channel, streamInfo = liveLookup.await(), isLoading = false) }
+
+                // Badge art only needs the channel id, so it loads on its own coroutine.
+                // Best-effort: Helix wants a session, so a signed-out TV keeps the chips.
+                channel?.let { ch ->
+                    launch {
+                        val badges = runCatching { badgeRepository.loadForChannel(ch.id) }.getOrDefault(BadgeIndex.EMPTY)
+                        _state.update { it.copy(badges = badges) }
+                    }
+                }
+
+                // Live 7TV emote changes for as long as this stream is open. The socket
+                // does not wait for the emote lists below, which can take a moment.
+                channel?.let { sevenTvEventClient.connect(it.id) }
+
+                // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
+                // first, so the first lines already render, then the fresh set.
+                emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
+                    tpChannelEmotes = emotes.channel
+                    tpGlobalEmotes = emotes.global
+                    rebuildEmotes()
+                    openTiming.mark("emotes_ready")
+                }
+            }
+            launch {
+                // Section 7.4: TV viewers are overwhelmingly unauthenticated/lean-back;
+                // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
+                // the phone app when no OAuth session is present (Section 5.1).
+                val settings = settingsStore.flow.first()
+                val token = settings.accessToken.takeIf { it.isNotBlank() }
+                val username = settings.username.takeIf { it.isNotBlank() }
+                selfLogin = username
+                chatClient.connect(login, token, username)
+                // A busy chat arrives in batches (about ten a second), each applied in
+                // one state update instead of one per message. Core's ChatTimeline holds
+                // the chat rules every app shares (moderation tombstones, sub and raid
+                // rows, mentions, room modes); the batch is prepared out here because
+                // the update lambda may run more than once.
+                val timeline = chatTimeline
+                chatClient.events.batchedEvery().collect { batch ->
+                    val changes = timeline.changesFor(batch)
+                    if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
+                }
+            }
+        }
+    }
+
+    /**
+     * The channels a flip walks: the viewer's live follows when they are signed in and
+     * watching one of them, otherwise the row this stream was opened from.
+     */
+    private fun flipRing(): List<String> {
+        val follows = if (signedIn) liveFollows.liveNow.value.map { it.userLogin } else null
+        return ChannelFlip.ringFor(currentLogin, follows, flipOrigin.logins)
+    }
+
+    /**
+     * The viewer reached for the remote. Prewarms both neighbours of the channel on screen
+     * (at most once a minute each) so a flip is instant; never on a timer.
+     */
+    fun onRemoteIntent() {
+        prewarmGate.take(ChannelFlip.neighbours(flipRing(), currentLogin)).forEach(playableStreamCache::prewarm)
+    }
+
+    /**
+     * One step of channel flipping. Presses within a moment of each other walk the ring
+     * together (the banner shows where it would land) and only the last one plays.
+     */
+    fun flip(direction: FlipDirection) {
+        val ring = flipRing()
+        val target = pendingFlip.press(ring, currentLogin, direction, System.currentTimeMillis())
+        if (target == null) {
+            // Nowhere to go (a ring of one): drop any target an earlier press left pending.
+            pendingFlip.cancel()
+            settleJob?.cancel()
+            _state.update { it.copy(flipTarget = null) }
+            showFlipNote("No other channel to switch to")
+            return
+        }
+        lastFlipDirection = direction
+        onRemoteIntent()
+        _state.update { it.copy(flipTarget = target, flipNote = null) }
+        // Warm the one the viewer is heading for, so the settle below is quick.
+        prewarmGate.take(listOf(target)).forEach(playableStreamCache::prewarm)
+        settleJob?.cancel()
+        settleJob = viewModelScope.launch {
+            val next = pendingFlip.awaitSettled({ currentLogin }, System::currentTimeMillis)
+            commitFlip(next)
+        }
+    }
+
+    private fun commitFlip(next: String?) {
+        if (next == null) {
+            _state.update { it.copy(flipTarget = null) }
+            return
+        }
+        // The banner stays up until the new stream is ready (see resolvePlayable).
+        openChannel(next)
+        // Heading the same way, the next channel is the likeliest one to want.
+        ChannelFlip.step(flipRing(), next, lastFlipDirection)?.let { ahead ->
+            prewarmGate.take(listOf(ahead)).forEach(playableStreamCache::prewarm)
+        }
+    }
+
+    /** The sleep control was pressed: next preset (Off, 15, 30, 60, 90, 120 minutes), counting from now. */
+    fun cycleSleepTimer() {
+        sleepTimer.cycle()
+        sleepJob?.cancel()
+        sleepJob = viewModelScope.launch {
+            while (true) {
+                val status = sleepTimer.status()
+                publishSleep(status)
+                if (status !is SleepStatus.Running) break
+                delay(1_000)
+            }
+        }
+    }
+
+    /** The screen has acted on [StreamUiState.sleepExpired]. */
+    fun onSleepHandled() {
+        _state.update { it.copy(sleepExpired = false) }
+    }
+
+    /** Any remote key. In the sleep timer's last minute it buys another 15 minutes. */
+    fun onViewerActivity() {
+        if (sleepTimer.onActivity()) {
+            val status = sleepTimer.status()
+            publishSleep(status)
+        }
+    }
+
+    private fun publishSleep(status: SleepStatus) {
+        _state.update {
+            when (status) {
+                SleepStatus.Off -> it.copy(sleepLabel = "Sleep: Off", sleepWarning = null)
+                is SleepStatus.Running -> it.copy(
+                    sleepLabel = SleepTimerText.remaining(status.remainingMs),
+                    sleepWarning = if (status.warning) SleepTimerText.warning(status.remainingMs, "button") else null,
                 )
+                SleepStatus.Expired -> it.copy(sleepLabel = "Sleep: Off", sleepWarning = null, sleepExpired = true)
             }
-            val token = settings.accessToken.takeIf { it.isNotBlank() }
-            val username = settings.username.takeIf { it.isNotBlank() }
-            selfLogin = username
-            chatClient.connect(channelLogin, token, username)
-            // A busy chat arrives in batches (about ten a second), each applied in
-            // one state update instead of one per message. Core's ChatTimeline holds
-            // the chat rules every app shares (moderation tombstones, sub and raid
-            // rows, mentions, room modes); the batch is prepared out here because
-            // the update lambda may run more than once.
-            chatClient.events.batchedEvery().collect { batch ->
-                val changes = chatTimeline.changesFor(batch)
-                if (changes.isNotEmpty()) _state.update { it.withChat(changes) }
-            }
+        }
+    }
+
+    private fun showFlipNote(note: String) {
+        _state.update { it.copy(flipNote = note) }
+        noteJob?.cancel()
+        noteJob = viewModelScope.launch {
+            delay(FLIP_NOTE_MS)
+            _state.update { it.copy(flipNote = null) }
         }
     }
 
@@ -556,20 +875,39 @@ class StreamViewModel(
      * and logged under [TAG] for `adb logcat`.
      */
     private suspend fun resolvePlayable() {
+        // A flip while this was resolving moved on to another channel: its answer is stale.
+        val login = currentLogin
         _state.update { it.copy(playbackError = null) }
-        runCatching { playableStreamCache.get(channelLogin) }
+        runCatching { playableStreamCache.get(login) }
             .onSuccess { playable ->
+                if (login != currentLogin) return
                 openTiming.mark("playable_url")
                 val lowLatency = settingsStore.flow.first().lowLatencyMode
-                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null, lowLatency = lowLatency) }
+                if (login != currentLogin) return
+                readyLogin = login
+                _state.update {
+                    it.copy(
+                        playableUrl = playable.masterUrl,
+                        playGeneration = it.playGeneration + 1,
+                        playbackError = null,
+                        lowLatency = lowLatency,
+                        // A newer flip is already on its way: its banner stays.
+                        flipTarget = if (pendingFlip.pending != null) it.flipTarget else null,
+                    )
+                }
             }
             .onFailure { e ->
-                Log.w(TAG, "Stream resolution failed for $channelLogin", e)
+                if (login != currentLogin) return
+                Log.w(TAG, "Stream resolution failed for $login", e)
                 val failure = StreamFailures.classify(e)
                 // The technical detail stays on screen in small print: a TV owner
                 // cannot run adb, so a photo of this screen is the bug report.
+                // No playable URL either: after a flip the previous channel's picture
+                // must not keep playing under the explanation.
                 _state.update {
                     it.copy(
+                        playableUrl = null,
+                        flipTarget = if (pendingFlip.pending != null) it.flipTarget else null,
                         playbackError = failure.message() +
                             if (failure.detail.isBlank()) "" else "\n\nDetails: ${failure.detail}",
                     )
@@ -580,7 +918,7 @@ class StreamViewModel(
     /** Re-run resolution after a failure (OK on the remote), with a fresh session. */
     fun retry() = viewModelScope.launch {
         freshSessionRetries = 0
-        playableStreamCache.invalidate(channelLogin)
+        playableStreamCache.invalidate(currentLogin)
         resolvePlayable()
     }
 
@@ -595,7 +933,7 @@ class StreamViewModel(
         viewModelScope.launch {
             if (freshSessionRetries < MAX_FRESH_SESSION_RETRIES) {
                 freshSessionRetries++
-                playableStreamCache.invalidate(channelLogin)
+                playableStreamCache.invalidate(currentLogin)
                 resolvePlayable()
             } else {
                 _state.update {
@@ -609,7 +947,13 @@ class StreamViewModel(
     }
 
     /** The player put this stream's first frame on screen (local timing only). */
-    fun onFirstFrame() = openTiming.mark("first_frame")
+    fun onFirstFrame(generation: Int) {
+        // Only the stream of the channel on screen counts: the previous channel's picture
+        // can still be playing, or rendering a frame, while the next one resolves.
+        if (generation != _state.value.playGeneration || readyLogin != currentLogin) return
+        openTiming.mark("first_frame")
+        startWatchHistory()
+    }
 
     /** A quality picked in the player: applied by the screen and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
@@ -620,11 +964,12 @@ class StreamViewModel(
     }
 
     fun sendChatMessage(text: String) = viewModelScope.launch {
-        chatClient.sendMessage(channelLogin, text)
+        chatClient.sendMessage(currentLogin, text)
     }
 
     override fun onCleared() {
         super.onCleared()
+        endWatchHistory()
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
     }
@@ -632,6 +977,7 @@ class StreamViewModel(
     private companion object {
         const val TAG = "StreamViewModel"
         const val MAX_FRESH_SESSION_RETRIES = 1
+        const val FLIP_NOTE_MS = 2_500L
         val ALL_THIRD_PARTY = setOf(EmoteProvider.SEVENTV, EmoteProvider.BTTV, EmoteProvider.FFZ)
     }
 }
@@ -741,6 +1087,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
     // PureTvTvApp hands the saved value to the player, which applies it live.
     fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(audioNormalizer = enabled) }
+    }
+
+    fun setTvRemoteFlip(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvRemoteFlip = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

@@ -71,6 +71,9 @@ class AppSettingsStore(
 
         // Audio normalizer (Wave 4).
         val AUDIO_NORMALIZER = booleanPreferencesKey("audio_normalizer")
+
+        // Remote control (Wave 4).
+        val TV_REMOTE_FLIP = booleanPreferencesKey("tv_remote_flip")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -113,6 +116,8 @@ class AppSettingsStore(
             tvChatOpacity = prefs[Keys.TV_CHAT_OPACITY] ?: AppSettings().tvChatOpacity,
             // Audio normalizer (Wave 4).
             audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
+            // Remote control (Wave 4).
+            tvRemoteFlip = prefs[Keys.TV_REMOTE_FLIP] ?: AppSettings().tvRemoteFlip,
         )
     }
         // The corruption handler above covers a file DataStore can parse but not
@@ -158,6 +163,8 @@ class AppSettingsStore(
             prefs[Keys.TV_CHAT_OPACITY] = next.tvChatOpacity
             // Audio normalizer (Wave 4).
             prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
+            // Remote control (Wave 4).
+            prefs[Keys.TV_REMOTE_FLIP] = next.tvRemoteFlip
         }
     }
 

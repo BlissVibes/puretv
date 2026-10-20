@@ -110,6 +110,22 @@ interface WatchHistoryDao {
 
     @Query("UPDATE watch_history SET totalWatchTimeMs = totalWatchTimeMs + :deltaMs, lastWatchedEpochMs = :nowEpochMs WHERE channelLogin = :login")
     suspend fun addWatchTime(login: String, deltaMs: Long, nowEpochMs: Long)
+
+    /**
+     * Records a first visit to a channel and leaves an existing row alone. TV history is
+     * written with this plus [touch], never [upsert]: a REPLACE would put the row back
+     * with zero watch time every visit (the phone's writer does exactly that).
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(entry: WatchHistoryEntry): Long
+
+    /** Marks a channel as watched just now (and keeps its name current) without touching its watch time. */
+    @Query("UPDATE watch_history SET channelDisplayName = :displayName, lastWatchedEpochMs = :nowEpochMs WHERE channelLogin = :login")
+    suspend fun touch(login: String, displayName: String, nowEpochMs: Long)
+
+    /** Keeps the 100 most recently watched channels. */
+    @Query("DELETE FROM watch_history WHERE channelLogin NOT IN (SELECT channelLogin FROM watch_history ORDER BY lastWatchedEpochMs DESC LIMIT 100)")
+    suspend fun prune()
 }
 
 @Dao

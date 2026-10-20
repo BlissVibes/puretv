@@ -136,3 +136,63 @@ object PlayerShortcuts {
         Help("?", "This list"),
     )
 }
+
+/** What a keyboard shortcut does on the multi-stream screen. */
+enum class MultiShortcutAction {
+    VolumeUp,
+    VolumeDown,
+    ToggleMute,
+    CycleSleepTimer,
+    MoveEarlier,
+    MoveLater,
+}
+
+/**
+ * The multi-stream keyboard table. Up/Down and M act on the active tile (the only one
+ * that is audible), Z is the sleep timer, and Ctrl+Left / Ctrl+Right move the active
+ * tile one place earlier or later in the grid. Like [PlayerShortcuts] it does nothing
+ * while a text box has focus.
+ */
+object MultiShortcuts {
+    fun actionFor(
+        keyCode: Int,
+        ctrl: Boolean,
+        alt: Boolean,
+        textInputFocused: Boolean = false,
+        // The key is being held (auto-repeat). Only volume repeats; the rest fire once.
+        isRepeat: Boolean = false,
+    ): MultiShortcutAction? {
+        if (textInputFocused || alt) return null
+        val action = if (ctrl) {
+            when (keyCode) {
+                KeyEvent.VK_LEFT -> MultiShortcutAction.MoveEarlier
+                KeyEvent.VK_RIGHT -> MultiShortcutAction.MoveLater
+                else -> null
+            }
+        } else {
+            when (keyCode) {
+                KeyEvent.VK_UP -> MultiShortcutAction.VolumeUp
+                KeyEvent.VK_DOWN -> MultiShortcutAction.VolumeDown
+                KeyEvent.VK_M -> MultiShortcutAction.ToggleMute
+                KeyEvent.VK_Z -> MultiShortcutAction.CycleSleepTimer
+                else -> null
+            }
+        } ?: return null
+        val volume = action == MultiShortcutAction.VolumeUp || action == MultiShortcutAction.VolumeDown
+        if (isRepeat && !volume) return null
+        return action
+    }
+
+    /**
+     * The volume and mute state after Up or Down. Muted: Up brings the sound back (at the
+     * stepped volume when the stored one is 0, so it is never silent), Down stays quiet.
+     */
+    fun nudged(volume: Int, soundOff: Boolean, up: Boolean): Pair<Int, Boolean> = when {
+        soundOff && !up -> volume to true
+        soundOff && volume > 0 -> volume to false
+        else -> PlayerShortcuts.steppedVolume(volume, up) to false
+    }
+
+    /** The one-line hint under the grid, from the same table the keys use. */
+    const val HINT = "Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move the active channel"
+}

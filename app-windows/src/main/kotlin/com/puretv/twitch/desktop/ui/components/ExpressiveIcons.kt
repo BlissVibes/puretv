@@ -3,6 +3,8 @@ package com.puretv.twitch.desktop.ui.components
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -79,6 +81,8 @@ object ExpressiveIcons {
     val Menu: ImageVector = Icons.Filled.Menu
     val Back: ImageVector = Icons.AutoMirrored.Filled.ArrowBack
     val Close: ImageVector = Icons.Filled.Close
+    val ArrowLeft: ImageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft
+    val ArrowRight: ImageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight
     val ExpandMore: ImageVector = Icons.Filled.ExpandMore
     val ExpandLess: ImageVector = Icons.Filled.ExpandLess
     val More: ImageVector = Icons.Filled.MoreHoriz

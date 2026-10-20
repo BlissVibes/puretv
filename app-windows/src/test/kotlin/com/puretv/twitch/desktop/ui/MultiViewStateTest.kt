@@ -126,4 +126,29 @@ class MultiViewStateTest {
         assertEquals(GridShape(1, 1), MultiViewLayout.shape(1))
         assertEquals(GridCell(0, 0), MultiViewLayout.cell(0, 1))
     }
+
+    @Test fun moveShiftsATileOnePlaceAndKeepsIdsAndTheActiveTile() {
+        val s = stateOf("a", "b", "c")
+        val a = s.tiles[0].id
+        val later = s.move(a, 1)
+        assertEquals(listOf("b", "a", "c"), later.tiles.map { it.login })
+        assertEquals(s.activeId, later.activeId)
+        assertEquals(s.tiles.map { it.id }.toSet(), later.tiles.map { it.id }.toSet())
+        assertEquals(listOf("a", "b", "c"), later.move(a, -1).tiles.map { it.login })
+    }
+
+    @Test fun moveStopsAtBothEnds() {
+        val s = stateOf("a", "b")
+        assertSame(s, s.move(s.tiles.first().id, -1))
+        assertSame(s, s.move(s.tiles.last().id, 1))
+        assertSame(s, s.move(99, 1))
+    }
+
+    @Test fun gridPositionsFollowTheOrderNotTheTileId() {
+        // Cells are looked up by position, so a moved tile lands in its new cell while
+        // the screen keeps each tile keyed by id (no surface is recreated).
+        val s = stateOf("a", "b", "c").move(1, 2)
+        assertEquals(listOf("c", "b", "a"), s.tiles.map { it.login })
+        assertEquals(GridCell(0, 1, columnSpan = 2), MultiViewLayout.cell(s.tiles.indexOfFirst { it.login == "a" }, s.count))
+    }
 }

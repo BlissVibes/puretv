@@ -34,9 +34,14 @@ class VlcPlayer(
     // the cache arguments and the audio normalizer. The single-stream player and
     // every multi-stream tile each make their own media player from it.
     private val engine: VlcEngine,
+    // A named libVLC audio output for this player alone, or null for VLC's default.
+    // See [TILE_AUDIO_OUTPUT]: the default output shares one volume across players.
+    audioOutput: String? = null,
 ) : DesktopPlayer {
 
-    private val mediaPlayer: EmbeddedMediaPlayer? = engine.newEmbeddedPlayer()
+    private val mediaPlayer: EmbeddedMediaPlayer? = engine.newEmbeddedPlayer()?.also { mp ->
+        if (audioOutput != null) runCatching { mp.audio().setOutput(audioOutput) }
+    }
 
     private val _status = MutableStateFlow(
         if (mediaPlayer == null) PlayerStatus(

@@ -17,6 +17,7 @@ import com.puretv.twitch.desktop.player.DEFAULT_VOLUME
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
+import com.puretv.twitch.desktop.player.TILE_AUDIO_OUTPUT
 import com.puretv.twitch.desktop.player.TileQuality
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.player.VlcPlayer
@@ -206,7 +207,7 @@ class MultiViewViewModel(
         _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login))) }
         val setup = scope.launch {
             // libVLC is built on first use and its plugin scan is slow: not on the UI thread.
-            val player = VlcPlayer(engine)
+            val player = VlcPlayer(engine, audioOutput = TILE_AUDIO_OUTPUT)
             if (rt.closed) {
                 player.release()
                 return@launch

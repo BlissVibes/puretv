@@ -7,6 +7,16 @@ import java.awt.Component
 import javax.swing.SwingUtilities
 
 /**
+ * The audio output multi-stream tiles use. VLC's default Windows output (mmdevice)
+ * sets volume and mute on the process's one audio session, so with several players
+ * muting the quiet tiles silenced the active one too: measured with two live
+ * players, setting one player's volume changed the other's. DirectSound keeps a
+ * volume per player (measured the same way), which is what "only the active tile is
+ * audible" needs. The single-stream player keeps VLC's default.
+ */
+const val TILE_AUDIO_OUTPUT = "directsound"
+
+/**
  * The one libVLC instance of the app. Loading libVLC scans its plugins, which is
  * slow, so it happens once and every [VlcPlayer] (the single-stream player, and
  * one per multi-stream tile) makes its own media player from it.

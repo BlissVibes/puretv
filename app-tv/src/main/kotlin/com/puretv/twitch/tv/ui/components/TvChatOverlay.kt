@@ -40,6 +40,8 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.RankChip
+import com.puretv.twitch.core.chat.missingRankChips
 import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.model.ChatMessage
@@ -257,7 +259,7 @@ private fun TvChatMessageRow(
 
 /**
  * The sender's badges as images (22 dp, readable from the sofa), or text chips
- * while the art loads or when the channel's badges are unknown, so a moderator
+ * for any rank whose art is still loading or unknown, so a moderator
  * or the streamer still stands out.
  */
 @Composable
@@ -267,18 +269,16 @@ private fun TvChatBadges(message: ChatMessage, badges: BadgeIndex) {
         if (badges === BadgeIndex.EMPTY) emptyList()
         else message.badges.mapNotNull { badges.resolve(it.setId, it.version) }
     }
-    if (resolved.isNotEmpty()) {
-        resolved.forEach { badge ->
-            AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(22.dp))
+    resolved.forEach { badge ->
+        AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(22.dp))
+    }
+    missingRankChips(message, badges).forEach { chip ->
+        when (chip) {
+            RankChip.HOST -> TvBadgeChip("HOST", c.primary, c.onPrimary)
+            RankChip.MOD -> TvBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+            RankChip.SUB -> TvBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
         }
-        return
     }
-    if (message.isBroadcaster) {
-        TvBadgeChip("HOST", c.primary, c.onPrimary)
-    } else if (message.isModerator) {
-        TvBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
-    }
-    if (message.isSubscriber) TvBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
 }
 
 @Composable

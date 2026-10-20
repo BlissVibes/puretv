@@ -17,8 +17,10 @@ import com.puretv.twitch.core.chat.TwitchChatClient
 import com.puretv.twitch.core.chat.applying
 import com.puretv.twitch.core.chat.batchedEvery
 import com.puretv.twitch.core.emotes.EmoteRepository
+import com.puretv.twitch.core.emotes.SevenTvEmoteDelta
 import com.puretv.twitch.core.emotes.SevenTvEventClient
 import com.puretv.twitch.core.emotes.applySevenTvDelta
+import com.puretv.twitch.core.emotes.replaySevenTvDeltas
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.prioritizeThirdParty
 import com.puretv.twitch.core.model.ChannelEmote
@@ -561,6 +563,8 @@ class StreamViewModel(
     // change can fold into the channel set without fetching again. Every reader
     // and writer runs on viewModelScope's main dispatcher, so plain vars.
     private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    /** Live 7TV changes this stream, replayed over each third-party list that finishes loading. */
+    private val liveEmoteDeltas = ArrayList<SevenTvEmoteDelta>()
     private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
 
     // Flipping: a burst of presses becomes one change (see PendingFlip), and a
@@ -617,6 +621,7 @@ class StreamViewModel(
     init {
         viewModelScope.launch {
             sevenTvEventClient.updates.collect { delta ->
+                liveEmoteDeltas += delta
                 tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
                 rebuildEmotes()
             }
@@ -660,6 +665,7 @@ class StreamViewModel(
         chatTimeline = newChatTimeline(login)
         freshSessionRetries = 0
         tpChannelEmotes = emptyList()
+        liveEmoteDeltas.clear()
         // The old channel's sockets go first, so nothing of it lands in the new one.
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
@@ -702,13 +708,14 @@ class StreamViewModel(
                 }
 
                 // Live 7TV emote changes for as long as this stream is open. The socket
-                // does not wait for the emote lists below, which can take a moment.
+                // does not wait for the emote lists below, which can take a moment; changes pushed
+                // meanwhile are replayed over them.
                 channel?.let { sevenTvEventClient.connect(it.id) }
 
                 // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
                 // first, so the first lines already render, then the fresh set.
                 emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
-                    tpChannelEmotes = emotes.channel
+                    tpChannelEmotes = replaySevenTvDeltas(emotes.channel, liveEmoteDeltas)
                     tpGlobalEmotes = emotes.global
                     rebuildEmotes()
                     openTiming.mark("emotes_ready")

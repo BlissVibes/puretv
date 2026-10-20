@@ -56,12 +56,14 @@ import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.puretv.twitch.core.stream.Storyboard
 import com.puretv.twitch.core.vod.VodFormat
 import com.puretv.twitch.core.vod.VodScrub
 import com.puretv.twitch.tv.player.TvPlayer
 import com.puretv.twitch.tv.ui.TvVodViewModel
 import com.puretv.twitch.tv.ui.VodLaunch
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
+import com.puretv.twitch.tv.ui.components.StoryboardPreview
 import com.puretv.twitch.tv.ui.components.TvButtonStyle
 import com.puretv.twitch.tv.ui.components.TvExpressiveButton
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
@@ -308,6 +310,7 @@ fun TvVodScreen(
                 positionMs = positionMs,
                 durationMs = durationMs,
                 pendingMs = pendingMs,
+                storyboard = state.storyboard,
             )
         }
     }
@@ -322,9 +325,18 @@ private fun VodBar(
     positionMs: Long,
     durationMs: Long,
     pendingMs: Long?,
+    storyboard: Storyboard?,
 ) {
     val c = PureTvTvTheme.colors
     Box(modifier = Modifier.fillMaxSize()) {
+        // The frame at the PENDING spot, so a held key shows where it will land.
+        if (pendingMs != null && storyboard != null) {
+            StoryboardPreview(
+                storyboard = storyboard,
+                positionMs = pendingMs,
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 210.dp),
+            )
+        }
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)

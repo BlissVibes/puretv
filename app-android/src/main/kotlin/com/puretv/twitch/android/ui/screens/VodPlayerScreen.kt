@@ -66,6 +66,7 @@ import com.puretv.twitch.android.ui.components.ExpressiveButton
 import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.android.ui.components.ExpressiveIcons
+import com.puretv.twitch.android.ui.components.StoryboardPreview
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
@@ -318,6 +319,16 @@ private fun VodPlayerArea(
                             boxSize = 64,
                         )
                         VodScrimButton(ExpressiveIcons.Forward10, "Forward 10 seconds", { seekBy(SKIP_MS) })
+                    }
+                    // The frame at the dragged spot, floating above the bar.
+                    val dragging = scrubMs
+                    val sb = state.storyboard
+                    if (dragging != null && sb != null && durationMs > 0) {
+                        StoryboardPreview(
+                            storyboard = sb,
+                            positionMs = dragging,
+                            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp),
+                        )
                     }
                     VodSeekBar(
                         positionMs = scrubMs ?: positionMs,

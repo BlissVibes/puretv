@@ -8,6 +8,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.repository.VodRepository
+import com.puretv.twitch.core.stream.Storyboard
 import com.puretv.twitch.core.vod.ResumePolicy
 import com.puretv.twitch.core.vod.VodFailures
 import com.puretv.twitch.core.vod.WatchProgress
@@ -48,6 +49,8 @@ data class TvVodUiState(
     val errorIsPermanent: Boolean = false,
     /** Where a saved watch left off, offered as "Resume". Null when there is none worth resuming. */
     val resumeOfferMs: Long? = null,
+    /** Seek preview frames, loaded once per video; null when it has none. */
+    val storyboard: Storyboard? = null,
 )
 
 /**
@@ -77,6 +80,10 @@ class TvVodViewModel(
         viewModelScope.launch {
             val saved = runCatching { progressDao.get(launch.vodId)?.toCore() }.getOrNull()
             _state.update { it.copy(resumeOfferMs = saved?.let(ResumePolicy::resumePositionMs)) }
+        }
+        viewModelScope.launch {
+            runCatching { vodRepository.loadStoryboard(launch.vodId) }
+                .onSuccess { sb -> _state.update { it.copy(storyboard = sb) } }
         }
         // Save every 10 s while playing. Each save is guarded, so one failed write
         // does not end the loop for the rest of the video.

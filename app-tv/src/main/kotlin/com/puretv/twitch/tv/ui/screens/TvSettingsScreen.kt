@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
@@ -164,6 +165,8 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
             GoLiveSection(
                 enabled = state.settings.liveNotifications,
                 onEnabledChange = viewModel::setLiveNotifications,
+                mutedLogins = state.settings.notifyMutedLogins,
+                onUnmuteAll = viewModel::unmuteAllLiveNotifications,
             )
         }
         TvDivider()
@@ -517,24 +520,56 @@ private fun strategyLabel(strategy: AdBlockStrategy): String = when (strategy) {
 // ── Go-live banner ──────────────────────────────────────────────────────
 
 @Composable
-private fun GoLiveSection(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+private fun GoLiveSection(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    mutedLogins: Set<String>,
+    onUnmuteAll: () -> Unit,
+) {
     val c = PureTvTvTheme.colors
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(24.dp),
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("Go-live banner", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "While PureTV is open, a banner in the corner says when a channel you follow starts " +
-                    "streaming. It never moves your selection, so the remote keeps doing what it was doing.",
-                style = MaterialTheme.typography.bodyLarge,
-                color = c.onSurfaceVariant,
-            )
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Go-live banner", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "While PureTV is open, a banner in the corner says when a channel you follow starts " +
+                        "streaming. It never moves your selection, so the remote keeps doing what it was doing. " +
+                        "Press Menu on a channel in Following to mute its banner.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = onEnabledChange)
         }
-        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+        if (mutedLogins.isNotEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (mutedLogins.size == 1) "1 channel muted" else "${mutedLogins.size} channels muted",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = c.onSurface,
+                    )
+                    Text(
+                        mutedLogins.sorted().joinToString(", "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                TvExpressiveButton(text = "Unmute all", onClick = onUnmuteAll, style = TvButtonStyle.Outlined)
+            }
+        }
     }
 }
 

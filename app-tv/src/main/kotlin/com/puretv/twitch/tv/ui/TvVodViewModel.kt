@@ -145,7 +145,17 @@ class TvVodViewModel(
                 _state.update { it.copy(playableUrl = master.masterUrl) }
             }
             .onFailure { e ->
-                _state.update { it.copy(error = VodFailures.message(e), errorIsPermanent = VodFailures.isPermanent(e)) }
+                var message = VodFailures.message(e)
+                // A deleted video can never be resumed, so its Continue watching card goes too.
+                if (VodFailures.isConfirmedGone(e)) {
+                    val removed = runCatching {
+                        val had = progressDao.get(launch.vodId) != null
+                        if (had) progressDao.delete(launch.vodId)
+                        had
+                    }.getOrDefault(false)
+                    if (removed) message += " It has been removed from Continue watching."
+                }
+                _state.update { it.copy(error = message, errorIsPermanent = VodFailures.isPermanent(e)) }
             }
     }
 

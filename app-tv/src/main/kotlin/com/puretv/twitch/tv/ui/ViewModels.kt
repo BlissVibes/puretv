@@ -74,6 +74,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -192,6 +195,9 @@ class HomeViewModel(
                         followedLive = if (loggedIn) it.followedLive else emptyList(),
                     )
                 }
+                // Continue watching marks channels live from the follows; rebuild so a
+                // signed-out row stops carrying the last account's live status.
+                if (!loggedIn) rebuildContinueWatching()
             }
         }
         refresh()
@@ -305,10 +311,37 @@ class TvFollowingViewModel(
 
     private var loadJob: Job? = null
 
+    // Bumped on every sign-out; a load that started under an older count is stale.
+    @Volatile private var signOutCount = 0
+
+    /** Lowercased logins whose go-live banners are muted (press Menu on a channel to change). */
+    val mutedLogins: StateFlow<Set<String>> = settings.flow
+        .map { it.notifyMutedLogins }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** Mutes [login]'s go-live banners, or unmutes them if they were muted. */
+    fun toggleMute(login: String) = viewModelScope.launch {
+        val key = login.lowercase()
+        settings.update { s ->
+            val muted = s.notifyMutedLogins
+            s.copy(notifyMutedLogins = if (key in muted) muted - key else muted + key)
+        }
+    }
+
     init {
         viewModelScope.launch {
             settings.flow.collect { prefs ->
-                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank()) }
+                val loggedIn = prefs.accessToken.isNotBlank()
+                if (!loggedIn) {
+                    // A load already in flight belongs to the account that just left; its
+                    // answer must not land after this wipe (see loadOnce).
+                    signOutCount++
+                    // Signing out drops the last account's follows at once, so the next
+                    // account never sees them while its own list loads.
+                    _state.update { it.copy(isLoggedIn = false, isLoading = false, live = emptyList(), offline = emptyList(), errored = false) }
+                } else {
+                    _state.update { it.copy(isLoggedIn = true) }
+                }
             }
         }
         refresh()
@@ -328,16 +361,18 @@ class TvFollowingViewModel(
             _state.update { it.copy(isLoggedIn = false, isLoading = false, live = emptyList(), offline = emptyList()) }
             return
         }
+        val startedAt = signOutCount
         _state.update { it.copy(isLoggedIn = true, isLoading = it.live.isEmpty() && it.offline.isEmpty()) }
         runCatching {
             source.load(userId, emptyList()) { partial ->
+                if (signOutCount != startedAt) return@load
                 // Fast partial: live channels are in (avatars may still be loading). Drop
                 // the loading state now so the list appears without waiting on avatars.
                 _state.update { it.copy(isLoading = false, errored = false, live = partial.live, offline = partial.offline) }
             }
         }
-            .onSuccess { full -> _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
-            .onFailure { e -> _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
+            .onSuccess { full -> if (signOutCount == startedAt) _state.update { it.copy(isLoading = false, errored = false, live = full.live, offline = full.offline) } }
+            .onFailure { e -> if (signOutCount == startedAt) _state.update { it.copy(isLoading = false, errored = true, errorReason = StreamFailures.classify(e).reason()) } }
     }
 }
 
@@ -1118,6 +1153,11 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setProxyUrl(url: String) = viewModelScope.launch {
         settingsStore.update { it.copy(customProxyUrl = url) }
+    }
+
+    /** Clears the whole go-live mute list (muting a single channel is done from Following). */
+    fun unmuteAllLiveNotifications() = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyMutedLogins = emptySet()) }
     }
 
     fun logOut() = settingsStore.clearSession()

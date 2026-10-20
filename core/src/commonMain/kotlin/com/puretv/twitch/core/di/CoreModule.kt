@@ -40,7 +40,10 @@ val coreModule = module {
     single { buildKtorClient(get()) }
 
     // Twitch
-    single { val holder = get<TokenHolder>(); TwitchApiClient(get()) { holder.current() } }
+    single {
+        val holder = get<TokenHolder>()
+        TwitchApiClient(get()) { holder.current() }.also { it.anonymousChat = get<TwitchGqlDirectoryClient>() }
+    }
     single { TwitchGqlClient(get()) }
     // Anonymous directory reads for signed-out browsing; the repositories only
     // route here while there is no user token.

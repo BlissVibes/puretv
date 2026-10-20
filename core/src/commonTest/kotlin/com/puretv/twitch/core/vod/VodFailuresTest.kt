@@ -1,6 +1,7 @@
 package com.puretv.twitch.core.vod
 
 import com.puretv.twitch.core.stream.GqlPlaybackTokenException
+import com.puretv.twitch.core.stream.GqlVideoMissingException
 import com.puretv.twitch.core.stream.TwitchGqlClient
 import com.puretv.twitch.core.stream.UsherPlaylistException
 import com.puretv.twitch.core.stream.VodResolver
@@ -70,8 +71,47 @@ class VodFailuresTest {
     }
 
     @Test
-    fun noTokenMeansTheVideoIsGone() {
-        assertEquals(VodFailures.GONE, VodFailures.message(GqlPlaybackTokenException("VOD PlaybackAccessToken returned no token")))
+    fun aRealGqlAnswerWithNoVideoAndNoErrorsIsGone() = runTest {
+        val failure = assertFails {
+            resolver(HttpStatusCode.OK, validMaster, token = """{"data":{"videoPlaybackAccessToken":null}}""")
+                .resolveVodMasterPlaylist("123")
+        }
+        assertTrue(VodFailures.isConfirmedGone(failure))
+    }
+
+    @Test
+    fun aRealGqlAnswerWithErrorsIsNeverTreatedAsGone() = runTest {
+        for (body in listOf(
+            """{"errors":[{"message":"failed integrity check"}],"data":{"videoPlaybackAccessToken":null}}""",
+            """{"errors":[{"message":"service timeout"}]}""",
+            "not json at all",
+        )) {
+            val failure = assertFails { resolver(HttpStatusCode.OK, validMaster, token = body).resolveVodMasterPlaylist("123") }
+            assertFalse(VodFailures.isConfirmedGone(failure), body)
+        }
+    }
+
+    @Test
+    fun aCleanAnswerWithNoVideoMeansItIsGone() {
+        val failure = GqlVideoMissingException("no token and no errors")
+        assertEquals(VodFailures.GONE, VodFailures.message(failure))
+        assertTrue(VodFailures.isConfirmedGone(failure))
+    }
+
+    @Test
+    fun noTokenWithErrorsIsOnlyABlip() {
+        val failure = GqlPlaybackTokenException("no token, GQL reported errors")
+        assertEquals(VodFailures.COULD_NOT_LOAD, VodFailures.message(failure))
+        assertFalse(VodFailures.isConfirmedGone(failure))
+        assertFalse(VodFailures.isPermanent(failure))
+    }
+
+    @Test
+    fun onlyAConfirmedDeletionIsSafeToForget() {
+        assertTrue(VodFailures.isConfirmedGone(UsherPlaylistException("usher 404", status = 404, body = "vod does not exist")))
+        assertFalse(VodFailures.isConfirmedGone(UsherPlaylistException("usher 503", status = 503, body = "")))
+        assertFalse(VodFailures.isConfirmedGone(UsherPlaylistException("usher 403", status = 403, body = "vod_manifest_restricted")))
+        assertFalse(VodFailures.isConfirmedGone(null))
     }
 
     @Test

@@ -8,6 +8,7 @@ import com.puretv.twitch.core.model.MutedSegment
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.VideoInfo
 import com.puretv.twitch.core.model.VideoType
+import com.puretv.twitch.core.stream.TwitchGqlDirectoryClient
 import com.puretv.twitch.core.model.parseTwitchDuration
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -46,6 +47,16 @@ class TwitchApiClient(
      * Helix would refuse it exactly as it refuses a missing one.
      */
     fun hasUserToken(): Boolean = !tokenProvider().isNullOrBlank()
+
+    /**
+     * Where Twitch's own chat emotes and badges come from while nobody is signed in:
+     * Helix refuses those reads without a user token, anonymous GQL does not. Set once by
+     * the DI graph; null (tests, tools) keeps Helix as the only source. Signed in, Helix
+     * stays the source, so this adds no calls for a signed-in viewer.
+     */
+    @Volatile var anonymousChat: TwitchGqlDirectoryClient? = null
+
+    private fun signedOutChat(): TwitchGqlDirectoryClient? = anonymousChat?.takeIf { !hasUserToken() }
 
     private suspend inline fun <reified T> get(
         path: String,
@@ -122,15 +133,20 @@ class TwitchApiClient(
         // Twitch's global set rarely changes and every stream open asks for it,
         // so the first real answer is kept for the session.
         globalEmotesCache?.let { return it }
-        val fresh = runCatching {
-            val resp: HelixEnvelope<TwitchEmoteDto> = withRateLimitRetry {
-                authedClient().get("${TwitchConfig.API_BASE}/chat/emotes/global") {
-                    header("Client-Id", TwitchConfig.CLIENT_ID)
-                    tokenProvider()?.let { header("Authorization", "Bearer $it") }
-                }.body()
-            }
-            parseTwitchEmotes(resp)
-        }.getOrDefault(emptyList())
+        val anonymous = signedOutChat()
+        val fresh = if (anonymous != null) {
+            runCatching { anonymous.globalEmotes() }.getOrDefault(emptyList())
+        } else {
+            runCatching {
+                val resp: HelixEnvelope<TwitchEmoteDto> = withRateLimitRetry {
+                    authedClient().get("${TwitchConfig.API_BASE}/chat/emotes/global") {
+                        header("Client-Id", TwitchConfig.CLIENT_ID)
+                        tokenProvider()?.let { header("Authorization", "Bearer $it") }
+                    }.body()
+                }
+                parseTwitchEmotes(resp)
+            }.getOrDefault(emptyList())
+        }
         if (fresh.isNotEmpty()) globalEmotesCache = fresh
         return fresh
     }
@@ -141,7 +157,14 @@ class TwitchApiClient(
      * GET /chat/emotes?broadcaster_id= — a channel's first-party Twitch emotes
      * (sub/bits/follower). Best-effort: failures degrade to an empty list.
      */
-    suspend fun getChannelTwitchEmotes(broadcasterId: String): List<ChannelEmote> = runCatching {
+    suspend fun getChannelTwitchEmotes(broadcasterId: String): List<ChannelEmote> {
+        signedOutChat()?.let { anonymous ->
+            return runCatching { anonymous.channelEmotes(broadcasterId) }.getOrDefault(emptyList())
+        }
+        return helixChannelTwitchEmotes(broadcasterId)
+    }
+
+    private suspend fun helixChannelTwitchEmotes(broadcasterId: String): List<ChannelEmote> = runCatching {
         val resp: HelixEnvelope<TwitchEmoteDto> = withRateLimitRetry {
             authedClient().get("${TwitchConfig.API_BASE}/chat/emotes") {
                 header("Client-Id", TwitchConfig.CLIENT_ID)
@@ -156,7 +179,14 @@ class TwitchApiClient(
      * GET /chat/badges/global — Twitch's first-party global chat badges
      * (admin, staff, turbo, global mod, …). Best-effort: failures degrade to empty.
      */
-    suspend fun getGlobalChatBadges(): List<ChatBadgeSetDto> = runCatching {
+    suspend fun getGlobalChatBadges(): List<ChatBadgeSetDto> {
+        signedOutChat()?.let { anonymous ->
+            return runCatching { anonymous.globalBadgeSets() }.getOrDefault(emptyList())
+        }
+        return helixGlobalChatBadges()
+    }
+
+    private suspend fun helixGlobalChatBadges(): List<ChatBadgeSetDto> = runCatching {
         val resp: HelixEnvelope<ChatBadgeSetDto> = get("/chat/badges/global")
         resp.data
     }.getOrDefault(emptyList())
@@ -166,7 +196,14 @@ class TwitchApiClient(
      * tiers, bits, founder, …). Channel sets override global on a set-id collision.
      * Best-effort: failures degrade to an empty list.
      */
-    suspend fun getChannelChatBadges(broadcasterId: String): List<ChatBadgeSetDto> = runCatching {
+    suspend fun getChannelChatBadges(broadcasterId: String): List<ChatBadgeSetDto> {
+        signedOutChat()?.let { anonymous ->
+            return runCatching { anonymous.channelBadgeSets(broadcasterId) }.getOrDefault(emptyList())
+        }
+        return helixChannelChatBadges(broadcasterId)
+    }
+
+    private suspend fun helixChannelChatBadges(broadcasterId: String): List<ChatBadgeSetDto> = runCatching {
         val resp: HelixEnvelope<ChatBadgeSetDto> = get("/chat/badges", mapOf("broadcaster_id" to broadcasterId))
         resp.data
     }.getOrDefault(emptyList())

@@ -45,6 +45,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import coil3.compose.AsyncImage
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.tv.ui.HomeViewModel
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
 import com.puretv.twitch.tv.ui.components.TvButtonSize
@@ -107,6 +108,14 @@ fun TvHomeScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val hero = state.followedLive.firstOrNull() ?: state.topStreams.firstOrNull()
+
+    // The row a stream is opened from is the set the remote flips through (when the
+    // channel is not one of the viewer's live follows, which are tried first).
+    val flipOrigin = koinInject<FlipOrigin>()
+    val openFrom = { row: List<StreamInfo>, login: String ->
+        flipOrigin.record(row.map { it.userLogin })
+        onOpenStream(login)
+    }
 
     // Data arrives asynchronously (cache, then network), so the very first
     // composition usually has nothing to focus yet. Keep retrying — cheaply,
@@ -195,7 +204,7 @@ fun TvHomeScreen(
                 HomeHero(
                     stream = h,
                     followedLive = state.followedLive.isNotEmpty(),
-                    onWatch = { onOpenStream(h.userLogin) },
+                    onWatch = { openFrom(if (state.followedLive.isNotEmpty()) state.followedLive else state.topStreams, h.userLogin) },
                     watchFocusRequester = heroFocusRequester,
                 )
             }
@@ -205,14 +214,14 @@ fun TvHomeScreen(
                     title = "Following · Live now",
                     streams = state.followedLive,
                     firstCardFocusRequester = if (hero == null) firstCardFocusRequester else null,
-                    onOpenStream = onOpenStream,
+                    onOpenStream = { openFrom(state.followedLive, it) },
                 )
             }
             ContentRow(
                 title = "Live Channels",
                 streams = state.topStreams,
                 firstCardFocusRequester = if (hero == null && state.followedLive.isEmpty()) firstCardFocusRequester else null,
-                onOpenStream = onOpenStream,
+                onOpenStream = { openFrom(state.topStreams, it) },
             )
 
             // Signed out, the shelves above fill from the public directory; only

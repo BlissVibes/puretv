@@ -17,6 +17,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -57,6 +59,12 @@ fun TvControlsOverlay(
     onTogglePlayPause: () -> Unit,
     onSelectQuality: (StreamQuality) -> Unit,
     modifier: Modifier = Modifier,
+    chatVisible: Boolean = false,
+    onToggleChat: () -> Unit = {},
+    sleepLabel: String = "Sleep: Off",
+    onCycleSleep: () -> Unit = {},
+    /** Where the screen puts focus when the controls appear (Play/Pause). */
+    playPauseFocusRequester: FocusRequester? = null,
 ) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
@@ -123,9 +131,23 @@ fun TvControlsOverlay(
                         style = TvButtonStyle.Filled,
                         boxSize = 72.dp,
                         iconSize = 34.dp,
+                        modifier = if (playPauseFocusRequester != null) Modifier.focusRequester(playPauseFocusRequester) else Modifier,
                     )
                     TvLivePill()
                     Spacer(modifier = Modifier.weight(1f))
+                    // Reachable with the D-pad like every other control, so chat and the
+                    // sleep timer need no dedicated keys.
+                    TvExpressiveButton(
+                        text = if (chatVisible) "Hide chat" else "Chat",
+                        onClick = onToggleChat,
+                        style = TvButtonStyle.Tonal,
+                        icon = ExpressiveIcons.Chat,
+                    )
+                    TvExpressiveButton(
+                        text = sleepLabel,
+                        onClick = onCycleSleep,
+                        style = TvButtonStyle.Tonal,
+                    )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     // Same order stepQuality() in TvStreamScreen walks via FF/RW, so the

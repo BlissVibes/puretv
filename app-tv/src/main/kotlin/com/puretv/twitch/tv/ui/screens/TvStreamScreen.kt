@@ -19,7 +19,9 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.focusable
@@ -42,11 +44,18 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.playback.RemoteAction
+import com.puretv.twitch.core.playback.RemoteKey
+import com.puretv.twitch.core.playback.RemoteKeys
+import com.puretv.twitch.core.playback.RemoteState
+import com.puretv.twitch.tv.notify.TvGoLiveMonitor
 import com.puretv.twitch.tv.player.TvPlayer
 import com.puretv.twitch.tv.ui.StreamUiState
 import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.components.TvChatOverlay
 import com.puretv.twitch.tv.ui.components.TvControlsOverlay
+import com.puretv.twitch.tv.ui.components.TvFlipBanner
+import com.puretv.twitch.tv.ui.components.TvSleepBanner
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
@@ -56,55 +65,95 @@ import org.koin.core.parameter.parametersOf
 /**
  * SECTION 07.4 [CRITICAL] — immersive fullscreen player.
  *
- * Behavior, mapped 1:1 to the spec:
- *   • Starts fullscreen immediately, no chrome.
- *   • ANY D-pad key shows [TvControlsOverlay]; a 3-second inactivity timer
- *     hides it again (`controlsVisible` + [LaunchedEffect] restart-on-input).
- *   • DPAD_RIGHT (while controls are hidden / player has focus) opens chat;
- *     DPAD_LEFT closes chat and returns focus to the player.
- *   • FAST_FORWARD / REWIND step [StreamQuality] up/down (live streams can't
- *     seek — repurposed exactly as Section 7.4 specifies).
- *   • DPAD_CENTER / ENTER / PLAY_PAUSE toggle playback via [TvPlayer.togglePlayPause].
- *   • BACK dismisses the chat overlay first, then controls, then exits the
- *     screen (`onBack`) — the dismiss-overlay-before-exit hierarchy from
- *     Section 7.3's BACK-button rules, scoped to this screen's own state
- *     (the home/app-exit levels of that hierarchy live in `TvMainActivity`/
- *     the Activity's default back behavior).
+ * Behavior (the key table itself lives in core's `RemoteKeys`, tested there):
+ *   • Starts fullscreen with the controls up for 3 seconds, then none.
+ *   • Controls hidden: UP/DOWN flip channels (see [StreamViewModel.flip]; the
+ *     channel changes in place, because leaving this screen stops the shared
+ *     player), OK shows the controls with focus on Play/Pause, RIGHT opens chat
+ *     and LEFT closes it.
+ *   • Controls visible: the D-pad moves focus between the controls (quality,
+ *     chat, sleep timer) and OK presses the focused one; a 3-second inactivity
+ *     timer hides them again.
+ *   • CHANNEL UP/DOWN and MEDIA NEXT/PREVIOUS always flip; PLAY/PAUSE and
+ *     FAST_FORWARD / REWIND (quality up/down, live streams can't seek) work
+ *     everywhere.
+ *   • BACK closes the chat overlay first, then hides the controls, then exits
+ *     the screen (`onBack`). It never counts as activity for the auto-hide
+ *     timer, or the chrome would resurrect itself (the old "back does nothing"
+ *     lockup).
  *
- * The whole screen is wrapped in a single `focusable` + `onKeyEvent` host so
- * every remote key reaches this handler regardless of which (invisible, by
- * default) child currently holds focus — avoiding the need to scatter key
- * handlers across the overlay's buttons.
+ * The whole screen is wrapped in a single `focusable` + `onKeyEvent` host. A key
+ * the table passes through (D-pad inside the controls) is left unconsumed, so
+ * Compose's focus search moves focus along the controls.
  */
 @OptIn(UnstableApi::class)
 @Composable
 fun TvStreamScreen(
     channelLogin: String,
     onBack: () -> Unit,
+    /** The sleep timer ran out: leave the stream for Home. */
+    onSleepExpired: () -> Unit = onBack,
     viewModel: StreamViewModel = koinViewModel(parameters = { parametersOf(channelLogin) }),
 ) {
     val state by viewModel.state.collectAsState()
     val context = LocalContext.current
     val tvPlayer = koinInject<TvPlayer>()
+    val goLive = koinInject<TvGoLiveMonitor>()
     val rootFocusRequester = remember { FocusRequester() }
+    val playPauseFocusRequester = remember { FocusRequester() }
 
     var controlsVisible by remember { mutableStateOf(true) }
     var chatVisible by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
     val quality = state.quality ?: StreamQuality.AUTO
-    var lastInputAt by remember { mutableStateOf(0L) }
+    // Restarts the controls' auto-hide countdown; bumped by input while they are up.
+    var controlsTouchedAt by remember { mutableStateOf(0L) }
+    val latestState by rememberUpdatedState(state)
+    val latestQuality by rememberUpdatedState(quality)
 
     LaunchedEffect(Unit) {
-        runCatching { rootFocusRequester.requestFocus() }
-        // Reveal the chrome on entry, then let the auto-hide timer take it away
-        // after 3s (kick-starts the LaunchedEffect(lastInputAt) countdown below).
-        lastInputAt = System.currentTimeMillis()
+        // Reveal the chrome on entry, then let the auto-hide timer take it away.
+        controlsTouchedAt = System.currentTimeMillis()
     }
 
-    LaunchedEffect(state.playableUrl) {
+    // The controls own D-pad focus while they are up (Play/Pause first); when they go,
+    // focus returns to the root so every key still reaches the handler below.
+    LaunchedEffect(controlsVisible) {
+        if (controlsVisible) {
+            // The controls compose in this same pass; wait one frame for their focus targets.
+            withFrameNanos { }
+            if (runCatching { playPauseFocusRequester.requestFocus() }.isFailure) {
+                runCatching { rootFocusRequester.requestFocus() }
+            }
+        } else {
+            runCatching { rootFocusRequester.requestFocus() }
+        }
+    }
+
+    // The go-live banner skips the channel being watched, which changes with a flip.
+    LaunchedEffect(state.channelLogin) {
+        goLive.watchingLogin = state.channelLogin.ifBlank { null }
+    }
+
+    // Once per resolved stream (a flip resolves a new one), not once per URL.
+    LaunchedEffect(state.playGeneration) {
         val url = state.playableUrl ?: return@LaunchedEffect
         tvPlayer.playUrl(url, lowLatency = state.lowLatency)
         isPlaying = true
+    }
+
+    // A stream that cannot play must not leave the previous channel's picture running
+    // under the explanation.
+    LaunchedEffect(state.playbackError) {
+        if (state.playbackError != null) tvPlayer.stop()
+    }
+
+    // The sleep timer ran out: stop and go home.
+    LaunchedEffect(state.sleepExpired) {
+        if (state.sleepExpired) {
+            tvPlayer.stop()
+            onSleepExpired()
+        }
     }
 
     // Local time-to-first-frame mark. Cleared on leave so a released screen's
@@ -129,12 +178,11 @@ fun TvStreamScreen(
         runCatching { tvPlayer.setQuality(selected) }
     }
 
-    // Auto-hide: any input bumps `lastInputAt`; this effect restarts its 3s
-    // countdown each time that happens and hides the chrome once it elapses
-    // with no further input (Section 7.4: "auto-hide after 3 seconds").
-    LaunchedEffect(lastInputAt) {
-        if (lastInputAt == 0L) return@LaunchedEffect
-        controlsVisible = true
+    // Auto-hide: input while the controls are up bumps `controlsTouchedAt`, which
+    // restarts this 3s countdown; the chrome goes once it elapses with no further input
+    // (Section 7.4: "auto-hide after 3 seconds"). Flipping channels does not show them.
+    LaunchedEffect(controlsVisible, controlsTouchedAt) {
+        if (!controlsVisible || controlsTouchedAt == 0L) return@LaunchedEffect
         delay(3_000)
         controlsVisible = false
     }
@@ -178,60 +226,54 @@ fun TvStreamScreen(
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
 
-                // BACK is resolved BEFORE bumping the activity timestamp. It must
-                // never count as "activity": the auto-hide effect re-shows the
-                // controls on every input, so if BACK bumped the timer it would
-                // resurrect the chrome and the viewer could never leave the player
-                // (the reported "back button does nothing in a stream" lockup).
-                // Order: dismiss the chat overlay if open, otherwise exit the screen.
-                if (event.key == Key.Back) {
-                    return@onKeyEvent if (chatVisible) {
-                        chatVisible = false
-                        true
-                    } else {
-                        onBack()
-                        true
-                    }
+                val key = event.key.toRemoteKey()
+                val current = latestState
+                val action = RemoteKeys.decide(
+                    key,
+                    RemoteState(
+                        controlsVisible = controlsVisible,
+                        chatVisible = chatVisible,
+                        hasError = current.playbackError != null,
+                        upDownFlips = current.upDownFlips,
+                        okPauses = current.okPauses,
+                    ),
+                )
+                if (RemoteKeys.isActivity(key)) {
+                    // Any key buys a sleepy viewer more time, and shows the flip neighbours
+                    // are worth having ready (core throttles the prewarm).
+                    viewModel.onViewerActivity()
+                    viewModel.onRemoteIntent()
+                    // BACK is never "activity" for the auto-hide: bumping the timer for it
+                    // would resurrect the chrome and the viewer could never leave the player.
+                    if (controlsVisible && key != RemoteKey.Back) controlsTouchedAt = System.currentTimeMillis()
                 }
 
-                lastInputAt = System.currentTimeMillis()
-
-                when (event.key) {
-                    Key.DirectionRight -> {
-                        if (!chatVisible) { chatVisible = true; true } else false
-                    }
-                    Key.DirectionLeft -> {
-                        if (chatVisible) { chatVisible = false; true } else false
-                    }
-                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
-                        // With no playable URL there is nothing to pause, so OK
-                        // becomes the retry affordance the error panel advertises.
-                        if (state.playbackError != null) {
-                            viewModel.retry()
-                        } else {
-                            tvPlayer.togglePlayPause()
-                            isPlaying = tvPlayer.exoPlayer.isPlaying
-                        }
-                        true
-                    }
-                    Key.MediaFastForward -> {
-                        viewModel.setQuality(stepQuality(quality, up = true))
-                        true
-                    }
-                    Key.MediaRewind -> {
-                        viewModel.setQuality(stepQuality(quality, up = false))
-                        true
-                    }
-                    Key.Menu -> {
-                        chatVisible = !chatVisible
-                        true
-                    }
-                    else -> {
-                        // Any other D-pad/remote input still resets the auto-hide
-                        // timer (handled above) and reveals the chrome.
+                when (action) {
+                    RemoteAction.PassThrough -> false
+                    RemoteAction.Ignore -> true
+                    is RemoteAction.Flip -> { viewModel.flip(action.direction); true }
+                    RemoteAction.ShowControls -> {
                         controlsVisible = true
-                        false
+                        controlsTouchedAt = System.currentTimeMillis()
+                        true
                     }
+                    RemoteAction.HideControls -> { controlsVisible = false; true }
+                    RemoteAction.OpenChat -> { chatVisible = true; true }
+                    RemoteAction.CloseChat -> { chatVisible = false; true }
+                    RemoteAction.ToggleChat -> { chatVisible = !chatVisible; true }
+                    RemoteAction.TogglePlayPause -> {
+                        tvPlayer.togglePlayPause()
+                        isPlaying = tvPlayer.exoPlayer.isPlaying
+                        true
+                    }
+                    // With no playable URL there is nothing to pause, so OK becomes the
+                    // retry affordance the error panel advertises.
+                    RemoteAction.Retry -> { viewModel.retry(); true }
+                    is RemoteAction.StepQuality -> {
+                        viewModel.setQuality(stepQuality(latestQuality, up = action.up))
+                        true
+                    }
+                    RemoteAction.Leave -> { onBack(); true }
                 }
             },
         contentAlignment = Alignment.Center,
@@ -245,7 +287,7 @@ fun TvStreamScreen(
                 StreamVideoArea(
                     playableUrl = state.playableUrl,
                     playbackError = state.playbackError,
-                    title = state.streamInfo?.title ?: state.channel?.displayName ?: channelLogin,
+                    title = state.streamInfo?.title ?: state.channel?.displayName ?: state.channelLogin.ifBlank { channelLogin },
                     viewerCount = state.streamInfo?.viewerCount?.toLong() ?: 0L,
                     adBlockStatus = state.adBlockStatus,
                     tvPlayer = tvPlayer,
@@ -258,6 +300,11 @@ fun TvStreamScreen(
                         isPlaying = tvPlayer.exoPlayer.isPlaying
                     },
                     onSelectQuality = viewModel::setQuality,
+                    chatVisible = chatVisible,
+                    onToggleChat = { chatVisible = !chatVisible },
+                    sleepLabel = state.sleepLabel,
+                    onCycleSleep = viewModel::cycleSleepTimer,
+                    playPauseFocusRequester = playPauseFocusRequester,
                 )
                 if (!state.chatBesideVideo) {
                     StreamChat(state = state, visible = chatVisible, beside = false, modifier = Modifier.fillMaxSize())
@@ -267,7 +314,37 @@ fun TvStreamScreen(
                 StreamChat(state = state, visible = chatVisible, beside = true, modifier = Modifier.fillMaxHeight())
             }
         }
+
+        // Plain text over the picture, never focusable: the remote keeps driving the player.
+        TvFlipBanner(
+            target = state.flipTarget,
+            note = state.flipNote,
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 150.dp),
+        )
+        TvSleepBanner(
+            text = state.sleepWarning,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 220.dp),
+        )
     }
+}
+
+/** The remote key the decision table in core sees for a Compose [Key]. */
+private fun Key.toRemoteKey(): RemoteKey = when (this) {
+    Key.DirectionUp -> RemoteKey.Up
+    Key.DirectionDown -> RemoteKey.Down
+    Key.DirectionLeft -> RemoteKey.Left
+    Key.DirectionRight -> RemoteKey.Right
+    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> RemoteKey.Center
+    Key.Back -> RemoteKey.Back
+    Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> RemoteKey.PlayPause
+    Key.MediaFastForward -> RemoteKey.FastForward
+    Key.MediaRewind -> RemoteKey.Rewind
+    Key.ChannelUp, Key.PageUp -> RemoteKey.ChannelUp
+    Key.ChannelDown, Key.PageDown -> RemoteKey.ChannelDown
+    Key.MediaNext -> RemoteKey.MediaNext
+    Key.MediaPrevious -> RemoteKey.MediaPrevious
+    Key.Menu -> RemoteKey.Menu
+    else -> RemoteKey.Other
 }
 
 /** The stream's chat, in either position, wired to the screen state. */
@@ -308,6 +385,11 @@ private fun StreamVideoArea(
     onBack: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onSelectQuality: (StreamQuality) -> Unit,
+    chatVisible: Boolean,
+    onToggleChat: () -> Unit,
+    sleepLabel: String,
+    onCycleSleep: () -> Unit,
+    playPauseFocusRequester: FocusRequester,
 ) {
     val context = LocalContext.current
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -366,6 +448,11 @@ private fun StreamVideoArea(
             onTogglePlayPause = onTogglePlayPause,
             onSelectQuality = onSelectQuality,
             modifier = Modifier.fillMaxSize(),
+            chatVisible = chatVisible,
+            onToggleChat = onToggleChat,
+            sleepLabel = sleepLabel,
+            onCycleSleep = onCycleSleep,
+            playPauseFocusRequester = playPauseFocusRequester,
         )
     }
 }

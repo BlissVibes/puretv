@@ -107,7 +107,12 @@ fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) 
         }
         composable(Routes.STREAM) { backStackEntry ->
             val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
-            TvStreamScreen(channelLogin = channelLogin, onBack = navController::popBackStack)
+            TvStreamScreen(
+                channelLogin = channelLogin,
+                onBack = navController::popBackStack,
+                // The sleep timer ran out: back to Home, not to whichever screen opened the stream.
+                onSleepExpired = { navController.popBackStack(Routes.HOME, inclusive = false) },
+            )
         }
         composable(Routes.CHANNEL) { backStackEntry ->
             val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()

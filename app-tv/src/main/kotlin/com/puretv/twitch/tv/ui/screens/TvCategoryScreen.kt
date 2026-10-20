@@ -36,7 +36,9 @@ import com.puretv.twitch.tv.ui.components.TvStreamCard
 import com.puretv.twitch.tv.ui.components.formatTvViewerCount
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
+import com.puretv.twitch.core.playback.FlipOrigin
 import org.koin.androidx.compose.koinViewModel
+import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 
 /**
@@ -57,6 +59,7 @@ fun TvCategoryScreen(
     viewModel: CategoryViewModel = koinViewModel(parameters = { parametersOf(gameId) }),
 ) {
     val state by viewModel.state.collectAsState()
+    val flipOrigin = koinInject<FlipOrigin>()
     val c = PureTvTvTheme.colors
     val displayName = state.gameName.ifBlank { "Category" }
 
@@ -92,7 +95,14 @@ fun TvCategoryScreen(
                 contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 24.dp, bottom = 40.dp),
             ) {
                 items(state.streams, key = { it.userLogin }) { stream ->
-                    TvStreamCard(stream = stream, onClick = { onOpenStream(stream.userLogin) })
+                    TvStreamCard(
+                        stream = stream,
+                        onClick = {
+                            // The remote flips through this category's channels.
+                            flipOrigin.record(state.streams.map { it.userLogin })
+                            onOpenStream(stream.userLogin)
+                        },
+                    )
                 }
             }
         }

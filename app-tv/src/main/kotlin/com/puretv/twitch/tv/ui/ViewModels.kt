@@ -38,6 +38,9 @@ import com.puretv.twitch.core.playback.FlipDirection
 import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.core.playback.PendingFlip
 import com.puretv.twitch.core.playback.PrewarmGate
+import com.puretv.twitch.core.playback.SleepStatus
+import com.puretv.twitch.core.playback.SleepTimer
+import com.puretv.twitch.core.playback.SleepTimerText
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -437,10 +440,21 @@ data class StreamUiState(
     // StreamViewModel.flip), so the screen reads the login from here, not from its route.
     /** The channel on screen. */
     val channelLogin: String = "",
+    /** Counts resolved streams, so the screen starts playback once per resolution even when a URL repeats. */
+    val playGeneration: Int = 0,
     /** Where a flip in progress will land, for the banner; null when none is pending. */
     val flipTarget: String? = null,
     /** A short note for the banner when a flip had nowhere to go. */
     val flipNote: String? = null,
+
+    // Sleep timer. Text only, so the screen recomposes when the words change (once a
+    // minute, then once a second in the last minute), not on every tick.
+    /** The sleep control's label, for example "Sleep: Off" or "Sleep: 24 min left". */
+    val sleepLabel: String = "Sleep: Off",
+    /** The last-minute warning, or null when it is not showing. */
+    val sleepWarning: String? = null,
+    /** The time ran out: the screen stops watching. */
+    val sleepExpired: Boolean = false,
 )
 
 class StreamViewModel(
@@ -487,6 +501,10 @@ class StreamViewModel(
     private val prewarmGate = PrewarmGate(System::currentTimeMillis)
     private var settleJob: Job? = null
     private var noteJob: Job? = null
+
+    // Sleep timer: lives with the screen, so it carries across flips. Not saved.
+    private val sleepTimer = SleepTimer(System::currentTimeMillis)
+    private var sleepJob: Job? = null
     private var lastFlipDirection = FlipDirection.NEXT
     @Volatile private var signedIn = false
 
@@ -658,12 +676,50 @@ class StreamViewModel(
 
     private fun commitFlip() {
         val next = pendingFlip.takeDue(currentLogin, System.currentTimeMillis())
-        _state.update { it.copy(flipTarget = null) }
-        if (next == null) return
+        if (next == null) {
+            _state.update { it.copy(flipTarget = null) }
+            return
+        }
+        // The banner stays up until the new stream is ready (see resolvePlayable).
         openChannel(next)
         // Heading the same way, the next channel is the likeliest one to want.
         ChannelFlip.step(flipRing(), next, lastFlipDirection)?.let { ahead ->
             prewarmGate.take(listOf(ahead)).forEach(playableStreamCache::prewarm)
+        }
+    }
+
+    /** The sleep control was pressed: next preset (Off, 15, 30, 60, 90, 120 minutes), counting from now. */
+    fun cycleSleepTimer() {
+        sleepTimer.cycle()
+        sleepJob?.cancel()
+        sleepJob = viewModelScope.launch {
+            while (true) {
+                val status = sleepTimer.status()
+                publishSleep(status)
+                if (status !is SleepStatus.Running) break
+                delay(1_000)
+            }
+        }
+    }
+
+    /** Any remote key. In the sleep timer's last minute it buys another 15 minutes. */
+    fun onViewerActivity() {
+        if (sleepTimer.onActivity()) {
+            val status = sleepTimer.status()
+            publishSleep(status)
+        }
+    }
+
+    private fun publishSleep(status: SleepStatus) {
+        _state.update {
+            when (status) {
+                SleepStatus.Off -> it.copy(sleepLabel = "Sleep: Off", sleepWarning = null)
+                is SleepStatus.Running -> it.copy(
+                    sleepLabel = SleepTimerText.remaining(status.remainingMs),
+                    sleepWarning = if (status.warning) SleepTimerText.warning(status.remainingMs, "button") else null,
+                )
+                SleepStatus.Expired -> it.copy(sleepLabel = "Sleep: Off", sleepWarning = null, sleepExpired = true)
+            }
         }
     }
 
@@ -716,7 +772,15 @@ class StreamViewModel(
                 if (login != currentLogin) return
                 openTiming.mark("playable_url")
                 val lowLatency = settingsStore.flow.first().lowLatencyMode
-                _state.update { it.copy(playableUrl = playable.masterUrl, playbackError = null, lowLatency = lowLatency) }
+                _state.update {
+                    it.copy(
+                        playableUrl = playable.masterUrl,
+                        playGeneration = it.playGeneration + 1,
+                        playbackError = null,
+                        lowLatency = lowLatency,
+                        flipTarget = null,
+                    )
+                }
             }
             .onFailure { e ->
                 if (login != currentLogin) return
@@ -729,6 +793,7 @@ class StreamViewModel(
                 _state.update {
                     it.copy(
                         playableUrl = null,
+                        flipTarget = null,
                         playbackError = failure.message() +
                             if (failure.detail.isBlank()) "" else "\n\nDetails: ${failure.detail}",
                     )

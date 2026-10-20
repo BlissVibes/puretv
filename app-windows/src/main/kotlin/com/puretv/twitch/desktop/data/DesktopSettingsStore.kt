@@ -170,6 +170,8 @@ class DesktopSettingsStore(
         val upscalingMode: String = "off",
         val playbackBackend: String = "vlc",
         val showSevenTvPaints: Boolean = true,
+        // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
+        val audioNormalizer: Boolean = false,
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -192,6 +194,7 @@ class DesktopSettingsStore(
         upscalingMode = parseUpscalingMode(upscalingMode),
         playbackBackend = parsePlaybackBackend(playbackBackend),
         showSevenTvPaints = showSevenTvPaints,
+        audioNormalizer = audioNormalizer,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -216,6 +219,7 @@ class DesktopSettingsStore(
         upscalingMode = upscalingMode.name.lowercase(),
         playbackBackend = playbackBackend.name.lowercase(),
         showSevenTvPaints = showSevenTvPaints,
+        audioNormalizer = audioNormalizer,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

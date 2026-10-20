@@ -35,6 +35,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import com.puretv.twitch.core.model.PlaybackBackend
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
@@ -104,6 +106,11 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             lowLatency = state.settings.lowLatencyMode,
             onLowLatencyChange = viewModel::setLowLatency,
+            audioNormalizer = state.settings.audioNormalizer,
+            onAudioNormalizerChange = viewModel::setAudioNormalizer,
+            // The engine running now, not the saved one: an engine switch itself waits for a restart.
+            normalizerNeedsRestart = koin.get<DesktopPlayerProvider>()
+                .runningBackend(state.settings.playbackBackend) == PlaybackBackend.VLC,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -282,6 +289,9 @@ private fun PlaybackPanel(
     onAnimateEmotesChange: (Boolean) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    audioNormalizer: Boolean,
+    onAudioNormalizerChange: (Boolean) -> Unit,
+    normalizerNeedsRestart: Boolean,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -306,6 +316,15 @@ private fun PlaybackPanel(
                     "pause to buffer on a weak connection, turn this off. Applies to the next stream you open.",
             ) {
                 ExpressiveSwitch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Even out loud and quiet audio",
+                description = "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                    "leave the volume alone. Music can sound flatter with it on." +
+                    if (normalizerNeedsRestart) " Applies after restart." else "",
+            ) {
+                ExpressiveSwitch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(

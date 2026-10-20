@@ -129,6 +129,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
             onAudioOnlyInBackgroundChange = viewModel::setAudioOnlyInBackground,
+            onAudioNormalizerChange = viewModel::setAudioNormalizer,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -301,6 +302,7 @@ private fun PlaybackPanel(
     onBackgroundPlayChange: (Boolean) -> Unit,
     onPipOnLeaveChange: (Boolean) -> Unit,
     onAudioOnlyInBackgroundChange: (Boolean) -> Unit,
+    onAudioNormalizerChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -342,6 +344,25 @@ private fun PlaybackPanel(
                     )
                 }
                 ExpressiveSwitch(checked = settings.lowLatencyMode, onCheckedChange = onLowLatencyChange)
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Even out loud and quiet audio", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                            "leave the volume alone. Music can sound flatter with it on.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.audioNormalizer, onCheckedChange = onAudioNormalizerChange)
             }
 
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))

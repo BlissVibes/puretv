@@ -851,7 +851,11 @@ data class SettingsUiState(
     val proxyPort: Int = LocalStreamProxy.PORT,
 )
 
-class SettingsViewModel(private val settingsStore: DesktopSettingsStore) : DesktopViewModel() {
+class SettingsViewModel(
+    private val settingsStore: DesktopSettingsStore,
+    // Tells a running player about the audio normalizer switch (mpv applies it live).
+    private val onAudioNormalizerChange: (Boolean) -> Unit = {},
+) : DesktopViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
@@ -890,6 +894,11 @@ class SettingsViewModel(private val settingsStore: DesktopSettingsStore) : Deskt
 
     fun setLowLatency(enabled: Boolean) =
         settingsStore.updateSettings { it.copy(lowLatencyMode = enabled) }
+
+    fun setAudioNormalizer(enabled: Boolean) {
+        settingsStore.updateSettings { it.copy(audioNormalizer = enabled) }
+        onAudioNormalizerChange(enabled)
+    }
 
     // upscalingMode + playbackBackend are now owned by the in-player gear menu
     // (StreamViewModel/VodPlayerViewModel.setUpscaling/setPlaybackBackend) — single

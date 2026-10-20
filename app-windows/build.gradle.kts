@@ -107,9 +107,15 @@ dependencies {
 // VlcPlayer.kt reads compose.application.resources.dir at runtime to find the
 // bundled VLC directory, so packaged users need no separate VLC installation.
 // Development builds (gradle run) still fall back to the system VLC.
+//
+// A Sync, not a Copy: anything in resources/windows/vlc/ that the VLC install
+// does not provide is deleted, so plugins left over from another VLC version
+// (a 4.0 experiment once left 52 of them next to the 3.0.23 ones) can never be
+// loaded alongside the real ones. Nothing else lives in that folder; mpv has
+// its own sibling folder (bundleMpv).
 
-val bundleVlc by tasks.registering(Copy::class) {
-    description = "Copies local VLC files into resources/windows/vlc/ for self-contained packaging. Run once before packageMsi/createDistributable."
+val bundleVlc by tasks.registering(Sync::class) {
+    description = "Syncs local VLC files into resources/windows/vlc/ for self-contained packaging, removing stale ones. Run once before packageMsi/createDistributable."
 
     val vlcDir = listOf(
         System.getenv("VLC_DIR"),

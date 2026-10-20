@@ -112,7 +112,7 @@ val desktopModule = module {
     single { DesktopOAuthManager() }
 
     // --- ViewModels (plain factories — see note above) -------------------------
-    factory { HomeViewModel(get(), get(), get()) }
+    factory { HomeViewModel(get(), get(), get(), get()) }
     factory {
         val store = get<DesktopSettingsStore>()
         val follows = get<FollowStore>()

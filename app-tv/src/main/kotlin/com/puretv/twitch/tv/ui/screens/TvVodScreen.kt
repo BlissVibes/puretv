@@ -62,6 +62,8 @@ import com.puretv.twitch.tv.player.TvPlayer
 import com.puretv.twitch.tv.ui.TvVodViewModel
 import com.puretv.twitch.tv.ui.VodLaunch
 import com.puretv.twitch.tv.ui.components.ExpressiveIcons
+import com.puretv.twitch.tv.ui.components.TvButtonStyle
+import com.puretv.twitch.tv.ui.components.TvExpressiveButton
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
 import kotlinx.coroutines.delay
@@ -94,6 +96,8 @@ fun TvVodScreen(
     val tvPlayer = koinInject<TvPlayer>()
     val player = tvPlayer.exoPlayer
     val rootFocusRequester = remember { FocusRequester() }
+    val resumeFocusRequester = remember { FocusRequester() }
+    val offer = state.resumeOfferMs
 
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInputAt by remember { mutableLongStateOf(0L) }
@@ -107,6 +111,12 @@ fun TvVodScreen(
     LaunchedEffect(Unit) {
         runCatching { rootFocusRequester.requestFocus() }
         lastInputAt = System.currentTimeMillis()
+    }
+
+    // The offer takes focus (Resume first) so OK answers it; afterwards the root
+    // gets the remote back for scrubbing.
+    LaunchedEffect(offer != null) {
+        runCatching { if (offer != null) resumeFocusRequester.requestFocus() else rootFocusRequester.requestFocus() }
     }
 
     // Auto-hide 3 s after the last key, but never while paused or mid-scrub.
@@ -187,6 +197,9 @@ fun TvVodScreen(
 
                 lastInputAt = System.currentTimeMillis()
 
+                // While the offer is up, the two buttons use the D-pad and OK themselves.
+                if (offer != null) return@onKeyEvent false
+
                 if (state.error != null) {
                     return@onKeyEvent when (event.key) {
                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.MediaPlayPause -> {
@@ -265,6 +278,21 @@ fun TvVodScreen(
                 style = MaterialTheme.typography.titleMedium,
                 color = Color.White.copy(alpha = 0.8f),
             )
+        }
+
+        if (offer != null && error == null) {
+            Row(
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 48.dp, bottom = 190.dp),
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                TvExpressiveButton(
+                    text = "Resume from ${VodFormat.timecode(offer)}",
+                    onClick = viewModel::resume,
+                    style = TvButtonStyle.Filled,
+                    modifier = Modifier.focusRequester(resumeFocusRequester),
+                )
+                TvExpressiveButton(text = "Start over", onClick = viewModel::startOver, style = TvButtonStyle.Tonal)
+            }
         }
 
         AnimatedVisibility(

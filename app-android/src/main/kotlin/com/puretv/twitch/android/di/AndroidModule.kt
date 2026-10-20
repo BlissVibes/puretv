@@ -92,7 +92,7 @@ val androidModule = module {
     // --- ViewModels --------------------------------------------------------
     // get() resolves each constructor argument by type, so argument order does
     // not matter as long as every type is bound above (the DAOs are).
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get()) }
     viewModel { FollowingViewModel(get(), get()) }
     viewModel { WelcomeViewModel(get(), get()) }
     viewModel { BrowseViewModel(get()) }
@@ -100,7 +100,7 @@ val androidModule = module {
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get()) }
     viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
-    viewModel { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     viewModel { LoginViewModel(get(), get(), get()) }
 }

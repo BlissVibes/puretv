@@ -3,6 +3,9 @@ package com.puretv.twitch.android.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -35,6 +38,9 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.puretv.twitch.android.data.db.WatchHistoryEntry
 import com.puretv.twitch.android.ui.HomeViewModel
+import com.puretv.twitch.android.ui.VodLaunch
+import com.puretv.twitch.core.vod.VodFormat
+import com.puretv.twitch.core.vod.WatchProgress
 import com.puretv.twitch.android.ui.components.AdFreeChip
 import com.puretv.twitch.android.ui.components.EmptyState
 import com.puretv.twitch.android.ui.components.ErrorState
@@ -87,6 +93,7 @@ fun HomeScreen(
     onOpenBrowse: () -> Unit,
     onOpenCategory: (String) -> Unit,
     onOpenSearch: () -> Unit,
+    onOpenVod: (VodLaunch) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenLogin: () -> Unit,
     viewModel: HomeViewModel = koinViewModel(),
@@ -125,7 +132,7 @@ fun HomeScreen(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { padding ->
         val isEmpty = state.followedLive.isEmpty() && state.games.isEmpty() &&
-            state.topStreams.isEmpty() && state.continueWatching.isEmpty()
+            state.topStreams.isEmpty() && state.continueWatching.isEmpty() && state.resumableVods.isEmpty()
         when {
             state.isLoading && isEmpty -> LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
@@ -166,11 +173,19 @@ fun HomeScreen(
                     item { HomeHero(hero = hero, onWatch = { onOpenStream(hero.login) }) }
                 }
 
-                if (state.continueWatching.isNotEmpty()) {
+                if (state.continueWatching.isNotEmpty() || state.resumableVods.isNotEmpty()) {
                     item {
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             SectionHeading(title = "Continue watching")
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                items(state.resumableVods, key = { "vod-" + it.vodId }) { progress ->
+                                    ResumeVodCard(
+                                        progress = progress,
+                                        onClick = {
+                                            onOpenVod(VodLaunch(progress.vodId, progress.channelLogin, progress.title, progress.thumbnailUrl))
+                                        },
+                                    )
+                                }
                                 items(state.continueWatching, key = { it.channelLogin }) { entry ->
                                     ContinueWatchingCard(entry = entry, onClick = { onOpenStream(entry.channelLogin) })
                                 }
@@ -357,6 +372,50 @@ private fun ContinueWatchingCard(entry: WatchHistoryEntry, onClick: () -> Unit, 
                 style = PureTvType.data,
                 color = c.onSurfaceVariant,
                 maxLines = 1,
+            )
+        }
+    }
+}
+
+/**
+ * A past broadcast to pick back up: its art with a bar showing how far in the
+ * viewer got, then the title and the time left.
+ */
+@Composable
+private fun ResumeVodCard(progress: WatchProgress, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val c = PureTvTheme.colors
+    val shapes = PureTvTheme.shapes
+    ExpressiveCard(onClick = onClick, modifier = modifier.width(220.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shapes.thumbShape).background(c.surfaceHigh)) {
+                if (progress.thumbnailUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = progress.thumbnailUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+                LinearProgressIndicator(
+                    progress = { (progress.positionMs.toFloat() / progress.durationMs.coerceAtLeast(1L)).coerceIn(0f, 1f) },
+                    color = c.primary,
+                    trackColor = Color.Black.copy(alpha = 0.5f),
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp),
+                )
+            }
+            Text(
+                progress.title.ifBlank { "Past broadcast" },
+                style = MaterialTheme.typography.titleSmall,
+                color = c.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                "${progress.channelLogin}  ·  ${VodFormat.timecode(progress.durationMs - progress.positionMs)} left",
+                style = PureTvType.data,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }

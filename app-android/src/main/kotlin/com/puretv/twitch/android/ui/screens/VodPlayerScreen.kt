@@ -124,6 +124,8 @@ fun VodPlayerScreen(launch: VodLaunch, onBack: () -> Unit) {
             onToggleFullscreen = { fullscreen = !fullscreen },
             onRetry = viewModel::retry,
             onSelectQuality = viewModel::setQuality,
+            onResume = viewModel::resume,
+            onStartOver = viewModel::startOver,
             modifier = modifier,
         )
     }
@@ -165,6 +167,8 @@ private fun VodPlayerArea(
     onToggleFullscreen: () -> Unit,
     onRetry: () -> Unit,
     onSelectQuality: (StreamQuality) -> Unit,
+    onResume: () -> Unit,
+    onStartOver: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val twitchPlayer = koinInject<TwitchPlayer>()
@@ -246,6 +250,28 @@ private fun VodPlayerArea(
 
         if (state.error == null && state.playableUrl != null && buffering) {
             CircularProgressIndicator(color = PureTvTheme.colors.primary, modifier = Modifier.align(Alignment.Center))
+        }
+
+        // The offer stays until answered: it is the only way back to the saved spot.
+        val offer = state.resumeOfferMs
+        if (!isInPip && offer != null && state.error == null) {
+            Row(
+                modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 56.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ExpressiveButton(
+                    text = "Resume from ${VodFormat.timecode(offer)}",
+                    onClick = onResume,
+                    style = ExpressiveButtonStyle.Filled,
+                    size = ExpressiveButtonSize.Small,
+                )
+                ExpressiveButton(
+                    text = "Start over",
+                    onClick = onStartOver,
+                    style = ExpressiveButtonStyle.Tonal,
+                    size = ExpressiveButtonSize.Small,
+                )
+            }
         }
 
         if (!isInPip && state.error != null) {

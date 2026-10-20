@@ -262,6 +262,7 @@ fun PureTvNavHost(navController: NavHostController, modifier: Modifier = Modifie
                 onOpenBrowse = { navController.switchTab(Routes.BROWSE) },
                 onOpenCategory = { navController.go(Routes.category(it)) },
                 onOpenSearch = { navController.switchTab(Routes.SEARCH) },
+                onOpenVod = { navController.go(Routes.vod(it)) },
                 onOpenSettings = { navController.go(Routes.SETTINGS) },
                 onOpenLogin = { navController.go(Routes.LOGIN) },
             )

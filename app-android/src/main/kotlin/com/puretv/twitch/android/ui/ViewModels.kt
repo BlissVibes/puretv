@@ -9,9 +9,11 @@ import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.data.db.CachedStreamDao
 import com.puretv.twitch.android.data.db.SearchHistoryDao
 import com.puretv.twitch.android.data.db.SearchHistoryEntry
+import com.puretv.twitch.android.data.db.VodProgressDao
 import com.puretv.twitch.android.data.db.WatchHistoryDao
 import com.puretv.twitch.android.data.db.WatchHistoryEntry
 import com.puretv.twitch.android.data.db.toCachedStream
+import com.puretv.twitch.android.data.db.toCore
 import com.puretv.twitch.android.data.db.toStreamInfo
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
@@ -57,6 +59,8 @@ import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
 import com.puretv.twitch.core.repository.VodRepository
 import com.puretv.twitch.core.perf.StreamOpenTiming
+import com.puretv.twitch.core.vod.ResumePolicy
+import com.puretv.twitch.core.vod.WatchProgress
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.StreamFailures
 import com.puretv.twitch.core.session.SessionState
@@ -87,6 +91,8 @@ data class HomeUiState(
     val games: List<com.puretv.twitch.core.model.GameInfo> = emptyList(),
     val topStreams: List<StreamInfo> = emptyList(),
     val continueWatching: List<WatchHistoryEntry> = emptyList(),
+    /** Past broadcasts worth resuming (ResumePolicy), most recently watched first. */
+    val resumableVods: List<WatchProgress> = emptyList(),
     val isLoading: Boolean = false,
     val error: String? = null,
 )
@@ -98,6 +104,7 @@ class HomeViewModel(
     private val sessionManager: SessionManager,
     private val watchHistoryDao: WatchHistoryDao,
     private val cachedStreamDao: CachedStreamDao,
+    private val vodProgressDao: VodProgressDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -117,6 +124,12 @@ class HomeViewModel(
         viewModelScope.launch {
             watchHistoryDao.observeRecent().collect { history ->
                 _state.update { it.copy(continueWatching = history) }
+            }
+        }
+        viewModelScope.launch {
+            vodProgressDao.observeRecent().collect { rows ->
+                val resumable = rows.map { it.toCore() }.filter { ResumePolicy.resumePositionMs(it) != null }
+                _state.update { it.copy(resumableVods = resumable) }
             }
         }
         // Cached-first: paint last session's streams instantly, before any network.

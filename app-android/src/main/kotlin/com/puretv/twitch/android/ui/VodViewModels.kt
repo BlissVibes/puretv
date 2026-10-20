@@ -4,15 +4,25 @@ import android.net.Uri
 import androidx.annotation.OptIn
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.util.UnstableApi
 import com.puretv.twitch.android.data.AppSettingsStore
+import com.puretv.twitch.android.data.db.VodProgressDao
+import com.puretv.twitch.android.data.db.toCore
+import com.puretv.twitch.android.data.db.toEntity
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.repository.VodRepository
+import com.puretv.twitch.core.vod.ResumePolicy
 import com.puretv.twitch.core.vod.VodFailures
+import com.puretv.twitch.core.vod.WatchProgress
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -41,6 +51,8 @@ data class VodPlayerUiState(
     val errorIsPermanent: Boolean = false,
     /** What the player plays at: the saved preference on open, then the viewer's pick. */
     val quality: StreamQuality = StreamQuality.AUTO,
+    /** Where a saved watch left off, offered as "Resume from ...". Null when there is none worth resuming. */
+    val resumeOfferMs: Long? = null,
 )
 
 /**
@@ -56,6 +68,7 @@ class VodPlayerViewModel(
     private val twitchPlayer: TwitchPlayer,
     private val backgroundPlayback: BackgroundPlayback,
     private val settingsStore: AppSettingsStore,
+    private val progressDao: VodProgressDao,
 ) : ViewModel() {
     private val _state = MutableStateFlow(VodPlayerUiState())
     val state: StateFlow<VodPlayerUiState> = _state.asStateFlow()
@@ -72,6 +85,19 @@ class VodPlayerViewModel(
 
     init {
         twitchPlayer.onGaveUp = gaveUpListener
+        viewModelScope.launch {
+            val saved = runCatching { progressDao.get(launch.vodId)?.toCore() }.getOrNull()
+            _state.update { it.copy(resumeOfferMs = saved?.let(ResumePolicy::resumePositionMs)) }
+        }
+        // Save every 10 s while playing. Each save is guarded, so one failed write
+        // (full disk) does not end the loop for the rest of the video.
+        viewModelScope.launch {
+            while (true) {
+                delay(SAVE_EVERY_MS)
+                val progress = snapshot() ?: continue
+                runCatching { progressDao.upsert(progress.toEntity()) }
+            }
+        }
         viewModelScope.launch {
             // Audio only is a live-stream choice: a VOD always opens with its picture.
             val preferred = StreamQuality.fromSetting(settingsStore.flow.first().preferredQuality)
@@ -98,6 +124,15 @@ class VodPlayerViewModel(
                 _state.update { it.copy(error = VodFailures.message(e), errorIsPermanent = VodFailures.isPermanent(e)) }
             }
     }
+
+    /** Jumps to the saved position. A plain seek: the video is already playing. */
+    fun resume() {
+        val at = _state.value.resumeOfferMs ?: return
+        _state.update { it.copy(resumeOfferMs = null) }
+        runCatching { twitchPlayer.exoPlayer.seekTo(at) }
+    }
+
+    fun startOver() = _state.update { it.copy(resumeOfferMs = null) }
 
     /** After a failure: a fresh session, picking up where playback stopped. */
     fun retry() {
@@ -135,8 +170,41 @@ class VodPlayerViewModel(
     private fun currentPositionMs(): Long =
         runCatching { twitchPlayer.exoPlayer.currentPosition }.getOrDefault(0L).coerceAtLeast(0L)
 
+    /**
+     * Where the viewer is now, or null when there is nothing worth saving yet
+     * (still loading, or not a VOD). Main thread only, like every player call.
+     */
+    private fun snapshot(): WatchProgress? {
+        val player = runCatching { twitchPlayer.exoPlayer }.getOrNull() ?: return null
+        val duration = player.duration.takeIf { it != C.TIME_UNSET && it > 0 } ?: return null
+        val position = player.currentPosition
+        if (position <= 0 || !twitchPlayer.isVod) return null
+        return WatchProgress(
+            vodId = launch.vodId,
+            positionMs = position,
+            durationMs = duration,
+            updatedAt = System.currentTimeMillis(),
+            title = launch.title,
+            channelLogin = launch.channelLogin,
+            thumbnailUrl = launch.thumbnailUrl,
+        )
+    }
+
     override fun onCleared() {
         super.onCleared()
+        // Read the position BEFORE stopping: stop() clears the media items and with
+        // them the position. viewModelScope is already cancelled here, so the write
+        // goes through a scope that outlives this view model.
+        val last = snapshot()
+        if (last != null) {
+            val dao = progressDao
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                runCatching {
+                    dao.upsert(last.toEntity())
+                    dao.prune()
+                }
+            }
+        }
         // Teardown lives here, as for live streams: onCleared fires only when
         // the viewer leaves the video, not on rotation or PiP.
         twitchPlayer.stop()
@@ -146,6 +214,7 @@ class VodPlayerViewModel(
 
     private companion object {
         const val MAX_FRESH_SESSION_RETRIES = 1
+        const val SAVE_EVERY_MS = 10_000L
         const val STOPPED_PLAYING =
             "This video stopped playing. PureTV tried to reconnect but couldn't. Check your connection, then try again."
     }

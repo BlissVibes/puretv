@@ -5,7 +5,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Color
 import com.puretv.twitch.core.model.VideoInfo
@@ -31,12 +31,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -179,9 +182,24 @@ private fun PastBroadcastsRow(
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(text = "Past broadcasts", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
         val now = remember { System.currentTimeMillis() }
+        // Where focus goes when "More" has done its job. Clicking More remembers how many
+        // cards there were; once the page lands (or More goes away), focus moves to the
+        // first new card, or the last one if nothing came, rather than dropping to the
+        // screen root. Any card taking focus on its own cancels the hand-off.
+        val landing = remember { FocusRequester() }
+        var pendingFrom by remember { mutableStateOf<Int?>(null) }
+        val landingIndex = pendingFrom?.takeIf { it < videos.size } ?: videos.lastIndex
+        LaunchedEffect(videos.size, loading, hasMore) {
+            val from = pendingFrom ?: return@LaunchedEffect
+            if (loading) return@LaunchedEffect
+            pendingFrom = null
+            if (videos.size > from || !hasMore) runCatching { landing.requestFocus() }
+        }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(videos, key = { it.id }) { video ->
+            itemsIndexed(videos, key = { _, v -> v.id }) { index, video ->
                 TvVideoCard(
+                    modifier = (if (index == landingIndex) Modifier.focusRequester(landing) else Modifier)
+                        .onFocusChanged { if (it.hasFocus) pendingFrom = null },
                     video = video,
                     now = now,
                     onClick = {
@@ -198,7 +216,13 @@ private fun PastBroadcastsRow(
             }
             if (hasMore || loading) {
                 item(key = "more") {
-                    TvMoreCard(loading = loading, onClick = onMore)
+                    TvMoreCard(
+                        loading = loading,
+                        onClick = {
+                            pendingFrom = videos.size
+                            onMore()
+                        },
+                    )
                 }
             }
         }
@@ -206,12 +230,12 @@ private fun PastBroadcastsRow(
 }
 
 @Composable
-private fun TvVideoCard(video: VideoInfo, now: Long, onClick: () -> Unit) {
+private fun TvVideoCard(modifier: Modifier, video: VideoInfo, now: Long, onClick: () -> Unit) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
     Column(
-        modifier = Modifier
+        modifier = modifier
             .padding(6.dp)
             .width(260.dp)
             .tvFocusClickable(

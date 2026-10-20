@@ -75,6 +75,23 @@ class GoLiveDetectorTest {
         assertTrue("b" in off.nextState.seen, "turning alerts on later must not announce this stream")
     }
 
+    @Test fun theFirstPollAfterAlertsWereOffSeedsSilently() {
+        val st = GoLiveDetector.evaluate(LiveNotifyState(), "me", emptyList(), 0, emptySet(), true).nextState
+        val off = GoLiveDetector.evaluate(st, "me", listOf(s("a", "1")), min, emptySet(), enabled = false).nextState
+        val on = GoLiveDetector.evaluate(off, "me", listOf(s("a", "1"), s("b", "2")), 40 * min, emptySet(), true)
+        assertTrue(on.toNotify.isEmpty(), "b went live while alerts were off")
+        val next = GoLiveDetector.evaluate(on.nextState, "me", listOf(s("a", "1"), s("b", "2"), s("c", "3")), 42 * min, emptySet(), true)
+        assertEquals(listOf("c"), next.toNotify.map { it.userLogin })
+    }
+
+    @Test fun seedingAgainKeepsTheSameAccountsCooldowns() {
+        val st = GoLiveDetector.evaluate(LiveNotifyState(), "me", emptyList(), 0, emptySet(), true).nextState
+        val announced = GoLiveDetector.evaluate(st, "me", listOf(s("a", "1")), min, emptySet(), true).nextState
+        val reseeded = GoLiveDetector.evaluate(announced.copy(seeded = false), "me", emptyList(), 2 * min, emptySet(), true).nextState
+        val flap = GoLiveDetector.evaluate(reseeded, "me", listOf(s("a", "2")), 4 * min, emptySet(), true)
+        assertTrue(flap.toNotify.isEmpty(), "still inside the cooldown from the first announcement")
+    }
+
     @Test fun streamsLiveForAgesAreNotAnnouncedLate() {
         // 2026-10-19T10:00:00Z, and "now" three hours later: the app was closed while
         // this broadcast started, so it did not just go live.

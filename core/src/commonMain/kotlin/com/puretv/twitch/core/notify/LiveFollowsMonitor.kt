@@ -2,12 +2,14 @@ package com.puretv.twitch.core.notify
 
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.StreamInfo
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -75,7 +77,7 @@ class LiveFollowsMonitor(
             _liveNow.value = live
             val prefs = settings()
             val decision = GoLiveDetector.evaluate(
-                prev = state ?: runCatching { store.load() }.getOrDefault(LiveNotifyState()),
+                prev = currentState(),
                 userId = userId,
                 live = live,
                 nowMs = now,
@@ -83,7 +85,9 @@ class LiveFollowsMonitor(
                 enabled = prefs.liveNotifications,
             )
             state = decision.nextState
-            runCatching { store.save(decision.nextState) }
+            // The state already counts these streams as announced, so a cancel arriving
+            // now must neither skip the save nor the announcement below.
+            withContext(NonCancellable) { saveState(decision.nextState) }
             announce = decision.toNotify
             live
         }
@@ -97,6 +101,48 @@ class LiveFollowsMonitor(
             }
         }
         return streams
+    }
+
+    /**
+     * Alerts stopped: switched off, or nobody is signed in. Whatever goes live from
+     * now until they resume is old news by then, so the first poll after that records
+     * the live set without announcing it (see [GoLiveDetector], rule 5). Each app
+     * calls this when its "alerts wanted" condition turns false, never when a poll
+     * loop merely restarts (the app coming back on screen), which would swallow
+     * go-lives the background check had not caught yet.
+     */
+    suspend fun alertsStopped() {
+        mutex.withLock {
+            val current = currentState()
+            if (!current.seeded) return@withLock
+            val next = current.copy(seeded = false)
+            state = next
+            withContext(NonCancellable) { saveState(next) }
+        }
+    }
+
+    /**
+     * The state in memory, or the saved one. An unreadable store reads as empty, which
+     * seeds silently; a cancellation is passed on, because treating it as an empty
+     * store would reseed and swallow the go-lives of the poll after it.
+     */
+    private suspend fun currentState(): LiveNotifyState {
+        state?.let { return it }
+        return try {
+            store.load()
+        } catch (c: CancellationException) {
+            throw c
+        } catch (_: Throwable) {
+            LiveNotifyState()
+        }
+    }
+
+    /**
+     * Saves [next]; callers run it NonCancellable, because [state] already holds it. A
+     * failed save only costs a possible repeat after a restart, never worth failing a poll.
+     */
+    private suspend fun saveState(next: LiveNotifyState) {
+        runCatching { store.save(next) }
     }
 
     /** One fail-soft poll for the signed-in account. Signed out, clears [liveNow] without a request. */

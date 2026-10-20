@@ -150,6 +150,114 @@ class LiveFollowsMonitorTest {
         job.cancel()
     }
 
+    @Test fun alertsSwitchedOffAndBackOnWithNoPollBetweenSeedSilently() = runTest {
+        // Off from the tray for hours with the window hidden: nothing polled meanwhile,
+        // so what is live when they come back on is not news.
+        val h = Harness(this)
+        h.live = listOf(s("a", "1"))
+        h.monitor.pollNow()
+        h.monitor.alertsStopped()
+        advanceTimeBy(60 * 60_000L)
+        h.live = listOf(s("a", "1"), s("b", "2"))
+        h.monitor.pollNow()
+        assertTrue(h.announced.isEmpty(), "the first poll after alerts resume only seeds")
+
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("a", "1"), s("b", "2"), s("c", "3"))
+        h.monitor.pollNow()
+        assertEquals(listOf(listOf("c")), h.announced.map { batch -> batch.map { it.userLogin } })
+    }
+
+    @Test fun theSameAccountSigningBackInSeedsSilently() = runTest {
+        val h = Harness(this)
+        h.live = listOf(s("a", "1"))
+        h.monitor.pollNow()
+        h.user = null
+        h.monitor.alertsStopped()
+        advanceTimeBy(30 * 60_000L)
+        h.user = "me"
+        h.live = listOf(s("b", "2"))
+        h.monitor.pollNow()
+        assertTrue(h.announced.isEmpty())
+    }
+
+    @Test fun thePollLoopRestartingWhileAlertsStayOnStillAnnounces() = runTest {
+        // The phone and TV restart the loop each time the app comes back on screen; a
+        // go-live from while it was away must still be announced.
+        val h = Harness(this)
+        val first = launch { h.monitor.pollEvery(90_000) }
+        runCurrent()
+        first.cancel()
+        advanceTimeBy(10 * 60_000L)
+        h.live = listOf(s("b", "2"))
+        val second = launch { h.monitor.pollEvery(90_000) }
+        runCurrent()
+        assertEquals(listOf(listOf("b")), h.announced.map { batch -> batch.map { it.userLogin } })
+        second.cancel()
+    }
+
+    @Test fun aPollCancelledWhileLoadingTheStateDoesNotReseed() = runTest {
+        val store = SlowStore(GoLiveDetector.evaluate(LiveNotifyState(), "me", listOf(s("a", "1")), 0, emptySet(), true).nextState)
+        val announced = mutableListOf<String>()
+        val monitor = LiveFollowsMonitor(
+            fetchLive = { listOf(s("a", "1"), s("b", "2")) },
+            store = store,
+            settings = { AppSettings() },
+            userId = { "me" },
+            clock = { testScheduler.currentTime },
+            onGoLive = { batch -> announced += batch.map { it.userLogin } },
+        )
+        store.loadDelayMs = 1_000
+        val poll = launch { monitor.pollNow() }
+        runCurrent()
+        poll.cancel()
+        runCurrent()
+        assertTrue(announced.isEmpty())
+
+        store.loadDelayMs = 0
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        monitor.pollNow()
+        assertEquals(listOf("b"), announced, "the cancelled poll must not have recorded b as already seen")
+    }
+
+    @Test fun aPollCancelledWhileSavingStillAnnounces() = runTest {
+        val store = SlowStore(GoLiveDetector.evaluate(LiveNotifyState(), "me", listOf(s("a", "1")), 0, emptySet(), true).nextState)
+        val announced = mutableListOf<String>()
+        val monitor = LiveFollowsMonitor(
+            fetchLive = { listOf(s("a", "1"), s("b", "2")) },
+            store = store,
+            settings = { AppSettings() },
+            userId = { "me" },
+            clock = { testScheduler.currentTime },
+            onGoLive = { batch -> announced += batch.map { it.userLogin } },
+        )
+        store.saveDelayMs = 1_000
+        val poll = launch { monitor.pollNow() }
+        runCurrent()
+        poll.cancel()
+        advanceTimeBy(2_000)
+        runCurrent()
+        assertEquals(listOf("b"), announced, "b is saved as announced, so it has to be announced")
+        assertTrue(store.saved?.seen?.containsKey("b") == true)
+    }
+
+    private class SlowStore(private var state: LiveNotifyState) : LiveNotifyStateStore {
+        var loadDelayMs = 0L
+        var saveDelayMs = 0L
+        var saved: LiveNotifyState? = null
+
+        override suspend fun load(): LiveNotifyState {
+            if (loadDelayMs > 0) delay(loadDelayMs)
+            return state
+        }
+
+        override suspend fun save(state: LiveNotifyState) {
+            if (saveDelayMs > 0) delay(saveDelayMs)
+            this.state = state
+            saved = state
+        }
+    }
+
     @Test fun aThrowingNotifierDoesNotBreakPolling() = runTest {
         var calls = 0
         val store = InMemoryLiveNotifyStateStore()

@@ -21,6 +21,10 @@ data class GoLiveDecision(val toNotify: List<StreamInfo>, val nextState: LiveNot
  *     whose broadcast keeps restarting (new ids) does not spam.
  *  5. Muted channels and a switched-off toggle still update the state, so turning
  *     alerts back on later does not announce streams that were already running.
+ *     With alerts off the state is also left unseeded, and each app calls
+ *     LiveFollowsMonitor.alertsStopped when alerts stop (switched off, signed out),
+ *     so the first poll after they resume seeds silently (rule 2) even when nothing
+ *     polled in between. Seeding keeps the cooldowns of the same account.
  *  6. A stream that has already been live longer than [LATE_LIMIT_MS] is not
  *     announced: the viewer was away (app closed, phone in Doze), and a toast for a
  *     three-hour-old broadcast is noise rather than news.
@@ -42,7 +46,11 @@ object GoLiveDetector {
         enabled: Boolean,
     ): GoLiveDecision {
         val reseed = !prev.seeded || prev.userId != userId
-        val base = if (reseed) LiveNotifyState(userId = userId) else prev
+        val base = when {
+            !reseed -> prev
+            prev.userId == userId -> LiveNotifyState(userId = userId, lastNotifiedAtMs = prev.lastNotifiedAtMs)
+            else -> LiveNotifyState(userId = userId)
+        }
         val mutedLower = muted.mapTo(HashSet()) { it.lowercase() }
         val notify = mutableListOf<StreamInfo>()
         val notified = base.lastNotifiedAtMs.toMutableMap()
@@ -65,7 +73,9 @@ object GoLiveDetector {
         live.forEach { seen[it.userLogin.lowercase()] = SeenStream(it.id, nowMs) }
         val next = LiveNotifyState(
             userId = userId,
-            seeded = true,
+            // Rule 5: nothing is announced while alerts are off, so nothing is
+            // compared against either; the first poll with them on seeds afresh.
+            seeded = enabled,
             seen = seen,
             lastNotifiedAtMs = notified.filterValues { nowMs - it < NOTIFIED_RETENTION_MS },
         )

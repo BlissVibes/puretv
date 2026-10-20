@@ -30,6 +30,7 @@ import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
@@ -388,6 +389,10 @@ data class StreamUiState(
     val playbackError: String? = null,
     /** Settings > Chat text size, as a scale for the chat overlay. */
     val chatTextScale: Float = 1f,
+    /** Settings > Chat position: true puts chat beside the video instead of over it. */
+    val chatBesideVideo: Boolean = false,
+    /** Settings > Chat background, 0.4 to 1. */
+    val chatOpacity: Float = 0.85f,
     /**
      * What the player plays at: the saved preference once settings load (null
      * until then, so the screen never applies a placeholder first), then the
@@ -477,6 +482,8 @@ class StreamViewModel(
                 it.copy(
                     chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
                     showBadges = settings.showBadges,
+                    chatBesideVideo = settings.tvChatMode == TV_CHAT_BESIDE_VIDEO,
+                    chatOpacity = settings.tvChatOpacity.coerceIn(0.4f, 1f),
                     quality = StreamQuality.fromSetting(settings.preferredQuality),
                 )
             }
@@ -660,6 +667,14 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setChatTextSize(size: ChatTextSize) = viewModelScope.launch {
         settingsStore.update { it.copy(chatFontSize = size.sp) }
+    }
+
+    fun setTvChatMode(mode: String) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvChatMode = mode) }
+    }
+
+    fun setTvChatOpacity(opacity: Float) = viewModelScope.launch {
+        settingsStore.update { it.copy(tvChatOpacity = opacity) }
     }
 
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {

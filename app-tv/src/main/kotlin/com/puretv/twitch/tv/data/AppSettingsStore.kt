@@ -60,6 +60,9 @@ class AppSettingsStore(
         val CHAT_TIMESTAMPS = booleanPreferencesKey("chat_timestamps")
         val THEME = stringPreferencesKey("theme")
         val COMPACT_MODE = booleanPreferencesKey("compact_mode")
+        // TV chat placement
+        val TV_CHAT_MODE = stringPreferencesKey("tv_chat_mode")
+        val TV_CHAT_OPACITY = floatPreferencesKey("tv_chat_opacity")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -95,6 +98,9 @@ class AppSettingsStore(
             accessToken = token.accessToken,
             username = token.username,
             userId = token.userId,
+            // TV chat placement
+            tvChatMode = prefs[Keys.TV_CHAT_MODE] ?: AppSettings().tvChatMode,
+            tvChatOpacity = prefs[Keys.TV_CHAT_OPACITY] ?: AppSettings().tvChatOpacity,
         )
     }
         // The corruption handler above covers a file DataStore can parse but not
@@ -133,6 +139,9 @@ class AppSettingsStore(
             prefs[Keys.CHAT_TIMESTAMPS] = next.chatTimestamps
             prefs[Keys.THEME] = next.theme
             prefs[Keys.COMPACT_MODE] = next.compactMode
+            // TV chat placement
+            prefs[Keys.TV_CHAT_MODE] = next.tvChatMode
+            prefs[Keys.TV_CHAT_OPACITY] = next.tvChatOpacity
         }
     }
 

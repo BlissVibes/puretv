@@ -8,6 +8,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
@@ -38,8 +40,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.tv.player.TvPlayer
+import com.puretv.twitch.tv.ui.StreamUiState
 import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.components.TvChatOverlay
 import com.puretv.twitch.tv.ui.components.TvControlsOverlay
@@ -232,7 +236,82 @@ fun TvStreamScreen(
             },
         contentAlignment = Alignment.Center,
     ) {
-        if (state.playableUrl != null) {
+        // The player always sits in the same slot of this row, whichever chat
+        // position is chosen: moving its AndroidView to another parent would rebuild
+        // the PlayerView. Beside the video, chat takes the row's second slot and the
+        // video shrinks to fit; over the video, the second slot stays empty.
+        Row(modifier = Modifier.fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                StreamVideoArea(
+                    playableUrl = state.playableUrl,
+                    playbackError = state.playbackError,
+                    title = state.streamInfo?.title ?: state.channel?.displayName ?: channelLogin,
+                    viewerCount = state.streamInfo?.viewerCount?.toLong() ?: 0L,
+                    adBlockStatus = state.adBlockStatus,
+                    tvPlayer = tvPlayer,
+                    controlsVisible = controlsVisible,
+                    isPlaying = isPlaying,
+                    quality = quality,
+                    onBack = onBack,
+                    onTogglePlayPause = {
+                        tvPlayer.togglePlayPause()
+                        isPlaying = tvPlayer.exoPlayer.isPlaying
+                    },
+                    onSelectQuality = viewModel::setQuality,
+                )
+                if (!state.chatBesideVideo) {
+                    StreamChat(state = state, visible = chatVisible, beside = false, modifier = Modifier.fillMaxSize())
+                }
+            }
+            if (state.chatBesideVideo) {
+                StreamChat(state = state, visible = chatVisible, beside = true, modifier = Modifier.fillMaxHeight())
+            }
+        }
+    }
+}
+
+/** The stream's chat, in either position, wired to the screen state. */
+@Composable
+private fun StreamChat(state: StreamUiState, visible: Boolean, beside: Boolean, modifier: Modifier) {
+    TvChatOverlay(
+        visible = visible,
+        messages = state.chatMessages,
+        modifier = modifier,
+        textScale = state.chatTextScale,
+        roomModes = state.roomModes,
+        badges = state.badges,
+        showBadges = state.showBadges,
+        emotes = state.emotes,
+        beside = beside,
+        opacity = state.chatOpacity,
+    )
+}
+
+/**
+ * The player surface, the failure explanation and the controls, all within the
+ * video's slot. Takes only the fields it shows (not the whole state), so a chat
+ * batch, which changes the state about ten times a second in a busy channel,
+ * skips this part of the screen entirely.
+ */
+@OptIn(UnstableApi::class)
+@Composable
+private fun StreamVideoArea(
+    playableUrl: String?,
+    playbackError: String?,
+    title: String,
+    viewerCount: Long,
+    adBlockStatus: AdBlockStatus,
+    tvPlayer: TvPlayer,
+    controlsVisible: Boolean,
+    isPlaying: Boolean,
+    quality: StreamQuality,
+    onBack: () -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSelectQuality: (StreamQuality) -> Unit,
+) {
+    val context = LocalContext.current
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (playableUrl != null) {
             AndroidView(
                 modifier = Modifier.fillMaxSize(),
                 factory = {
@@ -255,14 +334,14 @@ fun TvStreamScreen(
         // Resolution failed: say so instead of leaving a black rectangle. Not
         // tied to `controlsVisible` — the auto-hide timer must never take the
         // only explanation of the failure away with it.
-        if (state.playbackError != null) {
+        if (playbackError != null) {
             Column(
                 modifier = Modifier.fillMaxSize().padding(48.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
             ) {
                 Text(
-                    text = state.playbackError!!,
+                    text = playbackError,
                     style = MaterialTheme.typography.titleMedium,
                     color = PureTvTvTheme.colors.onSurface,
                     textAlign = TextAlign.Center,
@@ -278,28 +357,15 @@ fun TvStreamScreen(
 
         TvControlsOverlay(
             visible = controlsVisible,
-            title = state.streamInfo?.title ?: state.channel?.displayName ?: channelLogin,
-            viewerCount = state.streamInfo?.viewerCount?.toLong() ?: 0L,
+            title = title,
+            viewerCount = viewerCount,
             isPlaying = isPlaying,
             currentQuality = quality,
-            adBlockStatus = state.adBlockStatus,
+            adBlockStatus = adBlockStatus,
             onBack = onBack,
-            onTogglePlayPause = {
-                tvPlayer.togglePlayPause()
-                isPlaying = tvPlayer.exoPlayer.isPlaying
-            },
-            onSelectQuality = viewModel::setQuality,
+            onTogglePlayPause = onTogglePlayPause,
+            onSelectQuality = onSelectQuality,
             modifier = Modifier.fillMaxSize(),
-        )
-
-        TvChatOverlay(
-            visible = chatVisible,
-            messages = state.chatMessages,
-            modifier = Modifier.fillMaxSize(),
-            textScale = state.chatTextScale,
-            roomModes = state.roomModes,
-            badges = state.badges,
-            showBadges = state.showBadges,
         )
     }
 }

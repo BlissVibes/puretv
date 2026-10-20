@@ -210,6 +210,12 @@ data class ChannelEmote(
 
 // ---- Settings ----
 
+/** [AppSettings.tvChatMode]: chat floats over the video (the default). */
+const val TV_CHAT_OVER_VIDEO = "overlay"
+
+/** [AppSettings.tvChatMode]: chat gets its own column and the video shrinks beside it. */
+const val TV_CHAT_BESIDE_VIDEO = "side"
+
 /** GPU video upscaling mode. STANDARD/ANIME are effective only on the mpv
  *  backend (VLC ignores them); that gating lives in the player + settings UI,
  *  not here — this enum is backend-agnostic data.
@@ -267,4 +273,11 @@ data class AppSettings(
     val accessToken: String = "",
     val username: String = "",
     val userId: String = "",
+
+    // TV chat placement (TV only)
+    // Where chat sits: TV_CHAT_OVER_VIDEO floats it over the picture,
+    // TV_CHAT_BESIDE_VIDEO shrinks the video to make room.
+    val tvChatMode: String = TV_CHAT_OVER_VIDEO,
+    // How solid the chat panel is, from 0.4 (see-through) to 1.
+    val tvChatOpacity: Float = 0.85f,
 )

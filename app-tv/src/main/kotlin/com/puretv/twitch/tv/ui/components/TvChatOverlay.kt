@@ -2,6 +2,8 @@ package com.puretv.twitch.tv.ui.components
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
@@ -55,6 +57,11 @@ private val ClockFormatter = DateTimeFormatter.ofPattern("HH:mm")
  * returns focus to the player and dismisses it). Read-only on TV — typing
  * chat messages with a D-pad isn't a primary use case, so no compose box
  * is rendered (mirrors real Twitch-on-TV apps' chat treatment).
+ *
+ * Two placements (Settings > Chat position): floating over the video, sliding in
+ * from the right edge, or [beside] it in its own column so nothing is covered.
+ * Beside, the panel fades instead of sliding: the caller's row gives it its space
+ * at once, so the video resizes in one step rather than on every frame.
  */
 @Composable
 fun TvChatOverlay(
@@ -69,6 +76,12 @@ fun TvChatOverlay(
     badges: BadgeIndex = BadgeIndex.EMPTY,
     /** Settings > Chat > badges. */
     showBadges: Boolean = true,
+    /** Third-party emote name-to-url map rows match words against. */
+    emotes: Map<String, String> = emptyMap(),
+    /** True when chat sits in its own column beside the video instead of over it. */
+    beside: Boolean = false,
+    /** Settings > Chat background: how solid the panel and its rows are (0.4 to 1). */
+    opacity: Float = 0.85f,
 ) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
@@ -89,21 +102,24 @@ fun TvChatOverlay(
 
     AnimatedVisibility(
         visible = visible,
-        enter = slideInHorizontally(initialOffsetX = { it }),
-        exit = slideOutHorizontally(targetOffsetX = { it }),
+        enter = if (beside) fadeIn() else slideInHorizontally(initialOffsetX = { it }),
+        exit = if (beside) fadeOut() else slideOutHorizontally(targetOffsetX = { it }),
         modifier = modifier,
     ) {
         // AnimatedVisibility's content scope is not a BoxScope, so alignment can't
         // be applied to the rail directly. Fill the transition area and align the
         // fixed-width rail to the right edge from here, with a margin so all four
         // corners of the panel below actually show their rounding.
-        Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(
+            modifier = if (beside) Modifier.fillMaxHeight().padding(24.dp) else Modifier.fillMaxSize().padding(24.dp),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
             Box(
                 modifier = Modifier
                     .fillMaxHeight()
                     .width(420.dp)
                     .clip(shapes.paneShape)
-                    .background(c.surfaceContainer)
+                    .background(c.surfaceContainer.copy(alpha = opacity))
                     .padding(20.dp),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -118,7 +134,13 @@ fun TvChatOverlay(
                     CompositionLocalProvider(LocalDensity provides Density(density.density * textScale, density.fontScale)) {
                         LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(messages, key = { it.id }) { message ->
-                                TvChatMessageRow(message, badges = badges, showBadges = showBadges)
+                                TvChatMessageRow(
+                                    message,
+                                    emotes = emotes,
+                                    badges = badges,
+                                    showBadges = showBadges,
+                                    opacity = opacity,
+                                )
                             }
                         }
                     }
@@ -160,7 +182,13 @@ private fun TvRoomModeChips(modes: ChatRoomModes) {
  * run-on wall of same-weight text with no boundary between messages.
  */
 @Composable
-private fun TvChatMessageRow(message: ChatMessage, badges: BadgeIndex, showBadges: Boolean) {
+private fun TvChatMessageRow(
+    message: ChatMessage,
+    emotes: Map<String, String>,
+    badges: BadgeIndex,
+    showBadges: Boolean,
+    opacity: Float,
+) {
     val c = PureTvTvTheme.colors
     // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
     // centred, muted line instead of a card with a name.
@@ -183,13 +211,17 @@ private fun TvChatMessageRow(message: ChatMessage, badges: BadgeIndex, showBadge
             Instant.ofEpochMilli(message.timestamp).atZone(ZoneId.systemDefault()).format(ClockFormatter)
         }.getOrDefault("")
     }
+    // Keyed on the whole message, not its id: a moderator's delete arrives as a
+    // copy with the same id. A new emote map (a live 7TV change) re-renders too.
+    val (bodyText, bodyInline) = remember(message, emotes) { buildTvChatBody(message, emotes) }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shapes.mdShape)
-            // A line that @-mentions the viewer stands out from across the room.
-            .background(if (message.mentionsSelf) c.primaryContainer else c.surfaceHigh)
+            // A line that @-mentions the viewer stands out from across the room. The
+            // card follows the panel's opacity so a see-through panel stays see-through.
+            .background((if (message.mentionsSelf) c.primaryContainer else c.surfaceHigh).copy(alpha = opacity))
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -214,7 +246,8 @@ private fun TvChatMessageRow(message: ChatMessage, badges: BadgeIndex, showBadge
             )
         } else {
             Text(
-                text = message.message,
+                text = bodyText,
+                inlineContent = bodyInline,
                 style = MaterialTheme.typography.bodyLarge,
                 color = c.onSurface,
             )

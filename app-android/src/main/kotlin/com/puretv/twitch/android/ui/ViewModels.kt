@@ -820,6 +820,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(chatFontSize = size.sp) }
     }
 
+    fun setShowBadges(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(showBadges = enabled) }
+    }
+
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {
         settingsStore.update { it.copy(preferredQuality = quality.name.lowercase()) }
     }

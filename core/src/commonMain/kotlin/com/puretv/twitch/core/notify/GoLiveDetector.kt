@@ -6,7 +6,7 @@ import com.puretv.twitch.core.model.StreamInfo
 data class GoLiveDecision(val toNotify: List<StreamInfo>, val nextState: LiveNotifyState)
 
 /**
- * Decides which followed channels just went live. Pure (no I/O, no clock reads) so
+ * Decides which of the channels the viewer asked to be told about just went live. Pure (no I/O, no clock reads) so
  * the rules that keep notifications honest are tested once and shared by all three
  * apps:
  *
@@ -19,7 +19,7 @@ data class GoLiveDecision(val toNotify: List<StreamInfo>, val nextState: LiveNot
  *     [SEEN_RETENTION_MS] is not announced again.
  *  4. At most one announcement per channel per [RENOTIFY_COOLDOWN_MS], so a streamer
  *     whose broadcast keeps restarting (new ids) does not spam.
- *  5. Muted channels and a switched-off toggle still update the state, so turning
+ *  5. Channels not asked about and a switched-off toggle still update the state, so turning
  *     alerts back on later does not announce streams that were already running.
  *     With alerts off the state is also left unseeded, and each app calls
  *     LiveFollowsMonitor.alertsStopped when alerts stop (switched off, signed out),
@@ -30,6 +30,11 @@ data class GoLiveDecision(val toNotify: List<StreamInfo>, val nextState: LiveNot
  *     three-hour-old broadcast is noise rather than news.
  *  7. Callers never evaluate a failed poll, so an error never reads as "everyone went
  *     offline" and never overwrites the state.
+ *  8. [evaluate]'s `watched` is the set of channels the viewer opted in to. Only those
+ *     are ever announced, and one that was not in the previous poll's set is recorded
+ *     without an announcement, so tapping the bell on a channel that is live right now
+ *     does not announce the broadcast being watched. A null `watched` means every channel
+ *     in `live` counts (the detector's own tests use it).
  */
 object GoLiveDetector {
     const val SEEN_RETENTION_MS = 30 * 60_000L
@@ -42,8 +47,8 @@ object GoLiveDetector {
         userId: String,
         live: List<StreamInfo>,
         nowMs: Long,
-        muted: Set<String>,
         enabled: Boolean,
+        watched: Set<String>? = null,
     ): GoLiveDecision {
         val reseed = !prev.seeded || prev.userId != userId
         val base = when {
@@ -51,7 +56,7 @@ object GoLiveDetector {
             prev.userId == userId -> LiveNotifyState(userId = userId, lastNotifiedAtMs = prev.lastNotifiedAtMs)
             else -> LiveNotifyState(userId = userId)
         }
-        val mutedLower = muted.mapTo(HashSet()) { it.lowercase() }
+        val watchedLower = watched?.mapTo(HashSet()) { it.lowercase() }
         val notify = mutableListOf<StreamInfo>()
         val notified = base.lastNotifiedAtMs.toMutableMap()
         if (!reseed && enabled) {
@@ -60,7 +65,11 @@ object GoLiveDetector {
                 // Compared against every remembered stream, expired or not, so a long
                 // gap between polls never re-announces a broadcast still running.
                 if (base.seen[login]?.streamId == stream.id) continue
-                if (login in mutedLower) continue
+                if (watchedLower != null) {
+                    if (login !in watchedLower) continue
+                    // Rule 8: a channel the viewer only just opted in to is recorded, not announced.
+                    if (login !in base.watched) continue
+                }
                 val last = notified[login]
                 if (last != null && nowMs - last < RENOTIFY_COOLDOWN_MS) continue
                 val started = parseStartedAtMs(stream.startedAt)
@@ -77,6 +86,7 @@ object GoLiveDetector {
             // compared against either; the first poll with them on seeds afresh.
             seeded = enabled,
             seen = seen,
+            watched = watchedLower ?: base.watched,
             lastNotifiedAtMs = notified.filterValues { nowMs - it < NOTIFIED_RETENTION_MS },
         )
         return GoLiveDecision(notify, next)

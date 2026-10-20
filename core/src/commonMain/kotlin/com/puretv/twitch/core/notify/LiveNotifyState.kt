@@ -17,6 +17,8 @@ data class LiveNotifyState(
     val userId: String = "",
     val seeded: Boolean = false,
     val seen: Map<String, SeenStream> = emptyMap(),
+    /** The opted-in logins at the last poll, so a newly added channel is seeded rather than announced. */
+    val watched: Set<String> = emptySet(),
     val lastNotifiedAtMs: Map<String, Long> = emptyMap(),
 )
 

@@ -18,44 +18,78 @@ import kotlin.test.assertTrue
 class LiveFollowsMonitorTest {
     private fun s(login: String, id: String) = StreamInfo(id = id, userId = "u-$login", userLogin = login, userName = login)
 
-    private class Harness(scope: TestScope, var user: String? = "me") {
+    private class Harness(scope: TestScope, channels: Set<String> = setOf("a", "b", "c")) {
         var live: List<StreamInfo> = emptyList()
         var fail = false
         var fetchDelayMs = 0L
         var fetches = 0
+        var feedFetches = 0
+        val requested = mutableListOf<List<String>>()
         val announced = mutableListOf<List<StreamInfo>>()
-        var settings = AppSettings()
+        var settings = AppSettings(notifyChannels = channels)
         val store = InMemoryLiveNotifyStateStore()
         val monitor = LiveFollowsMonitor(
-            fetchLive = {
+            fetchLive = { feedFetches++; live },
+            fetchWatched = { logins ->
                 fetches++
+                requested += logins
                 if (fetchDelayMs > 0) delay(fetchDelayMs)
                 if (fail) error("network down")
-                live
+                live.filter { it.userLogin in logins }
             },
             store = store,
             settings = { settings },
-            userId = { user },
             clock = { scope.testScheduler.currentTime },
             onGoLive = { announced += it },
         )
     }
 
-    @Test fun successfulPollPublishesLiveNowAndAnnouncesNewStreams() = runTest {
+    private fun Harness.announcedLogins() = announced.map { batch -> batch.map { it.userLogin } }
+
+    @Test fun firstPollSeedsThenNewStreamsAreAnnounced() = runTest {
         val h = Harness(this)
         h.live = listOf(s("a", "1"))
         h.monitor.pollNow()
-        assertEquals(listOf("a"), h.monitor.liveNow.value.map { it.userLogin })
         assertTrue(h.announced.isEmpty(), "the first poll only seeds")
 
         advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
         h.live = listOf(s("a", "1"), s("b", "2"))
         h.monitor.pollNow()
-        assertEquals(listOf(listOf("b")), h.announced.map { batch -> batch.map { it.userLogin } })
-        assertEquals(2, h.monitor.liveNow.value.size)
+        assertEquals(listOf(listOf("b")), h.announcedLogins())
     }
 
-    @Test fun failedFetchKeepsLiveNowAndNeverSaves() = runTest {
+    @Test fun oneBatchedRequestCoversEveryOptedInChannel() = runTest {
+        val h = Harness(this, channels = setOf("Alpha", " beta ", "alpha"))
+        h.monitor.pollNow()
+        assertEquals(1, h.fetches)
+        assertEquals(listOf("alpha", "beta"), h.requested.single().sorted())
+    }
+
+    @Test fun nothingOptedInMakesNoRequests() = runTest {
+        val h = Harness(this, channels = emptySet())
+        h.live = listOf(s("a", "1"))
+        h.monitor.pollNow()
+        val loop = launch { h.monitor.pollEvery(90_000) }
+        runCurrent()
+        advanceTimeBy(10 * 60_000L)
+        runCurrent()
+        loop.cancel()
+        assertEquals(0, h.fetches)
+        assertEquals(0, h.feedFetches)
+        assertTrue(h.announced.isEmpty())
+    }
+
+    @Test fun onlyOptedInChannelsAreEverAnnounced() = runTest {
+        val h = Harness(this, channels = setOf("b"))
+        h.monitor.pollNow()
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("a", "1"), s("b", "2"))
+        h.monitor.pollNow()
+        assertEquals(listOf(listOf("b")), h.announcedLogins())
+        assertEquals(listOf("b"), h.requested.last())
+    }
+
+    @Test fun failedFetchNeverSavesOrAnnounces() = runTest {
         val h = Harness(this)
         h.live = listOf(s("a", "1"))
         h.monitor.pollNow()
@@ -63,27 +97,10 @@ class LiveFollowsMonitorTest {
 
         advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
         h.fail = true
+        h.live = listOf(s("a", "1"), s("b", "2"))
         h.monitor.pollNow()
-        assertEquals(listOf("a"), h.monitor.liveNow.value.map { it.userLogin })
         assertEquals(saves, h.store.saves)
-        assertFailsWith<IllegalStateException> { h.monitor.followedLive("me", maxAgeMs = 0) }
-        assertEquals(saves, h.store.saves)
-    }
-
-    @Test fun signedOutNeverFetches() = runTest {
-        val h = Harness(this, user = null)
-        h.monitor.pollNow()
-        assertEquals(0, h.fetches)
-        assertTrue(h.monitor.liveNow.value.isEmpty())
-    }
-
-    @Test fun signingOutClearsLiveNow() = runTest {
-        val h = Harness(this)
-        h.live = listOf(s("a", "1"))
-        h.monitor.pollNow()
-        h.user = null
-        h.monitor.pollNow()
-        assertTrue(h.monitor.liveNow.value.isEmpty())
+        assertTrue(h.announced.isEmpty())
     }
 
     @Test fun concurrentPollsShareOneFetch() = runTest {
@@ -94,89 +111,104 @@ class LiveFollowsMonitorTest {
         assertEquals(1, h.fetches)
     }
 
-    @Test fun recentAnswerIsSharedThenRefreshed() = runTest {
+    @Test fun theFollowedFeedIsSharedAndNeverAnnounces() = runTest {
         val h = Harness(this)
         h.live = listOf(s("a", "1"))
         h.monitor.followedLive("me")
         advanceTimeBy(10_000)
         assertEquals(listOf("a"), h.monitor.followedLive("me").map { it.userLogin })
-        assertEquals(1, h.fetches, "an answer seconds old is reused")
+        assertEquals(1, h.feedFetches, "an answer seconds old is reused")
         h.monitor.followedLive("someoneElse")
-        assertEquals(2, h.fetches, "never reused across accounts")
+        assertEquals(2, h.feedFetches, "never reused across accounts")
         advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("a", "1"), s("b", "2"))
         h.monitor.followedLive("someoneElse")
-        assertEquals(3, h.fetches)
-    }
-
-    @Test fun anotherScreensFetchStillAnnounces() = runTest {
-        // Home or the followed rail asking for live channels runs the detector too, so a
-        // go-live seen there is announced instead of silently marked as seen.
-        val h = Harness(this)
-        h.monitor.followedLive("me")
-        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
-        h.live = listOf(s("b", "2"))
-        h.monitor.followedLive("me")
-        assertEquals(listOf(listOf("b")), h.announced.map { batch -> batch.map { it.userLogin } })
-    }
-
-    @Test fun alertsOffStillTracksButNeverAnnounces() = runTest {
-        val h = Harness(this)
-        h.settings = AppSettings(liveNotifications = false)
-        h.monitor.pollNow()
-        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
-        h.live = listOf(s("b", "2"))
-        h.monitor.pollNow()
+        assertEquals(3, h.feedFetches)
+        assertEquals(listOf("a", "b"), h.monitor.liveNow.value.map { it.userLogin })
+        assertEquals(0, h.fetches, "the feed does not touch the alert poll")
         assertTrue(h.announced.isEmpty())
-        h.settings = AppSettings(liveNotifications = true)
-        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
-        h.monitor.pollNow()
-        assertTrue(h.announced.isEmpty(), "a stream seen while alerts were off is not announced late")
     }
 
-    @Test fun pollEveryWaitsForTheIntervalSinceTheLastFetchByAnyone() = runTest {
+    @Test fun failedFeedFetchThrowsAndKeepsLiveNow() = runTest {
+        var fail = false
+        val monitor = LiveFollowsMonitor(
+            fetchLive = { if (fail) error("down") else listOf(s("a", "1")) },
+            fetchWatched = { emptyList() },
+            store = InMemoryLiveNotifyStateStore(),
+            settings = { AppSettings() },
+            clock = { testScheduler.currentTime },
+            onGoLive = {},
+        )
+        monitor.followedLive("me")
+        fail = true
+        assertFailsWith<IllegalStateException> { monitor.followedLive("me", maxAgeMs = 0) }
+        assertEquals(listOf("a"), monitor.liveNow.value.map { it.userLogin })
+    }
+
+    @Test fun alertsOffMakesNoRequestAndNeverAnnounces() = runTest {
         val h = Harness(this)
+        h.settings = h.settings.copy(liveNotifications = false)
+        h.monitor.pollNow()
+        assertEquals(0, h.fetches)
+        h.settings = h.settings.copy(liveNotifications = true)
+        h.live = listOf(s("b", "2"))
+        h.monitor.pollNow()
+        assertTrue(h.announced.isEmpty(), "a stream already live when alerts come back is not news")
+    }
+
+    @Test fun aChannelOptedInWhileLiveIsNotAnnouncedButItsNextBroadcastIs() = runTest {
+        val h = Harness(this, channels = setOf("a"))
+        h.monitor.pollNow()
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("b", "2"))
+        h.settings = h.settings.copy(notifyChannels = setOf("a", "b"))
+        h.monitor.pollNow()
+        assertTrue(h.announced.isEmpty(), "tapping the bell on a live channel does not announce it")
+
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("b", "3"))
+        h.monitor.pollNow()
+        assertEquals(listOf(listOf("b")), h.announcedLogins(), "a new broadcast is announced")
+    }
+
+    @Test fun anOptedInChannelThatWasOfflineIsAnnouncedWhenItGoesLive() = runTest {
+        val h = Harness(this, channels = setOf("a"))
+        h.monitor.pollNow()
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.settings = h.settings.copy(notifyChannels = setOf("a", "b"))
+        h.monitor.pollNow()
+        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
+        h.live = listOf(s("b", "2"))
+        h.monitor.pollNow()
+        assertEquals(listOf(listOf("b")), h.announcedLogins())
+    }
+
+    @Test fun pollEveryPollsAtOnceWhenTheOptInListChanges() = runTest {
+        val h = Harness(this, channels = setOf("a"))
         val job = launch { h.monitor.pollEvery(90_000) }
         runCurrent()
         assertEquals(1, h.fetches, "polls right away")
-        advanceTimeBy(60_000)
-        h.monitor.followedLive("me", maxAgeMs = 0) // the rail refreshing at 60 s
-        assertEquals(2, h.fetches)
-        advanceTimeBy(89_000)
+        advanceTimeBy(10_000)
         runCurrent()
-        assertEquals(2, h.fetches, "the timer counts from the rail's fetch, not its own")
-        advanceTimeBy(2_000)
-        runCurrent()
-        assertEquals(3, h.fetches)
+        assertEquals(1, h.fetches, "waits out the interval")
         job.cancel()
+        h.settings = h.settings.copy(notifyChannels = setOf("a", "b"))
+        val restarted = launch { h.monitor.pollEvery(90_000) }
+        runCurrent()
+        assertEquals(2, h.fetches, "a changed list does not wait")
+        assertEquals(listOf("a", "b"), h.requested.last().sorted())
+        restarted.cancel()
     }
 
-    @Test fun alertsSwitchedOffAndBackOnWithNoPollBetweenSeedSilently() = runTest {
-        // Off from the tray for hours with the window hidden: nothing polled meanwhile,
-        // so what is live when they come back on is not news.
-        val h = Harness(this)
+    @Test fun removingEveryChannelResetsSoALaterOptInSeedsAgain() = runTest {
+        val h = Harness(this, channels = setOf("a"))
         h.live = listOf(s("a", "1"))
         h.monitor.pollNow()
-        h.monitor.alertsStopped()
+        h.settings = h.settings.copy(notifyChannels = emptySet())
+        h.monitor.pollNow()
         advanceTimeBy(60 * 60_000L)
-        h.live = listOf(s("a", "1"), s("b", "2"))
-        h.monitor.pollNow()
-        assertTrue(h.announced.isEmpty(), "the first poll after alerts resume only seeds")
-
-        advanceTimeBy(LiveFollowsMonitor.SHARE_WINDOW_MS + 1)
-        h.live = listOf(s("a", "1"), s("b", "2"), s("c", "3"))
-        h.monitor.pollNow()
-        assertEquals(listOf(listOf("c")), h.announced.map { batch -> batch.map { it.userLogin } })
-    }
-
-    @Test fun theSameAccountSigningBackInSeedsSilently() = runTest {
-        val h = Harness(this)
-        h.live = listOf(s("a", "1"))
-        h.monitor.pollNow()
-        h.user = null
-        h.monitor.alertsStopped()
-        advanceTimeBy(30 * 60_000L)
-        h.user = "me"
-        h.live = listOf(s("b", "2"))
+        h.settings = h.settings.copy(notifyChannels = setOf("a"))
+        h.live = listOf(s("a", "2"))
         h.monitor.pollNow()
         assertTrue(h.announced.isEmpty())
     }
@@ -192,18 +224,21 @@ class LiveFollowsMonitorTest {
         h.live = listOf(s("b", "2"))
         val second = launch { h.monitor.pollEvery(90_000) }
         runCurrent()
-        assertEquals(listOf(listOf("b")), h.announced.map { batch -> batch.map { it.userLogin } })
+        assertEquals(listOf(listOf("b")), h.announcedLogins())
         second.cancel()
     }
 
+    private fun seededState() =
+        GoLiveDetector.evaluate(LiveNotifyState(), "", listOf(s("a", "1")), 0, enabled = true, watched = setOf("a", "b")).nextState
+
     @Test fun aPollCancelledWhileLoadingTheStateDoesNotReseed() = runTest {
-        val store = SlowStore(GoLiveDetector.evaluate(LiveNotifyState(), "me", listOf(s("a", "1")), 0, emptySet(), true).nextState)
+        val store = SlowStore(seededState())
         val announced = mutableListOf<String>()
         val monitor = LiveFollowsMonitor(
-            fetchLive = { listOf(s("a", "1"), s("b", "2")) },
+            fetchLive = { emptyList() },
+            fetchWatched = { listOf(s("a", "1"), s("b", "2")) },
             store = store,
-            settings = { AppSettings() },
-            userId = { "me" },
+            settings = { AppSettings(notifyChannels = setOf("a", "b")) },
             clock = { testScheduler.currentTime },
             onGoLive = { batch -> announced += batch.map { it.userLogin } },
         )
@@ -221,13 +256,13 @@ class LiveFollowsMonitorTest {
     }
 
     @Test fun aPollCancelledWhileSavingStillAnnounces() = runTest {
-        val store = SlowStore(GoLiveDetector.evaluate(LiveNotifyState(), "me", listOf(s("a", "1")), 0, emptySet(), true).nextState)
+        val store = SlowStore(seededState())
         val announced = mutableListOf<String>()
         val monitor = LiveFollowsMonitor(
-            fetchLive = { listOf(s("a", "1"), s("b", "2")) },
+            fetchLive = { emptyList() },
+            fetchWatched = { listOf(s("a", "1"), s("b", "2")) },
             store = store,
-            settings = { AppSettings() },
-            userId = { "me" },
+            settings = { AppSettings(notifyChannels = setOf("a", "b")) },
             clock = { testScheduler.currentTime },
             onGoLive = { batch -> announced += batch.map { it.userLogin } },
         )
@@ -263,10 +298,10 @@ class LiveFollowsMonitorTest {
         val store = InMemoryLiveNotifyStateStore()
         var live = emptyList<StreamInfo>()
         val monitor = LiveFollowsMonitor(
-            fetchLive = { live },
+            fetchLive = { emptyList() },
+            fetchWatched = { live },
             store = store,
-            settings = { AppSettings() },
-            userId = { "me" },
+            settings = { AppSettings(notifyChannels = setOf("b")) },
             clock = { testScheduler.currentTime },
             onGoLive = { calls++; error("toast failed") },
         )
@@ -275,6 +310,5 @@ class LiveFollowsMonitorTest {
         live = listOf(s("b", "2"))
         monitor.pollNow()
         assertEquals(1, calls)
-        assertEquals(1, monitor.liveNow.value.size)
     }
 }

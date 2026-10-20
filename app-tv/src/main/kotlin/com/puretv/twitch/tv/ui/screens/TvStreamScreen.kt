@@ -101,6 +101,8 @@ fun TvStreamScreen(
     val goLive = koinInject<TvGoLiveMonitor>()
     val rootFocusRequester = remember { FocusRequester() }
     val playPauseFocusRequester = remember { FocusRequester() }
+    // The playGeneration the shared player was last handed (read by its first-frame callback).
+    val playingGeneration = remember { intArrayOf(-1) }
 
     var controlsVisible by remember { mutableStateOf(true) }
     var chatVisible by remember { mutableStateOf(false) }
@@ -138,6 +140,9 @@ fun TvStreamScreen(
     // Once per resolved stream (a flip resolves a new one), not once per URL.
     LaunchedEffect(state.playGeneration) {
         val url = state.playableUrl ?: return@LaunchedEffect
+        // Remember which resolution is playing, so a first frame from the previous
+        // channel's picture is not counted for this one (see StreamViewModel.onFirstFrame).
+        playingGeneration[0] = state.playGeneration
         tvPlayer.playUrl(url, lowLatency = state.lowLatency)
         isPlaying = true
     }
@@ -152,6 +157,7 @@ fun TvStreamScreen(
     LaunchedEffect(state.sleepExpired) {
         if (state.sleepExpired) {
             tvPlayer.stop()
+            viewModel.onSleepHandled()
             onSleepExpired()
         }
     }
@@ -159,7 +165,7 @@ fun TvStreamScreen(
     // Local time-to-first-frame mark. Cleared on leave so a released screen's
     // view model is never called back.
     DisposableEffect(viewModel) {
-        val listener = { viewModel.onFirstFrame() }
+        val listener = { viewModel.onFirstFrame(playingGeneration[0]) }
         val gaveUp: (androidx.media3.common.PlaybackException) -> Unit = { viewModel.onPlaybackGaveUp() }
         tvPlayer.onFirstFrame = listener
         tvPlayer.onGaveUp = gaveUp
@@ -241,7 +247,8 @@ fun TvStreamScreen(
                     // Any key buys a sleepy viewer more time, and shows the flip neighbours
                     // are worth having ready (core throttles the prewarm).
                     viewModel.onViewerActivity()
-                    viewModel.onRemoteIntent()
+                    // BACK is leaving, not reaching for another channel: nothing to warm.
+                    if (key != RemoteKey.Back) viewModel.onRemoteIntent()
                     // BACK is never "activity" for the auto-hide: bumping the timer for it
                     // would resurrect the chrome and the viewer could never leave the player.
                     if (controlsVisible && key != RemoteKey.Back) controlsTouchedAt = System.currentTimeMillis()
@@ -295,8 +302,13 @@ fun TvStreamScreen(
                     quality = quality,
                     onBack = onBack,
                     onTogglePlayPause = {
-                        tvPlayer.togglePlayPause()
-                        isPlaying = tvPlayer.exoPlayer.isPlaying
+                        // On the error panel the focused Play button is the retry affordance.
+                        if (state.playbackError != null) {
+                            viewModel.retry()
+                        } else {
+                            tvPlayer.togglePlayPause()
+                            isPlaying = tvPlayer.exoPlayer.isPlaying
+                        }
                     },
                     onSelectQuality = viewModel::setQuality,
                     chatVisible = chatVisible,

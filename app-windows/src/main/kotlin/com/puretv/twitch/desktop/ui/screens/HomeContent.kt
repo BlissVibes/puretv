@@ -144,7 +144,10 @@ fun HomeContent(
                         HomeHero(
                             hero = hero,
                             isFollowed = isFollowed,
-                            onWatch = { onOpenChannel(hero.login) },
+                            onWatch = {
+                                flipOrigin.record(emptyList()) // flips use the live follows
+                                onOpenChannel(hero.login)
+                            },
                             onToggleFollow = {
                                 if (isFollowed) {
                                     followStore.unfollow(hero.login)
@@ -198,7 +201,10 @@ fun HomeContent(
                                         viewerCount = ch.viewerCount,
                                         game = ch.gameName,
                                         title = ch.title,
-                                        onClick = { onOpenChannel(ch.login) },
+                                        onClick = {
+                                            flipOrigin.record(emptyList()) // flips use the live follows
+                                            onOpenChannel(ch.login)
+                                        },
                                         modifier = Modifier.width(240.dp).prewarmStreamOnHover(ch.login, live = ch.isLive),
                                     )
                                 }

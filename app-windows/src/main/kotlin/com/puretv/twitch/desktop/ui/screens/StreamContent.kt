@@ -297,6 +297,10 @@ fun StreamContent(
         val ring = ChannelFlip.ringFor(latestChannel, follows, flipOrigin.logins)
         val target = pendingFlip.press(ring, latestChannel, direction, System.currentTimeMillis())
         if (target == null) {
+            // Nowhere to go: drop a target an earlier press left pending.
+            pendingFlip.cancel()
+            flipJob?.cancel()
+            flipTarget = null
             flipNote = "No other channel to switch to"
             scope.launch {
                 delay(2_500)
@@ -309,8 +313,7 @@ fun StreamContent(
         flipTarget = target
         flipJob?.cancel()
         flipJob = scope.launch {
-            delay(PendingFlip.SETTLE_MS)
-            val next = pendingFlip.takeDue(latestChannel, System.currentTimeMillis())
+            val next = pendingFlip.awaitSettled({ latestChannel }, System::currentTimeMillis)
             if (next == null) {
                 flipTarget = null
                 return@launch
@@ -343,12 +346,18 @@ fun StreamContent(
     var helpOpen by remember { mutableStateOf(false) }
     val latestHelpOpen = rememberUpdatedState(helpOpen)
     val latestVolume = rememberUpdatedState(playerStatus.volume)
+    val latestMuted = rememberUpdatedState(playerStatus.isMuted)
+    val latestMenuOpen = rememberUpdatedState(settingsMenuOpen)
+    var heldKey = 0
     val latestViewModel = rememberUpdatedState(viewModel)
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
             // Any key press is the viewer being there (sleep timer), typing in chat included.
             if (e.id == KeyEvent.KEY_PRESSED) sleepController.onActivity()?.let { sleepUi = it }
-            if (latestChatFocused.value) return@KeyEventDispatcher false
+            if (latestChatFocused.value) {
+                heldKey = 0
+                return@KeyEventDispatcher false
+            }
             // Hold-to-compare (X): preview Off while held, restore the saved mode on
             // release: instant live A/B of the upscaler. Handled before the
             // KEY_PRESSED gate so we also see KEY_RELEASED. (Windows AWT doesn't
@@ -362,7 +371,11 @@ fun StreamContent(
                 }
                 return@KeyEventDispatcher true
             }
+            if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == heldKey) heldKey = 0
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
+            // A key that is still down repeats KEY_PRESSED without a release in between.
+            val isRepeat = e.keyCode == heldKey
+            heldKey = e.keyCode
             val m = latestMode.value
             val action = PlayerShortcuts.actionFor(
                 keyCode = e.keyCode,
@@ -370,6 +383,9 @@ fun StreamContent(
                 ctrlOrAlt = e.isControlDown || e.isAltDown,
                 immersive = m != PlayerMode.DEFAULT,
                 helpOpen = latestHelpOpen.value,
+                textInputFocused = latestChatFocused.value,
+                menuOpen = latestMenuOpen.value,
+                isRepeat = isRepeat,
             ) ?: return@KeyEventDispatcher false
             when (action) {
                 ShortcutAction.ToggleFullscreen -> shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN)
@@ -382,9 +398,14 @@ fun StreamContent(
                 ShortcutAction.FlipNext -> flip(FlipDirection.NEXT)
                 ShortcutAction.FlipPrevious -> flip(FlipDirection.PREVIOUS)
                 ShortcutAction.VolumeUp, ShortcutAction.VolumeDown -> {
-                    latestViewModel.value.setVolume(
-                        PlayerShortcuts.steppedVolume(latestVolume.value, up = action == ShortcutAction.VolumeUp),
-                    )
+                    if (latestMuted.value) {
+                        // Muted: Up brings back the volume from before the mute; Down stays quiet.
+                        if (action == ShortcutAction.VolumeUp) latestViewModel.value.toggleMute()
+                    } else {
+                        latestViewModel.value.setVolume(
+                            PlayerShortcuts.steppedVolume(latestVolume.value, up = action == ShortcutAction.VolumeUp),
+                        )
+                    }
                     resetControls() // the volume slider is the feedback
                 }
                 ShortcutAction.ToggleMute -> { latestViewModel.value.toggleMute(); resetControls() }
@@ -1180,6 +1201,8 @@ internal fun ChatInputBar(
     var value by remember { mutableStateOf(TextFieldValue("")) }
     var pickerOpen by remember { mutableStateOf(false) }
     var fieldFocused by remember { mutableStateOf(false) }
+    // The emote picker's search box is a second text input in the chat column.
+    var searchFocused by remember { mutableStateOf(false) }
 
     fun submit() {
         val trimmed = value.text.trim()
@@ -1240,6 +1263,10 @@ internal fun ChatInputBar(
                     value = TextFieldValue(t, TextRange(cur))
                 },
                 onDismiss = { pickerOpen = false },
+                onSearchFocusChanged = {
+                    searchFocused = it
+                    onFocusChanged(fieldFocused || it)
+                },
             )
             Spacer(Modifier.height(8.dp))
         }
@@ -1319,7 +1346,7 @@ internal fun ChatInputBar(
                             .fillMaxWidth()
                             .onFocusChanged {
                                 fieldFocused = it.isFocused
-                                onFocusChanged(it.isFocused)
+                                onFocusChanged(it.isFocused || searchFocused)
                             }
                             // Enter sends the message; Tab accepts the first emote or
                             // @username suggestion when one is offered (see composerKeyAction).

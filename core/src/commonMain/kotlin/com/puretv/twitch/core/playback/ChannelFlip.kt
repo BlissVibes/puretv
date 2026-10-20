@@ -1,5 +1,7 @@
 package com.puretv.twitch.core.playback
 
+import kotlinx.coroutines.delay
+
 /** Which way a channel flip steps through the ring: channel up is [NEXT], channel down is [PREVIOUS]. */
 enum class FlipDirection { NEXT, PREVIOUS }
 
@@ -106,6 +108,22 @@ class PendingFlip(private val settleMs: Long = SETTLE_MS) {
 
     fun cancel() {
         target = null
+    }
+
+    /**
+     * Waits until the pending flip has settled and returns where it landed (null when the
+     * walk ended back on the current channel or nothing is pending). A coroutine delay and
+     * the wall clock can disagree by a millisecond, and a flip must not be dropped for
+     * that, so a read that is a hair early waits out the rest and asks again.
+     */
+    suspend fun awaitSettled(current: () -> String, clock: () -> Long): String? {
+        while (true) {
+            val due = dueAtMs() ?: return null
+            val wait = due - clock()
+            if (wait > 0) delay(wait)
+            takeDue(current(), clock())?.let { return it }
+            if (target == null) return null
+        }
     }
 
     companion object {

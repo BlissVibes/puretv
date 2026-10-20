@@ -48,6 +48,27 @@ object PlayerShortcuts {
         ctrlOrAlt: Boolean,
         immersive: Boolean,
         helpOpen: Boolean = false,
+        // A text box (chat, emote search) has focus: every key is the viewer typing.
+        textInputFocused: Boolean = false,
+        // The Playback menu is open: Up and Down belong to its sliders and segments.
+        menuOpen: Boolean = false,
+        // The key is being held (auto-repeat). Only volume repeats; toggles fire once.
+        isRepeat: Boolean = false,
+    ): ShortcutAction? {
+        if (textInputFocused) return null
+        val action = actionForKey(keyCode, keyChar, ctrlOrAlt, immersive, helpOpen) ?: return null
+        val volume = action == ShortcutAction.VolumeUp || action == ShortcutAction.VolumeDown
+        if (volume && menuOpen) return null
+        if (isRepeat && !volume) return null
+        return action
+    }
+
+    private fun actionForKey(
+        keyCode: Int,
+        keyChar: Char,
+        ctrlOrAlt: Boolean,
+        immersive: Boolean,
+        helpOpen: Boolean,
     ): ShortcutAction? {
         if (ctrlOrAlt) return null
         if (keyChar == '?') return ShortcutAction.ToggleHelp

@@ -140,8 +140,11 @@ class HomeViewModel(
         // "Continue watching": channels watched before, and broadcasts left part way.
         viewModelScope.launch {
             watchHistoryDao.observeRecent().collect { history ->
+                val before = recentChannels
                 recentChannels = history.map { RecentChannel(it.channelLogin, it.channelDisplayName) }
                 rebuildContinueWatching()
+                // A newly watched channel needs its live status now, not at the next refresh.
+                if (recentChannels.map { it.login } != before.map { it.login }) refreshContinueLive()
             }
         }
         viewModelScope.launch {
@@ -229,11 +232,15 @@ class HomeViewModel(
         val s = _state.value
         val known = (s.followedLive + s.topStreams).associateBy { it.userLogin.lowercase() }
         val ask = ContinueWatching.loginsToCheck(recentChannels, known.keys)
+        // Answers merge into what is known: a channel asked about now is replaced by the
+        // answer (live or not), the rest keep their last answer.
+        val asked = ask.mapTo(HashSet()) { it.lowercase() }
+        val stillKnown = lookedUpLive.filterKeys { it !in asked }
         lookedUpLive = if (ask.isEmpty()) {
-            emptyMap()
+            stillKnown.filterKeys { key -> recentChannels.any { it.login.equals(key, ignoreCase = true) } }
         } else {
             runCatching { streamRepository.streamsForChannels(ask) }
-                .map { found -> found.associateBy { it.userLogin.lowercase() } }
+                .map { found -> stillKnown + found.associateBy { it.userLogin.lowercase() } }
                 .getOrDefault(lookedUpLive)
         }
         rebuildContinueWatching()
@@ -574,6 +581,8 @@ class StreamViewModel(
     // outlive the view model on purpose: leaving the screen cancels viewModelScope.
     private val historyScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var watchedLogin: String? = null
+    // The channel whose stream URL the screen was last handed (see onFirstFrame).
+    private var readyLogin: String? = null
     private var watchStartedAtMs = 0L
 
     private fun startWatchHistory() {
@@ -753,6 +762,10 @@ class StreamViewModel(
         val ring = flipRing()
         val target = pendingFlip.press(ring, currentLogin, direction, System.currentTimeMillis())
         if (target == null) {
+            // Nowhere to go (a ring of one): drop any target an earlier press left pending.
+            pendingFlip.cancel()
+            settleJob?.cancel()
+            _state.update { it.copy(flipTarget = null) }
             showFlipNote("No other channel to switch to")
             return
         }
@@ -763,13 +776,12 @@ class StreamViewModel(
         prewarmGate.take(listOf(target)).forEach(playableStreamCache::prewarm)
         settleJob?.cancel()
         settleJob = viewModelScope.launch {
-            delay(PendingFlip.SETTLE_MS)
-            commitFlip()
+            val next = pendingFlip.awaitSettled({ currentLogin }, System::currentTimeMillis)
+            commitFlip(next)
         }
     }
 
-    private fun commitFlip() {
-        val next = pendingFlip.takeDue(currentLogin, System.currentTimeMillis())
+    private fun commitFlip(next: String?) {
         if (next == null) {
             _state.update { it.copy(flipTarget = null) }
             return
@@ -794,6 +806,11 @@ class StreamViewModel(
                 delay(1_000)
             }
         }
+    }
+
+    /** The screen has acted on [StreamUiState.sleepExpired]. */
+    fun onSleepHandled() {
+        _state.update { it.copy(sleepExpired = false) }
     }
 
     /** Any remote key. In the sleep timer's last minute it buys another 15 minutes. */
@@ -866,13 +883,16 @@ class StreamViewModel(
                 if (login != currentLogin) return
                 openTiming.mark("playable_url")
                 val lowLatency = settingsStore.flow.first().lowLatencyMode
+                if (login != currentLogin) return
+                readyLogin = login
                 _state.update {
                     it.copy(
                         playableUrl = playable.masterUrl,
                         playGeneration = it.playGeneration + 1,
                         playbackError = null,
                         lowLatency = lowLatency,
-                        flipTarget = null,
+                        // A newer flip is already on its way: its banner stays.
+                        flipTarget = if (pendingFlip.pending != null) it.flipTarget else null,
                     )
                 }
             }
@@ -887,7 +907,7 @@ class StreamViewModel(
                 _state.update {
                     it.copy(
                         playableUrl = null,
-                        flipTarget = null,
+                        flipTarget = if (pendingFlip.pending != null) it.flipTarget else null,
                         playbackError = failure.message() +
                             if (failure.detail.isBlank()) "" else "\n\nDetails: ${failure.detail}",
                     )
@@ -927,7 +947,10 @@ class StreamViewModel(
     }
 
     /** The player put this stream's first frame on screen (local timing only). */
-    fun onFirstFrame() {
+    fun onFirstFrame(generation: Int) {
+        // Only the stream of the channel on screen counts: the previous channel's picture
+        // can still be playing, or rendering a frame, while the next one resolves.
+        if (generation != _state.value.playGeneration || readyLogin != currentLogin) return
         openTiming.mark("first_frame")
         startWatchHistory()
     }

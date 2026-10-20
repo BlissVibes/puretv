@@ -41,11 +41,20 @@ class RemoteKeysTest {
         assertEquals(RemoteAction.PassThrough, decide(RemoteKey.Center, shown))
     }
 
-    @Test fun okRetriesAFailedStreamEverywhere() {
-        for (state in listOf(hidden, shown, chat)) {
+    @Test fun okRetriesAFailedStreamWhenTheControlsAreHidden() {
+        for (state in listOf(hidden, chat)) {
             assertEquals(RemoteAction.Retry, decide(RemoteKey.Center, state.copy(hasError = true)))
+        }
+        for (state in listOf(hidden, shown, chat)) {
             assertEquals(RemoteAction.Retry, decide(RemoteKey.PlayPause, state.copy(hasError = true)))
         }
+    }
+
+    @Test fun okPressesTheFocusedControlOnTheErrorPanel() {
+        assertEquals(RemoteAction.PassThrough, decide(RemoteKey.Center, shown.copy(hasError = true)))
+        // Flipping and Back still work from the error panel.
+        assertEquals(RemoteAction.Flip(FlipDirection.NEXT), decide(RemoteKey.ChannelUp, shown.copy(hasError = true)))
+        assertEquals(RemoteAction.HideControls, decide(RemoteKey.Back, shown.copy(hasError = true)))
     }
 
     @Test fun playPauseAndQualityKeysWorkEverywhere() {

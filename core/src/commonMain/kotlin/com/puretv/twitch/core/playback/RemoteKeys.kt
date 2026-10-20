@@ -65,8 +65,10 @@ object RemoteKeys {
         RemoteKey.Rewind -> RemoteAction.StepQuality(up = false)
         RemoteKey.Menu -> RemoteAction.ToggleChat
         RemoteKey.Center -> when {
-            state.hasError -> RemoteAction.Retry
+            // With the controls up OK presses the focused control, even on the error panel
+            // (quality and Back stay reachable); hidden, it is the retry key.
             state.controlsVisible -> RemoteAction.PassThrough
+            state.hasError -> RemoteAction.Retry
             else -> RemoteAction.ShowControls
         }
         RemoteKey.Up, RemoteKey.Down -> when {

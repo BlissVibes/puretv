@@ -5,7 +5,9 @@ import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.navArgument
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.tv.ui.screens.TvVodScreen
+import org.koin.compose.koinInject
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -60,6 +62,7 @@ object Routes {
 
 @Composable
 fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) {
+    val flipOrigin = koinInject<FlipOrigin>()
     NavHost(navController = navController, startDestination = Routes.HOME) {
         composable(Routes.HOME) {
             TvHomeScreen(
@@ -112,14 +115,22 @@ fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) 
                 channelLogin = channelLogin,
                 onBack = navController::popBackStack,
                 // The sleep timer ran out: back to Home, not to whichever screen opened the stream.
-                onSleepExpired = { navController.popBackStack(Routes.HOME, inclusive = false) },
+                onSleepExpired = {
+                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                        navController.navigate(Routes.HOME) { popUpTo(0) }
+                    }
+                },
             )
         }
         composable(Routes.CHANNEL) { backStackEntry ->
             val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
             TvChannelScreen(
                 channelLogin = channelLogin,
-                onWatch = { navController.navigate(Routes.stream(channelLogin)) },
+                onWatch = {
+                    // A channel page is not a row: flips use the live follows, not an older row.
+                    flipOrigin.record(emptyList())
+                    navController.navigate(Routes.stream(channelLogin))
+                },
                 onOpenVod = { navController.navigate(Routes.vod(it)) },
                 onBack = navController::popBackStack,
             )

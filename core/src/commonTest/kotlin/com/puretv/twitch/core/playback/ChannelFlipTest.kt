@@ -89,6 +89,23 @@ class PendingFlipTest {
         assertNull(flip.pending)
     }
 
+    @Test fun awaitSettledSurvivesAClockThatReadsAMillisecondEarly() = kotlinx.coroutines.test.runTest {
+        val flip = PendingFlip(settleMs = 100)
+        // A wall clock that trails the coroutine clock by 1 ms: the first read after the delay is early.
+        val clock = { testScheduler.currentTime - 1 }
+        flip.press(ring, "a", FlipDirection.NEXT, clock())
+        assertEquals("b", flip.awaitSettled({ "a" }, clock))
+        assertNull(flip.pending)
+    }
+
+    @Test fun awaitSettledReturnsNullWhenNothingIsPendingOrTheWalkReturned() = kotlinx.coroutines.test.runTest {
+        val flip = PendingFlip(settleMs = 100)
+        assertNull(flip.awaitSettled({ "a" }, { testScheduler.currentTime }))
+        flip.press(ring, "a", FlipDirection.NEXT, testScheduler.currentTime)
+        flip.press(ring, "a", FlipDirection.PREVIOUS, testScheduler.currentTime)
+        assertNull(flip.awaitSettled({ "a" }, { testScheduler.currentTime }))
+    }
+
     @Test fun noRingMeansNoPendingFlip() {
         val flip = PendingFlip()
         assertNull(flip.press(listOf("a"), "a", FlipDirection.NEXT, 0))

@@ -81,6 +81,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.screens.BrowseContent
 import com.puretv.twitch.desktop.ui.screens.CategoryContent
 import com.puretv.twitch.desktop.ui.screens.ChannelContent
+import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.ui.screens.FollowingContent
 import com.puretv.twitch.desktop.ui.screens.HomeContent
 import com.puretv.twitch.desktop.ui.screens.LoginContent
@@ -200,11 +201,15 @@ fun App(
             var railExpanded by remember { mutableStateOf(true) }
             val c = PureTvTheme.colors
             val shapes = PureTvTheme.shapes
+            // The row a stream is opened from is remembered for channel flipping; entry
+            // points that are not a row (rail, search, following, notifications) clear it.
+            val flipOrigin = remember { koin.get<FlipOrigin>() }
 
             // A click on a go-live notification opens that stream.
             LaunchedEffect(Unit) {
                 koin.get<NavigationRequests>().openStream.collect { login ->
                     shell.exitImmersive()
+                    flipOrigin.record(emptyList()) // opened from a notification, not from a row
                     route = Route.Stream(login)
                 }
             }
@@ -288,7 +293,10 @@ fun App(
                                     destination = it
                                     route = Route.Top
                                 },
-                                onOpenChannel = { login -> route = Route.Channel(login) },
+                                onOpenChannel = { login ->
+                                    flipOrigin.record(emptyList()) // the rail has no row to flip through
+                                    route = Route.Channel(login)
+                                },
                                 onResumeVod = { launch -> route = Route.Vod(launch) },
                                 onSignIn = {
                                     destination = Destination.ACCOUNT
@@ -359,11 +367,20 @@ fun App(
                                     )
                                     Destination.FOLLOWING -> FollowingContent(
                                         koin = koin,
-                                        onOpenChannel = { login -> route = Route.Channel(login) },
+                                        onOpenChannel = { login ->
+                                            flipOrigin.record(emptyList()) // flips use the live follows
+                                            route = Route.Channel(login)
+                                        },
                                         onSignIn = { destination = Destination.ACCOUNT },
                                     )
                                     Destination.BROWSE -> BrowseContent(koin = koin, onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) })
-                                    Destination.SEARCH -> SearchContent(koin = koin, onOpenChannel = { login -> route = Route.Channel(login) })
+                                    Destination.SEARCH -> SearchContent(
+                                        koin = koin,
+                                        onOpenChannel = { login ->
+                                            flipOrigin.record(emptyList()) // search results are not a row to flip through
+                                            route = Route.Channel(login)
+                                        },
+                                    )
                                     Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
                                 }

@@ -57,6 +57,31 @@ class PlayerShortcutsTest {
         assertNull(action(KeyEvent.VK_ENTER))
     }
 
+    @Test fun nothingFiresWhileATextBoxHasFocus() {
+        for (code in listOf(KeyEvent.VK_F, KeyEvent.VK_SPACE, KeyEvent.VK_Z, KeyEvent.VK_UP, KeyEvent.VK_PAGE_UP, KeyEvent.VK_ESCAPE)) {
+            assertNull(PlayerShortcuts.actionFor(code, KeyEvent.CHAR_UNDEFINED, false, true, textInputFocused = true))
+        }
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_SLASH, '?', false, false, textInputFocused = true))
+    }
+
+    @Test fun upAndDownBelongToThePlaybackMenuWhileItIsOpen() {
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_UP, KeyEvent.CHAR_UNDEFINED, false, false, menuOpen = true))
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_DOWN, KeyEvent.CHAR_UNDEFINED, false, false, menuOpen = true))
+        assertEquals(
+            ShortcutAction.ToggleMute,
+            PlayerShortcuts.actionFor(KeyEvent.VK_M, 'm', false, false, menuOpen = true),
+        )
+    }
+
+    @Test fun onlyVolumeRepeatsWhenAKeyIsHeld() {
+        assertEquals(
+            ShortcutAction.VolumeUp,
+            PlayerShortcuts.actionFor(KeyEvent.VK_UP, KeyEvent.CHAR_UNDEFINED, false, false, isRepeat = true),
+        )
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_Z, 'z', false, false, isRepeat = true))
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_PAGE_UP, KeyEvent.CHAR_UNDEFINED, false, false, isRepeat = true))
+    }
+
     @Test fun volumeStepsByFiveAndStaysInRange() {
         assertEquals(55, PlayerShortcuts.steppedVolume(50, up = true))
         assertEquals(45, PlayerShortcuts.steppedVolume(50, up = false))

@@ -1,4 +1,4 @@
-package com.puretv.twitch.desktop.data
+package com.puretv.twitch.core.vod
 
 import kotlin.test.Test
 import kotlin.test.assertEquals

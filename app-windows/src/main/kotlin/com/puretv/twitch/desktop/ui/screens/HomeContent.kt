@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.FollowedChannel
-import com.puretv.twitch.desktop.data.WatchProgress
+import com.puretv.twitch.core.vod.WatchProgress
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.ui.FollowCardState
 import com.puretv.twitch.desktop.ui.HomeViewModel

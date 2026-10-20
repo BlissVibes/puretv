@@ -6,8 +6,8 @@ import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.core.repository.VodRepository
 import com.puretv.twitch.core.stream.Storyboard
 import com.puretv.twitch.core.stream.VodResolver
-import com.puretv.twitch.desktop.data.ResumePolicy
-import com.puretv.twitch.desktop.data.WatchProgress
+import com.puretv.twitch.core.vod.ResumePolicy
+import com.puretv.twitch.core.vod.WatchProgress
 import com.puretv.twitch.desktop.data.WatchProgressStore
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.player.DesktopPlayer

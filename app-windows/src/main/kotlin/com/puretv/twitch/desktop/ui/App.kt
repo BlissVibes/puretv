@@ -84,6 +84,7 @@ import com.puretv.twitch.desktop.ui.screens.ChannelContent
 import com.puretv.twitch.desktop.ui.screens.FollowingContent
 import com.puretv.twitch.desktop.ui.screens.HomeContent
 import com.puretv.twitch.desktop.ui.screens.LoginContent
+import com.puretv.twitch.desktop.ui.screens.MultiViewContent
 import com.puretv.twitch.desktop.ui.screens.SearchContent
 import com.puretv.twitch.desktop.ui.screens.SettingsContent
 import com.puretv.twitch.desktop.ui.screens.StreamContent
@@ -119,6 +120,8 @@ private sealed class Route {
     data class Category(val gameId: String, val gameName: String) : Route()
     data class Channel(val login: String) : Route()
     data class Stream(val login: String) : Route()
+    /** Several live channels at once, opened from [login]'s stream screen. */
+    data class Multi(val login: String) : Route()
     data class Vod(val launch: VodLaunch) : Route()
 }
 
@@ -213,7 +216,7 @@ fun App(
             // Hidden in the tray, nothing should keep playing or keep chat sockets open:
             // leaving the stream (or VOD) route disposes its player and chat.
             LaunchedEffect(windowVisible) {
-                if (!windowVisible && (route is Route.Stream || route is Route.Vod)) {
+                if (!windowVisible && (route is Route.Stream || route is Route.Multi || route is Route.Vod)) {
                     shell.exitImmersive()
                     route = Route.Top
                 }
@@ -305,6 +308,20 @@ fun App(
                                     koin = koin,
                                     channelLogin = r.login,
                                     onBack = { route = Route.Channel(r.login) },
+                                    onRequestSignIn = {
+                                        destination = Destination.ACCOUNT
+                                        route = Route.Top
+                                    },
+                                    onOpenMultiView = {
+                                        shell.exitImmersive()
+                                        route = Route.Multi(r.login)
+                                    },
+                                )
+                                is Route.Multi -> MultiViewContent(
+                                    koin = koin,
+                                    initialLogin = r.login,
+                                    onBack = { route = Route.Channel(r.login) },
+                                    onWatchSingle = { login -> route = Route.Stream(login) },
                                     onRequestSignIn = {
                                         destination = Destination.ACCOUNT
                                         route = Route.Top

@@ -13,6 +13,7 @@ import java.awt.Canvas
 import java.awt.Color
 import java.awt.event.HierarchyEvent
 import java.awt.event.HierarchyListener
+import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import javax.swing.JPanel
@@ -55,12 +56,16 @@ import javax.swing.SwingUtilities
  *
  * @param onUserActivity invoked on real cursor movement over the video surface
  *   (used to un-hide the auto-hiding player controls).
+ * @param onClick invoked when the video surface is clicked. The heavyweight surface
+ *   swallows mouse clicks before Compose sees them, so multi-stream uses this to make
+ *   a tile active.
  */
 @Composable
 fun VlcPlayerView(
     vlcPlayer: DesktopPlayer,
     modifier: Modifier = Modifier,
     onUserActivity: () -> Unit = {},
+    onClick: (() -> Unit)? = null,
 ) {
     // Override removeNotify so the backend releases this surface BEFORE the native
     // peer (HWND) is destroyed. mpv binds its `wid` once and keeps rendering into
@@ -112,6 +117,18 @@ fun VlcPlayerView(
         }
         canvas.addMouseMotionListener(motionListener)
         onDispose { canvas.removeMouseMotionListener(motionListener) }
+    }
+
+    val currentClick by rememberUpdatedState(onClick)
+    DisposableEffect(canvas, onClick != null) {
+        if (onClick == null) return@DisposableEffect onDispose {}
+        val clickListener = object : MouseAdapter() {
+            override fun mousePressed(e: MouseEvent) {
+                currentClick?.invoke()
+            }
+        }
+        canvas.addMouseListener(clickListener)
+        onDispose { canvas.removeMouseListener(clickListener) }
     }
 
     DisposableEffect(vlcPlayer, canvas) {

@@ -106,7 +106,7 @@ class MediaPlaylistCleaner(
         singleRendition: Boolean,
     ): Result {
         if (!forceAd && !AdMarkers.containsAds(raw)) {
-            adBlockEngine.reportAdBlocked()
+            adBlockEngine.reportAdBlocked(channelLogin)
             return Result(atLiveEdge(raw, singleRendition), Strategy.CLEAN)
         }
 
@@ -122,7 +122,7 @@ class MediaPlaylistCleaner(
                 }.getOrNull()
             }
             if (backup != null) {
-                adBlockEngine.reportAdBlocked()
+                adBlockEngine.reportAdBlocked(channelLogin)
                 return Result(
                     atLiveEdge(backup.mediaPlaylist, singleRendition),
                     Strategy.BACKUP,
@@ -133,12 +133,12 @@ class MediaPlaylistCleaner(
 
         return try {
             val filtered = adBlockEngine.filterPlaylist(raw)
-            adBlockEngine.reportFiltered(filtered)
+            adBlockEngine.reportFiltered(filtered, channelLogin)
             Result(TwitchPrefetch.strip(filtered.content), Strategy.STRIP, adSegmentsRemoved = filtered.adSegmentsRemoved)
         } catch (t: Throwable) {
             // Never pass ads off as success: the pill goes red, and the raw
             // playlist keeps playback alive instead of dead-ending.
-            adBlockEngine.reportResolutionFailure()
+            adBlockEngine.reportResolutionFailure(channelLogin)
             Result(TwitchPrefetch.strip(raw), Strategy.FAILED)
         }
     }

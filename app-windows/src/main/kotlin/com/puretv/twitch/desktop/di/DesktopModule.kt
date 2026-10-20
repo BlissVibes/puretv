@@ -23,6 +23,7 @@ import coil3.disk.DiskCache
 import okio.Path.Companion.toOkioPath
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.MpvPlayer
+import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.player.VlcPlayer
 import com.puretv.twitch.desktop.update.UpdateManager
 import com.puretv.twitch.core.follows.FollowedChannelsService
@@ -35,6 +36,7 @@ import com.puretv.twitch.desktop.ui.ChannelViewModel
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
 import com.puretv.twitch.desktop.ui.HomeViewModel
 import com.puretv.twitch.desktop.ui.LoginViewModel
+import com.puretv.twitch.desktop.ui.MultiViewViewModel
 import com.puretv.twitch.desktop.ui.SearchViewModel
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
@@ -124,15 +126,18 @@ val desktopModule = module {
     // Built on first use (the background warm-up just after the first window, or
     // the first stream open), never on the way to the first window: creating it
     // loads libVLC and its plugins, or the 120 MB libmpv.
+    // The one libVLC instance: the single-stream player and every multi-stream tile make
+    // their media players from it. VLC takes the audio normalizer only as instance
+    // arguments, read when libVLC starts.
     single {
         val store = get<DesktopSettingsStore>()
+        VlcEngine { if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList() }
+    }
+    single {
+        val store = get<DesktopSettingsStore>()
+        val engine = get<VlcEngine>()
         DesktopPlayerProvider {
-            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) {
-                MpvPlayer(store)
-            } else {
-                // VLC takes the audio normalizer only as instance arguments.
-                VlcPlayer(if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList())
-            }
+            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) MpvPlayer(store) else VlcPlayer(engine)
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }
@@ -164,6 +169,9 @@ val desktopModule = module {
     factory { SearchViewModel(get()) }
     factory { (channelLogin: String) ->
         StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    factory { (channelLogin: String) ->
+        MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }

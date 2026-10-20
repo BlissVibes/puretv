@@ -12,10 +12,15 @@ import io.ktor.client.statement.bodyAsText
 import io.ktor.util.encodeBase64
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
+import kotlin.jvm.Synchronized
 
 /**
  * SECTION 04 [CRITICAL — MOST IMPORTANT FEATURE]
@@ -40,6 +45,50 @@ class AdBlockEngine(
     private val _status = MutableStateFlow(AdBlockStatus.UNKNOWN)
     val status: StateFlow<AdBlockStatus> = _status.asStateFlow()
 
+    // Multi-stream shows one pill per channel, so every report can also name its
+    // channel. The app-wide [status] above is still written exactly as before; this
+    // map is an immutable snapshot swapped atomically, because several channels
+    // report from different network threads at once. Keys are lower case.
+    private val channelStatuses = MutableStateFlow<Map<String, AdBlockStatus>>(emptyMap())
+
+    /** The status of one channel alone: UNKNOWN until its first report. */
+    fun statusFor(channel: String): Flow<AdBlockStatus> {
+        val key = channel.lowercase()
+        return channelStatuses.map { it[key] ?: AdBlockStatus.UNKNOWN }.distinctUntilChanged()
+    }
+
+    /** Forgets [channel]'s status, for a channel that is no longer being watched. */
+    fun forgetChannel(channel: String) {
+        val key = channel.lowercase()
+        channelStatuses.update { if (key in it) it - key else it }
+        // A tile that was just closed can still have a playlist refresh in flight. Its
+        // late report must not touch the pill of whatever is watched next, so the
+        // channel stays muted until something starts it again ([claimChannel]).
+        released.update { if (key in it) it else (it + key).toList().takeLast(MAX_CHANNEL_STATUSES).toSet() }
+    }
+
+    /** Starts listening to [channel]'s reports again, after a [forgetChannel]. */
+    fun claimChannel(channel: String) {
+        val key = channel.lowercase()
+        released.update { if (key in it) it - key else it }
+    }
+
+    // Insertion ordered, so the oldest entry is dropped first.
+    private val released = MutableStateFlow<Set<String>>(emptySet())
+
+    private fun publish(status: AdBlockStatus, channel: String?) {
+        if (!channel.isNullOrBlank() && channel.lowercase() in released.value) return
+        _status.value = status
+        if (channel.isNullOrBlank()) return
+        val key = channel.lowercase()
+        channelStatuses.update { known ->
+            if (known[key] == status) return@update known
+            val next = known + (key to status)
+            // Phone and TV report per channel too but never forget one; keep the map small.
+            if (next.size > MAX_CHANNEL_STATUSES) next - next.keys.first() else next
+        }
+    }
+
     private val rewriter = ManifestRewriter()
     private val healthTracker = ProxyHealthTracker()
 
@@ -56,7 +105,10 @@ class AdBlockEngine(
 
     fun setEnabled(enabled: Boolean) {
         isEnabled = enabled
-        if (!enabled) _status.value = AdBlockStatus.DISABLED
+        if (!enabled) {
+            _status.value = AdBlockStatus.DISABLED
+            channelStatuses.update { known -> known.mapValues { AdBlockStatus.DISABLED } }
+        }
     }
 
     /**
@@ -64,8 +116,9 @@ class AdBlockEngine(
      * so without a reset the previous channel's last status (say, yellow "skipping
      * ad") stayed on the new channel's pill until its first playlist refresh.
      */
-    fun resetForNewStream() {
-        _status.value = if (isEnabled) AdBlockStatus.UNKNOWN else AdBlockStatus.DISABLED
+    fun resetForNewStream(channel: String? = null) {
+        if (!channel.isNullOrBlank()) claimChannel(channel)
+        publish(if (isEnabled) AdBlockStatus.UNKNOWN else AdBlockStatus.DISABLED, channel)
     }
 
     /**
@@ -82,9 +135,11 @@ class AdBlockEngine(
          * stream open.
          */
         prefetchedMaster: String? = null,
+        /** The channel this master belongs to, so its pill can be reported on its own (multi-stream). */
+        channel: String? = null,
     ): CleanStreamResult {
         if (config.strategy == AdBlockStrategy.DISABLED) {
-            _status.value = AdBlockStatus.DISABLED
+            publish(AdBlockStatus.DISABLED, channel)
             return passthrough(masterPlaylistUrl, AdBlockStrategyResult.DISABLED)
         }
 
@@ -95,7 +150,7 @@ class AdBlockEngine(
         val hasUpstream = !config.customProxyEndpoint.isNullOrBlank() || config.proxyEndpoint.isNotBlank()
         if (config.strategy == AdBlockStrategy.PROXY_PRIMARY && hasUpstream && healthTracker.isHealthy()) {
             fetchViaProxy(masterPlaylistUrl)?.let { proxied ->
-                _status.value = AdBlockStatus.AD_BLOCKED
+                publish(AdBlockStatus.AD_BLOCKED, channel)
                 healthTracker.recordSuccess()
                 return CleanStreamResult.Success(
                     playlistContent = proxied,
@@ -110,7 +165,7 @@ class AdBlockEngine(
             val raw = prefetchedMaster ?: fetchRaw(masterPlaylistUrl)
             if (raw != null) {
                 val filtered = rewriter.filter(raw)
-                _status.value = if (filtered.containedAds) AdBlockStatus.AD_FILTERED else AdBlockStatus.AD_BLOCKED
+                publish(if (filtered.containedAds) AdBlockStatus.AD_FILTERED else AdBlockStatus.AD_BLOCKED, channel)
                 return CleanStreamResult.Success(
                     playlistContent = filtered.content,
                     variants = emptyList(),
@@ -123,7 +178,7 @@ class AdBlockEngine(
         // fallback (Section 4.4) takes over from here — we report the failure
         // state so the UI can show "AD BLOCK OFF" and the player can engage
         // its segment-anomaly detector.
-        _status.value = AdBlockStatus.AD_BLOCK_OFF
+        publish(AdBlockStatus.AD_BLOCK_OFF, channel)
         return CleanStreamResult.Failure("Both proxy and manifest-rewrite strategies failed")
     }
 
@@ -188,8 +243,8 @@ class AdBlockEngine(
      * [filterPlaylist] itself stays status-free (it runs on the player's polling
      * thread). Ads stripped sets AD_FILTERED; clean sets AD_BLOCKED.
      */
-    fun reportFiltered(filtered: FilteredPlaylist) {
-        _status.value = if (filtered.containedAds) AdBlockStatus.AD_FILTERED else AdBlockStatus.AD_BLOCKED
+    fun reportFiltered(filtered: FilteredPlaylist, channel: String? = null) {
+        publish(if (filtered.containedAds) AdBlockStatus.AD_FILTERED else AdBlockStatus.AD_BLOCKED, channel)
     }
 
     /**
@@ -197,8 +252,8 @@ class AdBlockEngine(
      * seamless backup player-type swap replaced the ad pod with real content
      * (the good case that avoids the [AdBlockStatus.AD_FILTERED] stall). Green pill.
      */
-    fun reportAdBlocked() {
-        _status.value = AdBlockStatus.AD_BLOCKED
+    fun reportAdBlocked(channel: String? = null) {
+        publish(AdBlockStatus.AD_BLOCKED, channel)
     }
 
     /**
@@ -210,8 +265,8 @@ class AdBlockEngine(
      * outage; moving it to [AdBlockStatus.AD_BLOCK_OFF] makes the failure
      * visible in the on-screen pill instead.
      */
-    fun reportResolutionFailure() {
-        _status.value = AdBlockStatus.AD_BLOCK_OFF
+    fun reportResolutionFailure(channel: String? = null) {
+        publish(AdBlockStatus.AD_BLOCK_OFF, channel)
     }
 
     // ---- Strategy 1: Proxy Router ----
@@ -255,6 +310,8 @@ class AdBlockEngine(
     private fun passthrough(url: String, strategy: AdBlockStrategyResult): CleanStreamResult.Success =
         CleanStreamResult.Success(playlistContent = url, variants = emptyList(), strategyUsed = strategy)
 }
+
+private const val MAX_CHANNEL_STATUSES = 16
 
 data class AdBlockConfig(
     val strategy: AdBlockStrategy = AdBlockStrategy.PROXY_PRIMARY,
@@ -304,17 +361,22 @@ class ProxyHealthTracker(private val unhealthyThreshold: Int = 3) {
     private var consecutiveFailures = 0
     private var consecutiveSuccesses = 0
 
+    // Several channels can resolve at once in multi-stream, on different threads.
+    @Synchronized
     fun recordSuccess() {
         consecutiveSuccesses++
         consecutiveFailures = 0
     }
 
+    @Synchronized
     fun recordFailure() {
         consecutiveFailures++
         consecutiveSuccesses = 0
     }
 
+    @Synchronized
     fun isHealthy(): Boolean = consecutiveFailures < unhealthyThreshold
 
+    @Synchronized
     fun shouldNotifyDegradation(): Boolean = consecutiveFailures == unhealthyThreshold
 }

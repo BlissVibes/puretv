@@ -161,7 +161,13 @@ private val CHAT_PANEL_RADIUS = 24.dp
  *   F3     upscaling stats (mpv)  Esc    exit immersive
  */
 @Composable
-fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onRequestSignIn: () -> Unit = {}) {
+fun StreamContent(
+    koin: Koin,
+    channelLogin: String,
+    onBack: () -> Unit,
+    onRequestSignIn: () -> Unit = {},
+    onOpenMultiView: () -> Unit = {},
+) {
     val viewModel = rememberDesktopViewModel(channelLogin) {
         koin.get<StreamViewModel> { parametersOf(channelLogin) }
     }
@@ -347,6 +353,7 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
                         canFollow = state.channel != null,
                         onToggleFollow = viewModel::toggleFollow,
                         onBack = onBack,
+                        onOpenMultiView = onOpenMultiView,
                         radius = panelRadius,
                     )
                 }
@@ -539,7 +546,7 @@ fun StreamContent(koin: Koin, channelLogin: String, onBack: () -> Unit, onReques
  * is explained before it is typed. Takes no space when the room is open.
  */
 @Composable
-private fun RoomModeChips(modes: ChatRoomModes) {
+internal fun RoomModeChips(modes: ChatRoomModes) {
     val labels = remember(modes) { modes.labels() }
     if (labels.isEmpty()) return
     val c = PureTvTheme.colors
@@ -575,6 +582,7 @@ private fun TopBar(
     canFollow: Boolean,
     onToggleFollow: () -> Unit,
     onBack: () -> Unit,
+    onOpenMultiView: () -> Unit,
     radius: Dp,
 ) {
     val c = PureTvTheme.colors
@@ -615,6 +623,13 @@ private fun TopBar(
             }
         }
         AdBlockPill(adBlockStatus)
+        ExpressiveButton(
+            text = "Watch with another channel",
+            onClick = onOpenMultiView,
+            style = ExpressiveButtonStyle.Tonal,
+            size = ExpressiveButtonSize.Medium,
+            icon = ExpressiveIcons.Grid,
+        )
         ExpressiveButton(
             text = if (isFollowed) "Following" else "Follow",
             onClick = onToggleFollow,
@@ -917,7 +932,7 @@ private fun MentionsEmptyState(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun ChatMessageList(
+internal fun ChatMessageList(
     messages: List<ChatMessage>,
     onReply: (ChatMessage) -> Unit,
     modifier: Modifier = Modifier,
@@ -995,7 +1010,7 @@ private fun ChatMessageList(
 }
 
 @Composable
-private fun ChatInputBar(
+internal fun ChatInputBar(
     canChat: Boolean,
     emotes: List<PickableEmote>,
     onSend: (String) -> Unit,

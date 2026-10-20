@@ -28,10 +28,10 @@ enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
 /**
  * Owns window-chrome state (player mode, chat, maximize/minimize/fullscreen).
  *
- * FULLSCREEN — we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
+ * FULLSCREEN: we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
  * undecorated window that combination drives Windows *exclusive* fullscreen,
  * whose Direct3D surface fights the heavyweight VLC video Canvas and leaves a
- * blank/white screen — most reliably when entered from a maximized window.
+ * blank/white screen, most reliably when entered from a maximized window.
  *
  * Instead we implement *borderless windowed* fullscreen the way Electron-based
  * apps do: clear the maximized flag and stretch the (already undecorated) frame
@@ -132,7 +132,7 @@ class AppShellController(
         )
         windowState.placement = WindowPlacement.Floating
         (window as? Frame)?.let { frame ->
-            // Clear MAXIMIZED_BOTH — a maximized frame ignores setBounds — then
+            // Clear MAXIMIZED_BOTH, since a maximized frame ignores setBounds — then
             // cover the full monitor (bounds include the taskbar strip).
             frame.extendedState = Frame.NORMAL
             frame.bounds = frame.graphicsConfiguration.bounds

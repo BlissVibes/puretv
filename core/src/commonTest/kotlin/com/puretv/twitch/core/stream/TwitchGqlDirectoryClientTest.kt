@@ -291,6 +291,55 @@ class TwitchGqlDirectoryClientTest {
         assertEquals(setOf("chan1", "chan101"), live.map { it.userLogin }.toSet())
     }
 
+    @Test fun videosMapIntoHelixShapedVideos() = runTest {
+        var variables: JsonObject? = null
+        val api = client { request ->
+            variables = request.bodyJson()["variables"]?.jsonObject
+            respond(
+                """
+                {"data":{"user":{"videos":{"edges":[
+                  {"node":{"id":"2904296965","title":"spamming runs","lengthSeconds":30959,"createdAt":"2026-10-18T16:16:06Z",
+                    "publishedAt":"2026-10-18T16:16:06Z","viewCount":227578,"broadcastType":"ARCHIVE",
+                    "previewThumbnailURL":"https://static-cdn.jtvnw.net/cf_vods/d2nvs/abc_shroud//thumb/thumb0-320x180.jpg",
+                    "owner":{"id":"37402112","login":"shroud","displayName":"shroud"}}},
+                  null,
+                  {"node":{"title":"no id"}}
+                ]}}}}
+                """.trimIndent(),
+                HttpStatusCode.OK,
+                jsonHeaders,
+            )
+        }
+
+        val videos = api.videosForUser("37402112", com.puretv.twitch.core.model.VideoType.ARCHIVE, first = 500)
+
+        assertEquals("ARCHIVE", variables?.get("type")?.jsonPrimitive?.content)
+        assertEquals("100", variables?.get("first")?.jsonPrimitive?.content)
+        assertEquals("37402112", variables?.get("id")?.jsonPrimitive?.content)
+        val v = videos.single()
+        assertEquals("2904296965", v.id)
+        assertEquals("37402112", v.userId)
+        assertEquals("shroud", v.userLogin)
+        assertEquals(com.puretv.twitch.core.model.VideoType.ARCHIVE, v.type)
+        assertEquals(30959L, v.durationSeconds)
+        assertEquals(227578, v.viewCount)
+        assertEquals(
+            "https://static-cdn.jtvnw.net/cf_vods/d2nvs/abc_shroud//thumb/thumb0-%{width}x%{height}.jpg",
+            v.thumbnailUrl,
+            "Helix VOD art is a percent-brace template",
+        )
+    }
+
+    @Test fun allVideoTypesSendNoTypeVariable() = runTest {
+        var variables: JsonObject? = null
+        val api = client { request ->
+            variables = request.bodyJson()["variables"]?.jsonObject
+            respond("""{"data":{"user":null}}""", HttpStatusCode.OK, jsonHeaders)
+        }
+        assertEquals(emptyList(), api.videosForUser("1", null))
+        assertNull(variables?.get("type"))
+    }
+
     @Test fun noLoginsMeansNoRequest() = runTest {
         var calls = 0
         val api = client { calls++; respond("{}", HttpStatusCode.OK, jsonHeaders) }

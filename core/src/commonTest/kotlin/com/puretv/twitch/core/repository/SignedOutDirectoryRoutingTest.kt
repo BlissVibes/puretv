@@ -5,6 +5,7 @@ import com.puretv.twitch.core.api.HelixApiException
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.di.buildKtorClient
 import com.puretv.twitch.core.stream.StreamResolver
+import com.puretv.twitch.core.stream.VodResolver
 import com.puretv.twitch.core.stream.TwitchGqlClient
 import com.puretv.twitch.core.stream.TwitchGqlDirectoryClient
 import io.ktor.client.engine.mock.MockEngine
@@ -25,6 +26,7 @@ import kotlin.test.assertFailsWith
  * Built on the real [buildKtorClient] so the Helix response validator runs.
  */
 class SignedOutDirectoryRoutingTest {
+    // VodRepository is in this package; VodResolver is imported above.
     private val jsonHeaders = headersOf(HttpHeaders.ContentType, "application/json")
 
     // One body that satisfies every directory query's data shape.
@@ -112,6 +114,34 @@ class SignedOutDirectoryRoutingTest {
         h.channels.topGames()
         assertEquals(1, h.helixCalls.get(), "signing in moves the next read to Helix")
         assertEquals(1, h.gqlCalls.get())
+    }
+
+    @Test fun videosRouteByTokenAndSignedOutHasNoNextPage() = runTest {
+        suspend fun run(token: String?): Triple<Int, Int, String?> {
+            val helix = CallCounter()
+            val gql = CallCounter()
+            val engine = MockEngine { request ->
+                if (request.url.host == "gql.twitch.tv") {
+                    gql.incrementAndGet()
+                    respond("""{"data":{"user":{"videos":{"edges":[{"node":{"id":"7"}}]}}}}""", HttpStatusCode.OK, jsonHeaders)
+                } else {
+                    helix.incrementAndGet()
+                    respond("""{"data":[],"pagination":{"cursor":"h"}}""", HttpStatusCode.OK, jsonHeaders)
+                }
+            }
+            val client = buildKtorClient(engine)
+            val repo = VodRepository(
+                TwitchApiClient(client) { token },
+                VodResolver(client, TwitchGqlClient(client)),
+                TwitchGqlDirectoryClient(client),
+            )
+            val page = repo.videosFor("42")
+            return Triple(helix.get(), gql.get(), page.cursor).also {
+                if (token == null) assertEquals(listOf("7"), page.videos.map { v -> v.id })
+            }
+        }
+        assertEquals(Triple(0, 1, null), run(null), "signed out: GQL only, no cursor")
+        assertEquals(Triple(1, 0, "h"), run("tok"), "signed in: Helix only, cursor kept")
     }
 
     @Test fun withoutADirectoryEverythingStaysOnHelix() = runTest {

@@ -4,6 +4,8 @@ import com.puretv.twitch.core.api.ChannelSearchResult
 import com.puretv.twitch.core.model.ChannelInfo
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.model.VideoType
 import kotlinx.serialization.Serializable
 
 /**
@@ -152,6 +154,34 @@ internal data class GqlUserData(val user: GqlUser? = null)
 internal data class GqlUserWithStream(val stream: GqlStreamNode? = null)
 
 @Serializable
+internal data class GqlVideoOwner(val id: String? = null, val login: String? = null, val displayName: String? = null)
+
+@Serializable
+internal data class GqlVideoNode(
+    val id: String? = null,
+    val title: String? = null,
+    val lengthSeconds: Long? = null,
+    val createdAt: String? = null,
+    val publishedAt: String? = null,
+    val viewCount: Int? = null,
+    val broadcastType: String? = null,
+    val previewThumbnailURL: String? = null,
+    val owner: GqlVideoOwner? = null,
+)
+
+@Serializable
+internal data class GqlVideoEdge(val node: GqlVideoNode? = null)
+
+@Serializable
+internal data class GqlVideoConnection(val edges: List<GqlVideoEdge?> = emptyList())
+
+@Serializable
+internal data class GqlVideosUser(val videos: GqlVideoConnection? = null)
+
+@Serializable
+internal data class GqlVideosData(val user: GqlVideosUser? = null)
+
+@Serializable
 internal data class GqlUsersData(val users: List<GqlUserWithStream?> = emptyList())
 
 // ---- Mapping into the Helix-shaped core models ----
@@ -166,6 +196,33 @@ internal fun toSizeTemplate(url: String?): String =
     url.orEmpty().replace(SIZE_SUFFIX, "-{width}x{height}.$1")
 
 private val SIZE_SUFFIX = Regex("""-\d+x\d+\.(\w+)$""")
+
+/**
+ * Helix hands back VOD art as `...-%{width}x%{height}.jpg` (percent-brace, unlike
+ * stream art), and the screens fill that form, so restore it.
+ */
+internal fun toVodSizeTemplate(url: String?): String =
+    url.orEmpty().replace(SIZE_SUFFIX, "-%{width}x%{height}.$1")
+
+internal fun GqlVideoNode.toVideoInfo(fallbackUserId: String): VideoInfo? {
+    val videoId = id?.takeIf { it.isNotBlank() } ?: return null
+    val login = owner?.login.orEmpty()
+    return VideoInfo(
+        id = videoId,
+        userId = owner?.id?.takeIf { it.isNotBlank() } ?: fallbackUserId,
+        userLogin = login,
+        userName = owner?.displayName?.takeIf { it.isNotBlank() } ?: login,
+        title = title.orEmpty(),
+        description = "",
+        type = VideoType.fromApi(broadcastType.orEmpty()),
+        durationSeconds = lengthSeconds ?: 0L,
+        createdAt = createdAt.orEmpty(),
+        publishedAt = publishedAt.orEmpty(),
+        thumbnailUrl = toVodSizeTemplate(previewThumbnailURL),
+        viewCount = viewCount ?: 0,
+        mutedSegments = emptyList(),
+    )
+}
 
 /** Null when the node lacks what a stream card needs (an id and a broadcaster login). */
 internal fun GqlStreamNode.toStreamInfo(): StreamInfo? {

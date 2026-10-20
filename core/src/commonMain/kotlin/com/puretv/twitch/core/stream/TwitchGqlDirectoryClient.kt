@@ -5,6 +5,8 @@ import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.model.ChannelInfo
 import com.puretv.twitch.core.model.GameInfo
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.model.VideoType
 import io.ktor.client.HttpClient
 import io.ktor.client.request.header
 import io.ktor.client.request.post
@@ -107,6 +109,30 @@ class TwitchGqlDirectoryClient(
     }
 
     /**
+     * A channel's most recent past broadcasts (or highlights, or uploads), newest
+     * first, one page of at most [MAX_PAGE]. [type] null means every kind, like
+     * Helix "all". Looked up by the numeric user id, as Helix is.
+     */
+    suspend fun videosForUser(userId: String, type: VideoType? = null, first: Int = 20): List<VideoInfo> {
+        if (userId.isBlank()) return emptyList()
+        val gqlType = when (type) {
+            VideoType.ARCHIVE -> "ARCHIVE"
+            VideoType.HIGHLIGHT -> "HIGHLIGHT"
+            VideoType.UPLOAD -> "UPLOAD"
+            VideoType.UNKNOWN, null -> null
+        }
+        val data: GqlVideosData = execute(
+            VIDEOS_QUERY,
+            buildJsonObject {
+                put("id", userId)
+                put("first", first.coerceIn(1, MAX_PAGE))
+                gqlType?.let { put("type", it) }
+            },
+        )
+        return data.user?.videos?.edges.orEmpty().mapNotNull { it?.node?.toVideoInfo(userId) }
+    }
+
+    /**
      * Which of [logins] are live right now, as Helix-shaped streams. Asks in
      * chunks of [MAX_PAGE] side by side; unknown logins come back as null
      * entries and are dropped, offline ones have no stream.
@@ -196,6 +222,11 @@ internal const val SEARCH_QUERY =
 internal const val USER_QUERY =
     "query(\$login: String!) { user(login: \$login) { id login displayName description " +
         "profileImageURL(width: 300) offlineImageURL createdAt roles { isPartner isAffiliate } } }"
+
+internal const val VIDEOS_QUERY =
+    "query(\$id: ID!, \$first: Int, \$type: BroadcastType) { user(id: \$id) { videos(first: \$first, type: \$type, sort: TIME) " +
+        "{ edges { node { id title lengthSeconds createdAt publishedAt viewCount broadcastType " +
+        "previewThumbnailURL(width: 320, height: 180) owner { id login displayName } } } } } }"
 
 internal const val USERS_QUERY =
     "query(\$logins: [String!]) { users(logins: \$logins) { stream { $STREAM_FIELDS } } }"

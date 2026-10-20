@@ -112,8 +112,7 @@ import com.puretv.twitch.desktop.ui.MiniControlStrip
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
 import com.puretv.twitch.desktop.ui.ShortcutAction
-import com.puretv.twitch.desktop.ui.SleepTimerController
-import com.puretv.twitch.desktop.ui.SleepUi
+import com.puretv.twitch.desktop.ui.SleepSession
 import com.puretv.twitch.desktop.ui.StreamViewModel
 import com.puretv.twitch.desktop.ui.chat.ComposerKeyAction
 import com.puretv.twitch.desktop.ui.chat.composerKeyAction
@@ -192,6 +191,8 @@ fun StreamContent(
     onRequestSignIn: () -> Unit = {},
     onFlip: (String) -> Unit = {},
     onOpenMultiView: () -> Unit = {},
+    // Owned by App, so the timer carries on into multi-stream.
+    sleep: SleepSession = remember { SleepSession() },
 ) {
     val viewModel = rememberDesktopViewModel(channelLogin) {
         koin.get<StreamViewModel> { parametersOf(channelLogin) }
@@ -251,8 +252,6 @@ fun StreamContent(
 
     // Sleep timer (Z, or the Playback menu). Mouse moves and key presses are the "still
     // here" signal: in the last minute they add 15 minutes. At the end the stream is left.
-    val sleepController = remember { SleepTimerController(System::currentTimeMillis) }
-    var sleepUi by remember { mutableStateOf(SleepUi()) }
     val latestOnBack by rememberUpdatedState(onBack)
 
     fun resetControls() {
@@ -264,15 +263,14 @@ fun StreamContent(
                 controlsVisible = false
             }
         }
-        sleepController.onActivity()?.let { sleepUi = it }
+        sleep.onActivity()
     }
     LaunchedEffect(mode) { resetControls() }
 
-    LaunchedEffect(sleepUi.running) {
-        while (sleepUi.running) {
+    LaunchedEffect(sleep.ui.running) {
+        while (sleep.ui.running) {
             delay(1_000)
-            val next = sleepController.tick()
-            sleepUi = next
+            val next = sleep.tick()
             if (next.expired) {
                 shell.exitImmersive()
                 latestOnBack()
@@ -370,7 +368,7 @@ fun StreamContent(
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
             // Any key press is the viewer being there (sleep timer), typing in chat included.
-            if (e.id == KeyEvent.KEY_PRESSED) sleepController.onActivity()?.let { sleepUi = it }
+            if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
             if (latestChatFocused.value) {
                 heldKey = 0
                 return@KeyEventDispatcher false
@@ -427,7 +425,7 @@ fun StreamContent(
                     resetControls() // the volume slider is the feedback
                 }
                 ShortcutAction.ToggleMute -> { latestViewModel.value.toggleMute(); resetControls() }
-                ShortcutAction.CycleSleepTimer -> { sleepUi = sleepController.cycle(); resetControls() }
+                ShortcutAction.CycleSleepTimer -> { sleep.cycle(); resetControls() }
                 ShortcutAction.ToggleMini -> shell.setPlayerMode(if (m == PlayerMode.MINI) PlayerMode.DEFAULT else PlayerMode.MINI)
             }
             true
@@ -585,15 +583,15 @@ fun StreamContent(
                             scalingEnabled = vlcPlayer.supportsUpscaling,
                             backend = appSettings.playbackBackend,
                             onBackendSelected = viewModel::setPlaybackBackend,
-                            sleepMinutes = sleepUi.minutes,
-                            onSleepSelected = { sleepUi = sleepController.set(it) },
+                            sleepMinutes = sleep.ui.minutes,
+                            onSleepSelected = sleep::set,
                         )
                     }
 
                     // Flip banner and the sleep timer's last-minute warning, then the
                     // shortcuts list: between the video and the controls like the menu above.
                     PlayerNoticeStrip(
-                        text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleepUi.warning,
+                        text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleep.ui.warning,
                     )
                     ShortcutsSheet(visible = helpOpen)
                 }

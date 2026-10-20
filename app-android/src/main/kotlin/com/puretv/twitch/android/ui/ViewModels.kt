@@ -37,8 +37,10 @@ import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.EmoteRepository
 import com.puretv.twitch.core.emotes.PickableEmote
 import com.puretv.twitch.core.emotes.ResolvedEmote
+import com.puretv.twitch.core.emotes.SevenTvEmoteDelta
 import com.puretv.twitch.core.emotes.SevenTvEventClient
 import com.puretv.twitch.core.emotes.applySevenTvDelta
+import com.puretv.twitch.core.emotes.replaySevenTvDeltas
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.buildPickableEmotes
 import com.puretv.twitch.core.emotes.prioritizeThirdParty
@@ -422,6 +424,8 @@ class StreamViewModel(
     // the load coroutine) so a live 7TV change can fold into the channel set and
     // rebuild without fetching again. Main dispatcher only, like the identity above.
     private var tpChannelEmotes: List<ChannelEmote> = emptyList()
+    /** Live 7TV changes this stream, replayed over each third-party list that finishes loading. */
+    private val liveEmoteDeltas = ArrayList<SevenTvEmoteDelta>()
     private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
     private var twitchChannelEmotes: List<ChannelEmote> = emptyList()
     private var twitchGlobalEmotes: List<ChannelEmote> = emptyList()
@@ -490,10 +494,14 @@ class StreamViewModel(
                 }
             }
 
+            // Live 7TV emote changes for as long as this stream is open. Connected before
+            // the emote lists load, so a change pushed meanwhile is replayed over them.
+            channel?.let { sevenTvEventClient.connect(it.id) }
+
             // Third-party emotes: the copy cached from the last visit first, so the
             // first chat lines already render, then the fresh set.
             emoteRepository.thirdPartyEmotes(channel?.id, channel?.login).collect { emotes ->
-                tpChannelEmotes = emotes.channel
+                tpChannelEmotes = replaySevenTvDeltas(emotes.channel, liveEmoteDeltas)
                 tpGlobalEmotes = emotes.global
                 rebuildEmotes()
                 openTiming.mark("emotes_ready")
@@ -504,11 +512,10 @@ class StreamViewModel(
             twitchGlobalEmotes = twitchGlobalLookup.await()
             twitchChannelEmotes = twitchChannelLookup.await()
             rebuildEmotes()
-            // Live 7TV emote changes for as long as this stream is open.
-            channel?.let { sevenTvEventClient.connect(it.id) }
         }
         viewModelScope.launch {
             sevenTvEventClient.updates.collect { delta ->
+                liveEmoteDeltas += delta
                 tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
                 rebuildEmotes()
             }
@@ -818,6 +825,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setChatTextSize(size: ChatTextSize) = viewModelScope.launch {
         settingsStore.update { it.copy(chatFontSize = size.sp) }
+    }
+
+    fun setShowBadges(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(showBadges = enabled) }
     }
 
     fun setPreferredQuality(quality: com.puretv.twitch.core.model.StreamQuality) = viewModelScope.launch {

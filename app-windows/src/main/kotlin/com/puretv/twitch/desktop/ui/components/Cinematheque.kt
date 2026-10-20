@@ -451,8 +451,9 @@ fun ChatMessageRow(
         }
 
         // A 7TV name paint is a span brush, which wins over the plain name colour
-        // and fits its gradient to the name. Built once per row and paint.
-        val nameBrush = rememberNamePaintBrush(namePaint)
+        // and fits its gradient to the name. Built once per row and paint, and lifted
+        // when it is too close to the chat background to read.
+        val nameBrush = rememberNamePaintBrush(namePaint, c.surfaceContainer)
         val paintedName = remember(message.displayName, nameBrush) {
             nameBrush?.let { brush ->
                 buildAnnotatedString { withStyle(SpanStyle(brush = brush)) { append(message.displayName) } }

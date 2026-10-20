@@ -5,6 +5,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
+import io.ktor.client.statement.bodyAsText
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
 import kotlinx.coroutines.CancellationException
@@ -26,6 +27,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 /** A live change to a channel's active 7TV emote set, pushed over the EventAPI. */
 data class SevenTvEmoteDelta(
@@ -33,6 +35,8 @@ data class SevenTvEmoteDelta(
     val added: List<ChannelEmote> = emptyList(),
     /** Emotes removed from the set (or renamed-out). */
     val removed: List<ChannelEmote> = emptyList(),
+    /** Twitch id of the channel this change was pushed for, so a late one can be told from the current channel's. */
+    val channelTwitchId: String = "",
 )
 
 /**
@@ -84,46 +88,73 @@ class SevenTvEventClient(
     fun connect(channelTwitchId: String, cosmetics: Boolean = false) {
         connectionJob?.cancel()
         connectionJob = scope.launch {
-            // Resolve the emote-set id once per channel (it's stable for the session;
-            // a broadcaster swapping sets is signalled separately and is out of scope).
-            val setId = runCatching { fetchEmoteSetId(channelTwitchId) }.getOrNull()
-            val subscriptions = buildList {
-                if (setId != null) add(emoteSetSubscribeFrame(setId))
-                if (cosmetics) COSMETIC_TYPES.forEach { add(channelSubscribeFrame(it, channelTwitchId)) }
-            }
-            if (subscriptions.isEmpty()) return@launch
-            var backoffMs = INITIAL_BACKOFF_MS
+            // The emote-set id is stable for the session (a broadcaster swapping sets is
+            // signalled separately and is out of scope), but the lookup can fail on a
+            // transient 7tv.io error, so it is retried on every dial until it lands.
+            var setId: String? = null
+            var setResolved = false
+            val backoff = ReconnectBackoff()
+            var lookupAttempts = 0
             while (isActive) {
-                try {
-                    httpClient.webSocket(WS_ENDPOINT) {
-                        backoffMs = INITIAL_BACKOFF_MS // a healthy connect resets the backoff
-                        // Subscribe right away (again on every redial); the server
-                        // tolerates SUBSCRIBE sent before we read its HELLO and
-                        // replies with an ACK.
-                        subscriptions.forEach { send(Frame.Text(it)) }
-                        while (isActive) {
-                            // Server HEARTBEATs about every 48s; no frame for READ_IDLE_MS
-                            // means a half-open socket, so break to reconnect.
-                            val frame = withTimeoutOrNull(READ_IDLE_MS) {
-                                incoming.receiveCatching().getOrNull()
-                            } ?: break
-                            if (frame is Frame.Text) {
-                                when (val event = parseFrame(frame.readText(), setId)) {
-                                    is SevenTvEmoteDelta ->
-                                        if (event.added.isNotEmpty() || event.removed.isNotEmpty()) _updates.emit(event)
-                                    is SevenTvCosmeticEvent -> if (cosmetics) _cosmetics.emit(event)
+                if (!setResolved) {
+                    try {
+                        setId = fetchEmoteSetId(channelTwitchId)
+                        setResolved = true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Retry on the next pass, but not for the whole stream: after a few
+                        // failures treat the channel as having no 7TV set.
+                        if (++lookupAttempts >= MAX_LOOKUP_ATTEMPTS) setResolved = true
+                    }
+                }
+                val subscriptions = buildList {
+                    setId?.let { add(emoteSetSubscribeFrame(it)) }
+                    if (cosmetics) COSMETIC_TYPES.forEach { add(channelSubscribeFrame(it, channelTwitchId)) }
+                }
+                // A channel with no linked set and no cosmetics has nothing to listen for.
+                if (setResolved && subscriptions.isEmpty()) return@launch
+                if (subscriptions.isNotEmpty()) {
+                    val dialedAt = TimeSource.Monotonic.markNow()
+                    try {
+                        httpClient.webSocket(WS_ENDPOINT) {
+                            // Subscribe right away (again on every redial); the server
+                            // tolerates SUBSCRIBE sent before we read its HELLO and
+                            // replies with an ACK.
+                            subscriptions.forEach { send(Frame.Text(it)) }
+                            // Without the set id this socket only carries cosmetics, so
+                            // cut it short to look the set up again.
+                            val idleMs = if (setResolved) READ_IDLE_MS else LOOKUP_RETRY_MS
+                            while (isActive) {
+                                // Server HEARTBEATs about every 48s; no frame for the idle
+                                // window means a half-open socket, so break to reconnect.
+                                val frame = withTimeoutOrNull(idleMs) {
+                                    incoming.receiveCatching().getOrNull()
+                                } ?: break
+                                if (frame is Frame.Text) {
+                                    val text = frame.readText()
+                                    // A subscribe ACK or a dispatch proves the connection is
+                                    // healthy; a socket that opens (HELLO) and closes straight
+                                    // away keeps backing off.
+                                    if (isHealthyFrame(text)) backoff.onHealthy()
+                                    when (val event = parseFrame(text, setId)) {
+                                        is SevenTvEmoteDelta ->
+                                            if (event.added.isNotEmpty() || event.removed.isNotEmpty()) _updates.emit(event.copy(channelTwitchId = channelTwitchId))
+                                        is SevenTvCosmeticEvent -> if (cosmetics) _cosmetics.emit(event)
+                                    }
                                 }
                             }
                         }
+                    } catch (e: CancellationException) {
+                        throw e // disconnect()/scope cancellation, do NOT reconnect
+                    } catch (_: Exception) {
+                        // fall through to backoff + redial
                     }
-                } catch (e: CancellationException) {
-                    throw e // disconnect()/scope cancellation — do NOT reconnect
-                } catch (_: Exception) {
-                    // fall through to backoff + redial
+                    // A connection that stayed up a while was fine even if it was quiet.
+                    backoff.onSessionEnded(dialedAt.elapsedNow().inWholeMilliseconds)
                 }
                 if (!isActive) break
-                delay(backoffMs + Random.nextLong(0, BACKOFF_JITTER_MS))
-                backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+                delay(backoff.nextDelayMs(Random.nextLong(0, BACKOFF_JITTER_MS)))
             }
         }
     }
@@ -135,8 +166,13 @@ class SevenTvEventClient(
     }
 
     private suspend fun fetchEmoteSetId(channelTwitchId: String): String? {
-        val raw: JsonObject = httpClient.get("https://7tv.io/v3/users/twitch/$channelTwitchId").body()
-        return raw["emote_set"]?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+        val response = httpClient.get("https://7tv.io/v3/users/twitch/$channelTwitchId")
+        return parseEmoteSetLookup(response.status.value, response.bodyAsText(), json)
+    }
+
+    private fun isHealthyFrame(text: String): Boolean {
+        val op = runCatching { json.parseToJsonElement(text).jsonObject["op"]?.jsonPrimitive?.intOrNull }.getOrNull()
+        return op == OP_DISPATCH || op == OP_ACK
     }
 
     private fun emoteSetSubscribeFrame(setId: String): String =
@@ -205,12 +241,58 @@ class SevenTvEventClient(
         const val TYPE_EMOTE_SET_UPDATE = "emote_set.update"
         const val OP_DISPATCH = 0
         const val OP_SUBSCRIBE = 35
+        const val OP_ACK = 5
+        const val MAX_LOOKUP_ATTEMPTS = 5
         val COSMETIC_TYPES = listOf(TYPE_COSMETIC_CREATE, TYPE_ENTITLEMENT_CREATE, TYPE_ENTITLEMENT_DELETE)
-        const val INITIAL_BACKOFF_MS = 1_000L
-        const val MAX_BACKOFF_MS = 30_000L
         const val BACKOFF_JITTER_MS = 500L
+        const val LOOKUP_RETRY_MS = 30_000L
         // > 7TV's heartbeat (about every 48s, `heartbeat_interval` in HELLO) with
         // slack, so a quiet-but-healthy subscription isn't mistaken for a dead socket.
         const val READ_IDLE_MS = 90_000L
+    }
+}
+
+/**
+ * Resolves the 7TV user lookup into the channel's emote-set id. A 404 or a body that
+ * is not the expected JSON means the channel has no 7TV set (null, settled for good);
+ * any other failure status throws so the caller retries.
+ */
+internal fun parseEmoteSetLookup(status: Int, body: String, json: Json): String? {
+    if (status == 404) return null
+    if (status !in 200..299) error("7TV lookup failed with HTTP $status")
+    val raw = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+    return raw["emote_set"]?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+}
+
+/**
+ * Reconnect delay for [SevenTvEventClient]: doubles up to a cap, and goes back to the
+ * start only once the connection has proved healthy since the last dial (the server
+ * acknowledged a subscription or pushed an event, or the socket stayed up for a while).
+ */
+internal class ReconnectBackoff(
+    private val initialMs: Long = 1_000L,
+    private val maxMs: Long = 30_000L,
+    private val healthyAfterMs: Long = 10_000L,
+) {
+    private var currentMs = initialMs
+    private var healthy = false
+
+    /** The server acknowledged a subscription or pushed an event on this connection. */
+    fun onHealthy() {
+        healthy = true
+    }
+
+    /** A connection that lived for [livedMs] counts as healthy once it lasted long enough. */
+    fun onSessionEnded(livedMs: Long) {
+        if (livedMs >= healthyAfterMs) healthy = true
+    }
+
+    /** The delay to wait before the next dial, plus [jitterMs]; advances the backoff. */
+    fun nextDelayMs(jitterMs: Long = 0L): Long {
+        if (healthy) currentMs = initialMs
+        healthy = false
+        val delayMs = currentMs + jitterMs
+        currentMs = (currentMs * 2).coerceAtMost(maxMs)
+        return delayMs
     }
 }

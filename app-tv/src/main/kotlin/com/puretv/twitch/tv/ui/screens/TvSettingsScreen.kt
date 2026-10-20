@@ -134,6 +134,14 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
         TvDivider()
 
         TvPanel {
+            ChatBadgesSection(
+                enabled = state.settings.showBadges,
+                onEnabledChange = viewModel::setShowBadges,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
             ChatPlacementSection(
                 mode = state.settings.tvChatMode,
                 onModeSelect = viewModel::setTvChatMode,
@@ -364,6 +372,30 @@ private fun RemoteControlSection(
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────
+
+@Composable
+private fun ChatBadgesSection(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    val c = PureTvTvTheme.colors
+    Column {
+        Text("Chat badges", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Show badges", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "Show subscriber, moderator and other badges next to names. Off keeps chat to names and messages.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = enabled, onCheckedChange = onEnabledChange)
+        }
+    }
+}
 
 @Composable
 private fun ChatTextSizeSection(selected: ChatTextSize, onSelect: (ChatTextSize) -> Unit) {

@@ -5,6 +5,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import com.puretv.twitch.core.emotes.SevenTvPaint
 import com.puretv.twitch.core.emotes.SevenTvPaintFunction
 import com.puretv.twitch.core.emotes.SevenTvPaintStop
@@ -173,5 +174,54 @@ class NamePaintBrushesTest {
         val changed = p.copy(stops = listOf(SevenTvPaintStop(0f, green), SevenTvPaintStop(1f, blue)))
         val spec = assertIs<NamePaintSpec.Linear>(NamePaintBrushes.specFor(changed))
         assertEquals(Color(green), spec.colors.first())
+    }
+
+    // ---- Contrast guard ----
+
+    private val darkBackground = Color(0xFF14141A)
+    private val lightBackground = Color(0xFFF4F4F8)
+
+    @Test fun aPaintWithGoodContrastIsUnchanged() {
+        val spec = NamePaintSpec.Solid(Color(0xFFFFD54F))
+        assertEquals(spec, spec.withContrastOn(darkBackground))
+    }
+
+    @Test fun aDarkPaintOnADarkThemeIsLifted() {
+        val spec = NamePaintSpec.Solid(Color(0xFF202030))
+        val lifted = assertIs<NamePaintSpec.Solid>(spec.withContrastOn(darkBackground))
+        assertTrue(contrastRatio(lifted.color, darkBackground) >= MIN_NAME_PAINT_CONTRAST)
+        assertTrue(lifted.color.luminance() > spec.color.luminance())
+    }
+
+    @Test fun aLightPaintOnALightThemeIsDarkened() {
+        val spec = NamePaintSpec.Solid(Color(0xFFF0F0A0))
+        val lifted = assertIs<NamePaintSpec.Solid>(spec.withContrastOn(lightBackground))
+        assertTrue(contrastRatio(lifted.color, lightBackground) >= MIN_NAME_PAINT_CONTRAST)
+        assertTrue(lifted.color.luminance() < spec.color.luminance())
+    }
+
+    @Test fun aGradientKeepsItsShapeWhileItsColoursMoveTogether() {
+        val spec = NamePaintSpec.Linear(
+            angle = 90,
+            colors = listOf(Color(0xFF101020), Color(0xFF303060)),
+            stops = listOf(0f, 1f),
+            from = 0f,
+            to = 1f,
+            repeat = false,
+        )
+        val lifted = assertIs<NamePaintSpec.Linear>(spec.withContrastOn(darkBackground))
+        assertEquals(spec.stops, lifted.stops)
+        assertEquals(spec.angle, lifted.angle)
+        assertTrue(lifted.colors.all { it.luminance() > Color(0xFF101020).luminance() })
+        val mean = lifted.colors.map { it.luminance() }.average().toFloat()
+        assertTrue((mean + 0.05f) / (darkBackground.luminance() + 0.05f) >= MIN_NAME_PAINT_CONTRAST)
+    }
+
+    @Test fun brushForLiftsAPaintOnlyWhenGivenABackground() {
+        val dim = paint(id = "dim", function = SevenTvPaintFunction.URL, argb = 0xFF101018.toInt())
+        val plain = assertIs<SolidColor>(NamePaintBrushes.brushFor(dim))
+        val lifted = assertIs<SolidColor>(NamePaintBrushes.brushFor(dim, darkBackground))
+        assertEquals(Color(0xFF101018), plain.value)
+        assertTrue(lifted.value.luminance() > plain.value.luminance())
     }
 }

@@ -32,6 +32,7 @@ import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.platform.WindowsStartup
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
+import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.ui.App
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import io.ktor.client.HttpClient
@@ -117,6 +118,7 @@ fun main(args: Array<String>) {
 
     val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()
     val localStreamProxy = koinApp.koin.get<LocalStreamProxy>()
+    val vlcEngine = koinApp.koin.get<VlcEngine>()
     Runtime.getRuntime().addShutdownHook(Thread {
         // The stores now persist off the UI thread via a conflated async writer; flush
         // any pending snapshot so a change made right before quitting is still durable.
@@ -128,6 +130,7 @@ fun main(args: Array<String>) {
         runCatching { koinApp.koin.get<LiveNotifyFileStore>().flush() }
         runCatching { runBlocking { localStreamProxy.stop() } }
         runCatching { playerProvider.releaseIfCreated() }
+        runCatching { vlcEngine.releaseIfBuilt() }
     })
 
     // Create icon once before the Compose application loop so it isn't
@@ -265,6 +268,7 @@ fun main(args: Array<String>) {
     // which flushes the persistence stores.
     runCatching { runBlocking { withTimeoutOrNull(3_000) { localStreamProxy.stop() } } }
     runCatching { playerProvider.releaseIfCreated() }
+    runCatching { vlcEngine.releaseIfBuilt() }
     exitProcess(0)
 }
 

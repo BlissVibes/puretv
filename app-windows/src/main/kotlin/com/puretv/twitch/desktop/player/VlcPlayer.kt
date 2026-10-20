@@ -4,7 +4,6 @@ import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import uk.co.caprica.vlcj.factory.MediaPlayerFactory
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import uk.co.caprica.vlcj.player.base.State
@@ -31,36 +30,18 @@ import javax.swing.SwingUtilities
  * safe to publish from any thread since [MutableStateFlow] is thread-safe.
  */
 class VlcPlayer(
-    // Extra libVLC instance arguments, read once when the instance is built. The
-    // audio normalizer's compressor goes here (AudioNormalizerProfile.vlcArgs):
-    // VLC 3.0.23 only loads audio filters per instance, so it applies after a restart.
-    private val extraArgs: List<String> = emptyList(),
+    // The shared libVLC instance (see VlcEngine), which owns the bundled-VLC lookup,
+    // the cache arguments and the audio normalizer. The single-stream player and
+    // every multi-stream tile each make their own media player from it.
+    private val engine: VlcEngine,
+    // A named libVLC audio output for this player alone, or null for VLC's default.
+    // See [TILE_AUDIO_OUTPUT]: the default output shares one volume across players.
+    audioOutput: String? = null,
 ) : DesktopPlayer {
 
-    // Must be initialised before `factory` so jna.library.path is set before
-    // VLCJ's JNA binding loads libvlc.dll.  Kotlin initialises properties in
-    // declaration order within the class body.
-    @Suppress("unused")
-    private val vlcBundledDir: String? = detectBundledVlc()
-
-    /**
-     * `--no-video-title-show`     — suppress VLC's on-video filename overlay.
-     * `--network-caching=2000`    — 2s network buffer; smooths over Twitch's
-     *                               variable segment delivery without adding
-     *                               noticeable latency to a live stream.
-     * `--live-caching=1000`       — separate, shorter buffer specifically for
-     *                               live sources.
-     * `--sout-mux-caching=500`    — output muxer cache; keeps A/V sync tight.
-     */
-    private val factory: MediaPlayerFactory? = buildFactory(extraArgs)
-        ?: if (extraArgs.isEmpty()) null else {
-            // An extra argument libVLC refuses makes it refuse to start at all;
-            // playing without the extras beats not playing.
-            System.err.println("VLC rejected the extra arguments $extraArgs, starting without them")
-            buildFactory(emptyList())
-        }
-
-    private val mediaPlayer: EmbeddedMediaPlayer? = factory?.mediaPlayers()?.newEmbeddedMediaPlayer()
+    private val mediaPlayer: EmbeddedMediaPlayer? = engine.newEmbeddedPlayer()?.also { mp ->
+        if (audioOutput != null) runCatching { mp.audio().setOutput(audioOutput) }
+    }
 
     private val _status = MutableStateFlow(
         if (mediaPlayer == null) PlayerStatus(
@@ -144,9 +125,8 @@ class VlcPlayer(
         check(SwingUtilities.isEventDispatchThread()) { "attachToPanel must be called on the Swing EDT" }
         if (attachedComponent === panel) return
         val mp = mediaPlayer ?: return
-        val f = factory ?: return
         // VLCJ 4.x: ComponentIdVideoSurface takes a native window handle (long),
-        // not an AWT Component. Use the factory's videoSurfaces() factory to mint
+        // not an AWT Component. Use the engine's videoSurfaces() factory to mint
         // a platform-appropriate surface (Win32/X11/macOS) bound to this Canvas.
         //
         // CRITICAL: VLCJ doesn't actually bind to the native handle here — it
@@ -155,7 +135,7 @@ class VlcPlayer(
         // isDisplayable here to avoid setting a stale surface, AND the play()
         // call below re-checks just before VLC dereferences the handle.
         if (!panel.isDisplayable) return
-        mp.videoSurface().set(f.videoSurfaces().newVideoSurface(panel))
+        mp.videoSurface().set(engine.newVideoSurface(panel))
         attachedComponent = panel
         // Drain any URL that was queued by `play()` before we had a surface to
         // render into — common on first stream open, where ViewModel.init
@@ -282,45 +262,23 @@ class VlcPlayer(
 
     override fun release() {
         val mp = mediaPlayer ?: return
-        val f = factory ?: return
+        // Only this player's own media player; libVLC belongs to the engine.
         SwingUtilities.invokeLater {
             mp.controls().stop()
             mp.release()
-            f.release()
         }
+    }
+
+    /**
+     * Mutes or unmutes without touching the remembered volume. Multi-stream keeps
+     * every tile playing and only the active one audible, so switching which tile
+     * you hear never reloads a stream.
+     */
+    fun setMuted(muted: Boolean) {
+        if (_status.value.isMuted != muted) toggleMute()
     }
 
     private fun MutableStateFlow<PlayerStatus>.update(transform: (PlayerStatus) -> PlayerStatus) {
         value = transform(value)
-    }
-
-    companion object {
-        private fun buildFactory(extra: List<String>): MediaPlayerFactory? = runCatching {
-            MediaPlayerFactory(
-                "--no-video-title-show",
-                "--network-caching=2000",
-                "--live-caching=1000",
-                "--sout-mux-caching=500",
-                *extra.toTypedArray(),
-            )
-        }.getOrNull()
-
-        // Checks for a VLC copy bundled inside the distributable's resources dir.
-        // When found, prepends the directory to jna.library.path so JNA locates
-        // libvlc.dll before scanning system paths. VLC then finds its plugins/
-        // subdirectory relative to its own DLL location automatically.
-        private fun detectBundledVlc(): String? {
-            val resourcesDir = System.getProperty("compose.application.resources.dir")
-                ?: return null
-            val vlcDir = java.io.File(resourcesDir, "vlc")
-            if (!vlcDir.exists() || !java.io.File(vlcDir, "libvlc.dll").exists()) return null
-            val existing = System.getProperty("jna.library.path")
-            System.setProperty(
-                "jna.library.path",
-                if (existing.isNullOrBlank()) vlcDir.absolutePath
-                else "${vlcDir.absolutePath}${java.io.File.pathSeparator}$existing",
-            )
-            return vlcDir.absolutePath
-        }
     }
 }

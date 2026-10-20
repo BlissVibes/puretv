@@ -43,8 +43,16 @@ class DesktopLiveNotifier(
     /** The channel open in the window right now (kept current by App); never toasted. */
     @Volatile var watchingLogin: String? = null
 
+    /** More channels on screen at once (multi-stream tiles, lower case); never toasted either. */
+    @Volatile var alsoWatching: Set<String> = emptySet()
+
+    private fun notWatched(streams: List<StreamInfo>): List<StreamInfo> {
+        val also = alsoWatching
+        return if (also.isEmpty()) streams else streams.filterNot { it.userLogin.lowercase() in also }
+    }
+
     fun show(streams: List<StreamInfo>) {
-        val fresh = GoLiveAlerts.exceptWatching(streams, watchingLogin)
+        val fresh = notWatched(GoLiveAlerts.exceptWatching(streams, watchingLogin))
         if (fresh.isEmpty()) return
         synchronized(lock) {
             if (pending.isEmpty()) pendingSinceMs = clock()
@@ -66,7 +74,7 @@ class DesktopLiveNotifier(
             return
         }
         // The viewer may have opened one of them since it was queued.
-        val shown = GoLiveAlerts.exceptWatching(pending, watchingLogin)
+        val shown = notWatched(GoLiveAlerts.exceptWatching(pending, watchingLogin))
         if (shown.isEmpty()) {
             pending = emptyList()
             return

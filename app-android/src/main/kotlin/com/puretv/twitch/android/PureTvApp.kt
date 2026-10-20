@@ -4,6 +4,9 @@ import android.app.Application
 import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.di.androidModule
+import com.puretv.twitch.android.notify.GoLiveMonitor
+import com.puretv.twitch.android.notify.GoLiveNotifications
+import com.puretv.twitch.android.notify.GoLiveScheduler
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
@@ -114,6 +117,22 @@ class PureTvApp : Application() {
                 .distinctUntilChanged()
                 .collect { playback.setAudioOnlyInBackground(it) }
         }
+
+        // Go-live alerts. The notification channel exists from the first run so the
+        // viewer can find it in Android settings; the background worker is scheduled
+        // only while alerts are on and someone is signed in, and cancelled
+        // otherwise; the in-app timer runs while the app is on screen. All three
+        // are local: nothing is pushed to the phone, PureTV asks Twitch itself.
+        appScope.launch {
+            koinApp.koin.get<GoLiveNotifications>().ensureChannel()
+        }
+        appScope.launch {
+            koinApp.koin.get<AppSettingsStore>().flow
+                .map { it.liveNotifications && it.accessToken.isNotBlank() }
+                .distinctUntilChanged()
+                .collect { wanted -> GoLiveScheduler.sync(this@PureTvApp, wanted) }
+        }
+        koinApp.koin.get<GoLiveMonitor>().start(appScope)
     }
 
     private companion object {

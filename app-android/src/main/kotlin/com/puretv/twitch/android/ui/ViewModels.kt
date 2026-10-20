@@ -42,6 +42,7 @@ import com.puretv.twitch.core.model.ChannelEmote
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -87,6 +88,7 @@ class HomeViewModel(
     private val sessionManager: SessionManager,
     private val watchHistoryDao: WatchHistoryDao,
     private val cachedStreamDao: CachedStreamDao,
+    private val liveFollows: LiveFollowsMonitor,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -158,11 +160,13 @@ class HomeViewModel(
      * Followed "Live now", asked of Twitch directly (one /streams/followed call)
      * on every load and refresh. It used to be recomputed only when the follow
      * list changed, so live status went stale while every refresh still
-     * re-downloaded the whole follow list.
+     * re-downloaded the whole follow list. Asked through the shared
+     * [LiveFollowsMonitor], so a refresh right after the go-live timer (or
+     * Following) fetched reuses that answer, and a go-live it sees is announced.
      */
     private suspend fun refreshFollowedLive() {
         val id = userId.ifBlank { return }
-        runCatching { streamRepository.followedLiveStreams(id) }
+        runCatching { liveFollows.followedLive(id) }
             .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
     }
 
@@ -708,6 +712,14 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(customProxyUrl = url) }
     }
 
+    fun setLiveNotifications(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(liveNotifications = enabled) }
+    }
+
+    fun unmuteAllLiveNotifications() = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyMutedLogins = emptySet()) }
+    }
+
     fun logOut() = settingsStore.clearSession()
 }
 
@@ -821,9 +833,24 @@ data class FollowingUiState(
 class FollowingViewModel(
     private val source: FollowedChannelsSource,
     private val sessionManager: SessionManager,
+    private val settingsStore: AppSettingsStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(FollowingUiState(isLoggedIn = sessionManager.state.value is SessionState.LoggedIn))
     val state: StateFlow<FollowingUiState> = _state.asStateFlow()
+
+    /** Lowercased logins whose go-live alerts are muted (long-press a row to change). */
+    val mutedLogins: StateFlow<Set<String>> = settingsStore.flow
+        .map { it.notifyMutedLogins }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** Mutes [login]'s go-live alerts, or unmutes them if they were muted. */
+    fun toggleMute(login: String) = viewModelScope.launch {
+        val key = login.lowercase()
+        settingsStore.update { s ->
+            val muted = s.notifyMutedLogins
+            s.copy(notifyMutedLogins = if (key in muted) muted - key else muted + key)
+        }
+    }
 
     // A single in-flight load. Cancel-and-replace on refresh() so a double-tapped
     // pull-to-refresh and a sign-in landing mid-load can't both write the final

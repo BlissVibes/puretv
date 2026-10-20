@@ -12,6 +12,8 @@ import androidx.compose.runtime.collectAsState
 import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.ui.screens.WelcomeScreen
 import com.puretv.twitch.core.session.SessionState
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.filterNotNull
 import org.koin.compose.koinInject
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -43,6 +45,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.puretv.twitch.android.ui.components.AskForGoLiveNotifications
 import com.puretv.twitch.android.ui.components.ExpressiveIcons
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.screens.BrowseScreen
@@ -115,7 +118,10 @@ private val TOP_TAB_ROUTES = TOP_TABS.map { it.route }.toSet()
  * automatically with no callback.
  */
 @Composable
-fun RootScreen(navController: NavHostController = rememberNavController()) {
+fun RootScreen(
+    navController: NavHostController = rememberNavController(),
+    pendingOpen: MutableStateFlow<String?>? = null,
+) {
     val sessionManager = koinInject<SessionManager>()
     val session by sessionManager.state.collectAsState()
     val loggedIn = session is SessionState.LoggedIn
@@ -124,7 +130,7 @@ fun RootScreen(navController: NavHostController = rememberNavController()) {
         transitionSpec = { fadeIn(tween(420)) togetherWith fadeOut(tween(420)) },
         label = "root-gate",
     ) { isLoggedIn ->
-        if (isLoggedIn) MainScaffold(navController = navController) else WelcomeScreen()
+        if (isLoggedIn) MainScaffold(navController = navController, pendingOpen = pendingOpen) else WelcomeScreen()
     }
 }
 
@@ -136,15 +142,26 @@ fun RootScreen(navController: NavHostController = rememberNavController()) {
  * own bottom system-bar inset.
  */
 @Composable
-fun MainScaffold(navController: NavHostController = rememberNavController()) {
+fun MainScaffold(
+    navController: NavHostController = rememberNavController(),
+    pendingOpen: MutableStateFlow<String?>? = null,
+) {
     // The NavController is retained across a logout -> Welcome -> re-login swap, so
     // a previous session's back stack would otherwise survive into the new session
     // (landing re-login deep in the old stack). Entering the shell, reset to the
     // start tab. This runs only when MainScaffold (re)enters composition, i.e. at
     // login; it is a no-op on a fresh stack and does not interfere mid-session.
+    // [pendingOpen] carries a route asked for from outside the app (a tapped
+    // go-live notification). It is consumed here, after that reset and in the same
+    // coroutine, so the reset can never pop the stream the viewer just asked for.
     LaunchedEffect(Unit) {
         runCatching { navController.popBackStack(Routes.HOME, inclusive = false) }
+        pendingOpen?.filterNotNull()?.collect { route ->
+            pendingOpen.value = null
+            runCatching { if (route in TOP_TAB_ROUTES) navController.switchTab(route) else navController.go(route) }
+        }
     }
+    AskForGoLiveNotifications()
     val c = PureTvTheme.colors
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route

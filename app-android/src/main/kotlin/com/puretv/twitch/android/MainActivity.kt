@@ -1,6 +1,7 @@
 package com.puretv.twitch.android
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +18,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.compose.rememberNavController
+import com.puretv.twitch.android.notify.GoLiveMonitor
+import com.puretv.twitch.android.notify.GoLiveNotifications
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
@@ -32,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -75,6 +79,13 @@ class MainActivity : ComponentActivity() {
     // finishing so codec/audio resources are not held for the process lifetime.
     private val twitchPlayer: TwitchPlayer by inject()
     private val backgroundPlayback: BackgroundPlayback by inject()
+    private val goLiveNotifications: GoLiveNotifications by inject()
+
+    /**
+     * A route a tapped go-live notification asked for, waiting for the signed-in
+     * shell to open it (see MainScaffold). Null when there is nothing to open.
+     */
+    private val pendingOpen = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,6 +121,10 @@ class MainActivity : ComponentActivity() {
 
         observeTheme()
 
+        // A restored Activity (process death, Recents) still holds the intent it was
+        // first started with; re-reading it would reopen an old notification's stream.
+        if (savedInstanceState == null) takeOpenRequest(intent)
+
         // Silent launch update check: surfaces an "Update available" banner on
         // Home / a prompt in Settings when a newer Android APK is published.
         // Fully fail-soft (no manifest / offline -> stays idle, no nagging). Here
@@ -128,6 +143,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(navController) {
                 navController.currentBackStackEntryFlow.collect { entry ->
                     currentRouteIsStream = entry.destination.route == Routes.STREAM
+                    // No go-live alert for the channel already on screen.
+                    goLiveNotifications.watchingLogin =
+                        if (currentRouteIsStream) entry.arguments?.getString("channelLogin") else null
                 }
             }
 
@@ -136,7 +154,7 @@ class MainActivity : ComponentActivity() {
                     variant = themeVariant.value,
                     shapeIntensity = shapeIntensity.value,
                 ) {
-                    RootScreen(navController = navController)
+                    RootScreen(navController = navController, pendingOpen = pendingOpen)
                 }
             }
         }
@@ -166,6 +184,42 @@ class MainActivity : ComponentActivity() {
                     shapeIntensity.value = ShapeIntensity.fromKey(settings.shapeIntensity)
                 }
         }
+    }
+
+    /** A go-live notification tapped while PureTV was already running (singleTop). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeOpenRequest(intent)
+    }
+
+    /**
+     * Reads where a go-live notification wants to go, once: the extras are removed
+     * so nothing that re-reads this intent later opens it again.
+     */
+    private fun takeOpenRequest(intent: Intent?) {
+        intent ?: return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val channel = intent.getStringExtra(GoLiveNotifications.EXTRA_OPEN_CHANNEL)?.takeIf { it.isNotBlank() }
+        val following = intent.getBooleanExtra(GoLiveNotifications.EXTRA_OPEN_FOLLOWING, false)
+        intent.removeExtra(GoLiveNotifications.EXTRA_OPEN_CHANNEL)
+        intent.removeExtra(GoLiveNotifications.EXTRA_OPEN_FOLLOWING)
+        when {
+            channel != null -> pendingOpen.value = Routes.stream(channel)
+            following -> pendingOpen.value = Routes.FOLLOWING
+        }
+    }
+
+    // The in-app go-live timer runs only while PureTV is on screen (PiP counts:
+    // the Activity stays started). Off screen the 15 minute worker takes over.
+    override fun onStart() {
+        super.onStart()
+        runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(true) }
+    }
+
+    override fun onStop() {
+        runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(false) }
+        super.onStop()
     }
 
     /**

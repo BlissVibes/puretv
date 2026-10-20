@@ -10,7 +10,9 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -120,7 +122,9 @@ fun Modifier.expressiveSurface(
  * The whole interactive package: [expressiveSurface] plus a click handler wired
  * to one interaction source. `indication` stays null because the morph IS the
  * feedback; a ripple on top of it reads as two competing answers to one tap.
+ * [onLongClick], when given, adds a long-press (for a row's secondary actions).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun Modifier.expressiveClickable(
     interaction: MutableInteractionSource,
@@ -134,6 +138,7 @@ fun Modifier.expressiveClickable(
     borderColor: Color = Color.Transparent,
     pressScale: Float = 0.97f,
     enabled: Boolean = true,
+    onLongClick: (() -> Unit)? = null,
 ): Modifier = this
     .graphicsLayer { alpha = if (enabled) 1f else 0.38f }
     .expressiveSurface(
@@ -147,7 +152,19 @@ fun Modifier.expressiveClickable(
         borderColor = borderColor,
         pressScale = pressScale,
     )
-    .clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+    .then(
+        if (onLongClick == null) {
+            Modifier.clickable(interactionSource = interaction, indication = null, enabled = enabled, onClick = onClick)
+        } else {
+            Modifier.combinedClickable(
+                interactionSource = interaction,
+                indication = null,
+                enabled = enabled,
+                onLongClick = onLongClick,
+                onClick = onClick,
+            )
+        },
+    )
 
 // ---- Buttons -----------------------------------------------------------------
 
@@ -482,6 +499,7 @@ fun ExpressiveCard(
     modifier: Modifier = Modifier,
     color: Color? = null,
     contentPadding: Dp = 10.dp,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     val c = PureTvTheme.colors
@@ -499,6 +517,7 @@ fun ExpressiveCard(
                         restRadius = shapes.card,
                         pressRadius = shapes.cardMorph,
                         color = fill,
+                        onLongClick = onLongClick,
                     )
                 } else {
                     Modifier.clip(shapes.cardShape).background(fill)

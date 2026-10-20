@@ -7,6 +7,9 @@ import com.puretv.twitch.android.data.SecureTokenStore
 import com.puretv.twitch.android.data.SessionManager
 import com.puretv.twitch.android.data.TokenRefresher
 import com.puretv.twitch.android.data.db.PureTvDatabase
+import com.puretv.twitch.android.notify.DataStoreLiveNotifyStore
+import com.puretv.twitch.android.notify.GoLiveMonitor
+import com.puretv.twitch.android.notify.GoLiveNotifications
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
@@ -22,12 +25,16 @@ import com.puretv.twitch.android.ui.SearchViewModel
 import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.StreamViewModel
 import com.puretv.twitch.android.ui.WelcomeViewModel
+import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.api.retryOnceIfUnauthorized
 import com.puretv.twitch.core.di.TokenHolder
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.emotes.EmoteCache
 import com.puretv.twitch.core.emotes.PersistentEmoteCache
 import com.puretv.twitch.core.storage.FileTextStore
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
+import kotlinx.coroutines.flow.first
 import org.koin.android.ext.koin.androidContext
 import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
@@ -70,10 +77,37 @@ val androidModule = module {
     single { AppSettingsStore(get(), get(), get<TokenHolder>()) }
     single { SessionManager(get()) }
     single { TokenRefresher(get(), get(), get()) }
-    // Followed-rail data: real Twitch follows (paginated), live status and
-    // avatars. No local-pin store on Android, so FollowingViewModel always
-    // passes an empty pin list to `load`.
-    single<FollowedChannelsSource> { FollowedChannelsService(get()) }
+    // Go-live alerts. The monitor is the app's one asker of "which follows are
+    // live" (see LiveFollowsMonitor): Home, Following, the in-app timer and the
+    // background worker all read through it, and whatever just went live becomes a
+    // notification. A 401 renews the sign-in once and asks again, because the
+    // worker can run long after Twitch dropped a token early.
+    single { GoLiveNotifications(androidContext()) }
+    single { DataStoreLiveNotifyStore(androidContext()) }
+    single {
+        val api = get<TwitchApiClient>()
+        val settings = get<AppSettingsStore>()
+        val refresher = get<TokenRefresher>()
+        val notifications = get<GoLiveNotifications>()
+        LiveFollowsMonitor(
+            fetchLive = { userId ->
+                retryOnceIfUnauthorized(renew = { refresher.refreshIfNeeded(force = true) }) { api.getFollowedStreams(userId) }
+            },
+            store = get<DataStoreLiveNotifyStore>(),
+            settings = { settings.flow.first() },
+            userId = { settings.flow.first().let { if (it.accessToken.isNotBlank()) it.userId else null } },
+            clock = System::currentTimeMillis,
+            onGoLive = { streams -> notifications.announce(streams) },
+        )
+    }
+    single { GoLiveMonitor(lazy { get<LiveFollowsMonitor>() }, lazy { get<AppSettingsStore>() }) }
+    // Followed-rail data: real Twitch follows (paginated), live status (from the
+    // shared monitor) and avatars. No local-pin store on Android, so
+    // FollowingViewModel always passes an empty pin list to `load`.
+    single<FollowedChannelsSource> {
+        val monitor = get<LiveFollowsMonitor>()
+        FollowedChannelsService(get(), followedLive = { userId -> monitor.followedLive(userId) })
+    }
 
     // --- Playback ---------------------------------------------------------
     // TwitchPlayer(context, adBlockEngine, backupStreamResolver, httpClient,
@@ -88,8 +122,8 @@ val androidModule = module {
     // --- ViewModels --------------------------------------------------------
     // get() resolves each constructor argument by type, so argument order does
     // not matter as long as every type is bound above (the DAOs are).
-    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get()) }
-    viewModel { FollowingViewModel(get(), get()) }
+    viewModel { HomeViewModel(get(), get(), get(), get(), get(), get(), get()) }
+    viewModel { FollowingViewModel(get(), get(), get()) }
     viewModel { WelcomeViewModel(get(), get()) }
     viewModel { BrowseViewModel(get()) }
     viewModel { SearchViewModel(get(), get()) }

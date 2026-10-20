@@ -2,6 +2,7 @@ package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.desktop.data.AtomicFile
 import java.awt.Dimension
+import java.awt.Frame
 import java.awt.GraphicsConfiguration
 import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
@@ -91,6 +92,19 @@ object MiniPlayerGeometry {
         val w = clampWidth(if (heightOnly) widthFor(newH) else newW, work)
         return w to heightFor(w)
     }
+
+    /**
+     * The window to settle on after the viewer dragged an edge, from [prev] to [now]. Sized
+     * by [fitSize]; an edge that did not move stays where it was, so dragging the left or top
+     * edge keeps the right or bottom edge still instead of the window creeping away. The
+     * result is kept on [work].
+     */
+    fun resizeAnchored(prev: MiniRect, now: MiniRect, work: MiniRect): MiniRect {
+        val (w, h) = fitSize(now.width, now.height, prev.width, prev.height, work)
+        val x = if (now.x != prev.x) prev.x + prev.width - w else now.x
+        val y = if (now.y != prev.y) prev.y + prev.height - h else now.y
+        return clampToWork(MiniRect(x, y, w, h), work)
+    }
 }
 
 /** Counts two clicks inside [windowMs] as a double click, for the native video surface. */
@@ -134,53 +148,74 @@ class MiniBoundsStore(
 class MiniPlayerController(
     private val window: Window,
     private val store: MiniBoundsStore = MiniBoundsStore(),
+    /** Called when the window gets maximized or snapped full while in the mini player. */
+    private val onMaximized: () -> Unit = {},
 ) {
+    private var active = false
     private var wasAlwaysOnTop = false
     private var previousMinimum: Dimension? = null
-    private var lastW = 0
-    private var lastH = 0
+    private var last = MiniRect(0, 0, 0, 0)
     private var settling = false
 
-    // Keeps 16:9 while the viewer drags an edge of the window.
+    private fun bounds() = MiniRect(window.x, window.y, window.width, window.height)
+
+    // Keeps 16:9 while the viewer drags an edge of the window, holding the opposite edge still.
     private val keepAspect = object : ComponentAdapter() {
         override fun componentResized(e: ComponentEvent) {
             if (settling) return
             val work = workAreaOf(window) ?: return
-            val (w, h) = MiniPlayerGeometry.fitSize(window.width, window.height, lastW, lastH, work)
+            val fixed = MiniPlayerGeometry.resizeAnchored(last, bounds(), work)
             settling = true
             try {
-                if (w != window.width || h != window.height) window.setSize(w, h)
-                lastW = w
-                lastH = h
+                if (fixed != bounds()) window.setBounds(fixed.x, fixed.y, fixed.width, fixed.height)
+                last = fixed
             } finally {
                 settling = false
             }
         }
+
+        // A plain move (the size did not change) is the new resting place; a move that comes
+        // with a resize is an edge being dragged and is read by componentResized instead.
+        override fun componentMoved(e: ComponentEvent) {
+            if (settling) return
+            val now = bounds()
+            if (now.width == last.width && now.height == last.height) last = now
+        }
+    }
+
+    private val watchMaximize = java.awt.event.WindowStateListener { e ->
+        if (e.newState and Frame.MAXIMIZED_BOTH != 0) onMaximized()
     }
 
     fun enter() {
+        if (active) return
+        active = true
         wasAlwaysOnTop = window.isAlwaysOnTop
         previousMinimum = window.minimumSize
         val works = allWorkAreas()
-        val current = workAreaOf(window) ?: works.firstOrNull() ?: return
-        val bounds = MiniPlayerGeometry.initialBounds(store.load(), works, current)
+        val screen = Toolkit.getDefaultToolkit().screenSize
+        val current = workAreaOf(window) ?: works.firstOrNull() ?: MiniRect(0, 0, screen.width, screen.height)
+        val target = MiniPlayerGeometry.initialBounds(store.load(), works, current)
         settling = true
         try {
             window.minimumSize = Dimension(MiniPlayerGeometry.MIN_WIDTH, MiniPlayerGeometry.heightFor(MiniPlayerGeometry.MIN_WIDTH))
-            window.setBounds(bounds.x, bounds.y, bounds.width, bounds.height)
+            window.setBounds(target.x, target.y, target.width, target.height)
             window.isAlwaysOnTop = true
         } finally {
             settling = false
         }
-        lastW = bounds.width
-        lastH = bounds.height
+        last = target
         window.addComponentListener(keepAspect)
+        (window as? Frame)?.addWindowStateListener(watchMaximize)
     }
 
     /** Leaves the mini window where it is on screen; the shell restores the old geometry. */
     fun exit() {
+        if (!active) return
+        active = false
         window.removeComponentListener(keepAspect)
-        store.save(MiniRect(window.x, window.y, window.width, window.height))
+        (window as? Frame)?.removeWindowStateListener(watchMaximize)
+        if ((window as? Frame)?.extendedState?.and(Frame.MAXIMIZED_BOTH) == 0) store.save(bounds())
         window.isAlwaysOnTop = wasAlwaysOnTop
         window.minimumSize = previousMinimum
     }
@@ -188,9 +223,9 @@ class MiniPlayerController(
     /** After a drag: keeps the whole window on a screen so it can never be lost off the edge. */
     fun settle() {
         val work = workAreaOf(window) ?: return
-        val now = MiniRect(window.x, window.y, window.width, window.height)
-        val fixed = MiniPlayerGeometry.clampToWork(now, work)
-        if (fixed != now) window.setLocation(fixed.x, fixed.y)
+        val fixed = MiniPlayerGeometry.clampToWork(bounds(), work)
+        if (fixed != bounds()) window.setLocation(fixed.x, fixed.y)
+        last = bounds()
     }
 
     private fun allWorkAreas(): List<MiniRect> =

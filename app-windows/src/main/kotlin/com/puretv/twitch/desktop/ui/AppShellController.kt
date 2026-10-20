@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
@@ -15,6 +16,7 @@ import java.awt.GraphicsEnvironment
 import java.awt.Point
 import java.awt.Toolkit
 import java.awt.Window
+import javax.swing.SwingUtilities
 
 /** Distance, in px, from a screen edge that counts as a "drag-to-snap" drop. */
 private const val SNAP_EDGE_PX = 14
@@ -59,7 +61,8 @@ class AppShellController(
 
     private var fullscreenRestore: FullscreenRestore? = null
 
-    private val miniPlayer = MiniPlayerController(window)
+    // Snapping or maximizing the mini window (Win+Up) ends mini mode rather than fight it.
+    private val miniPlayer = MiniPlayerController(window, onMaximized = { SwingUtilities.invokeLater { exitMini() } })
 
     /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
     private var miniRestore: FullscreenRestore? = null
@@ -87,9 +90,11 @@ class AppShellController(
         }
     }
 
+    // A window never moved by the user can still be at PlatformDefault; read where it
+    // really is, so restoring puts it back there instead of somewhere new.
     private fun currentGeometry() = FullscreenRestore(
         placement = windowState.placement,
-        position = windowState.position,
+        position = if (windowState.position.isSpecified) windowState.position else WindowPosition(window.x.dp, window.y.dp),
         size = windowState.size,
     )
 
@@ -125,14 +130,10 @@ class AppShellController(
     private fun enterFullscreen() {
         // Capture geometry through WindowState (it holds the *floating* size even
         // while maximized, so restore is exact in either case).
-        fullscreenRestore = FullscreenRestore(
-            placement = windowState.placement,
-            position = windowState.position,
-            size = windowState.size,
-        )
+        fullscreenRestore = currentGeometry()
         windowState.placement = WindowPlacement.Floating
         (window as? Frame)?.let { frame ->
-            // Clear MAXIMIZED_BOTH, since a maximized frame ignores setBounds — then
+            // Clear MAXIMIZED_BOTH, since a maximized frame ignores setBounds, then
             // cover the full monitor (bounds include the taskbar strip).
             frame.extendedState = Frame.NORMAL
             frame.bounds = frame.graphicsConfiguration.bounds

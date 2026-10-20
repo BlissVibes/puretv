@@ -60,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -349,7 +350,16 @@ fun StreamContent(
     var settingsMenuOpen by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
     // The mini player has no room for the menu or the shortcuts list.
-    LaunchedEffect(mini) { if (mini) { settingsMenuOpen = false; helpOpen = false } }
+    // Chat is hidden there too: drop its focus so the keys reach the player, not an invisible box.
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(mini) {
+        if (mini) {
+            settingsMenuOpen = false
+            helpOpen = false
+            chatInputFocused = false
+            focusManager.clearFocus(force = true)
+        }
+    }
     val miniDoubleClick = remember { DoubleClickDetector() }
     val latestHelpOpen = rememberUpdatedState(helpOpen)
     val latestVolume = rememberUpdatedState(playerStatus.volume)

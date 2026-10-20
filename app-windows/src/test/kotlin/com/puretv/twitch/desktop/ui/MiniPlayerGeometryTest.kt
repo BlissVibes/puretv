@@ -87,6 +87,41 @@ class MiniPlayerGeometryTest {
         assertEquals(MiniPlayerGeometry.heightFor(MiniPlayerGeometry.MIN_WIDTH), hh)
     }
 
+    @Test fun draggingTheLeftEdgeKeepsTheRightEdgeStill() {
+        val prev = MiniRect(1400, 600, 480, MiniPlayerGeometry.heightFor(480))
+        // Left edge dragged 100 to the left: Windows reports x moved and the width grown.
+        val now = MiniRect(1300, 600, 580, prev.height)
+        val b = MiniPlayerGeometry.resizeAnchored(prev, now, work)
+        assertEquals(580, b.width)
+        assertEquals(MiniPlayerGeometry.heightFor(580), b.height)
+        assertEquals(prev.x + prev.width, b.x + b.width)
+        assertEquals(prev.y, b.y)
+    }
+
+    @Test fun draggingTheTopEdgeKeepsTheBottomEdgeStill() {
+        val prev = MiniRect(800, 600, 480, MiniPlayerGeometry.heightFor(480))
+        val now = MiniRect(800, 500, 480, prev.height + 100)
+        val b = MiniPlayerGeometry.resizeAnchored(prev, now, work)
+        assertEquals(prev.y + prev.height, b.y + b.height)
+        assertEquals(prev.x, b.x)
+        assertEquals(MiniPlayerGeometry.widthFor(now.height), b.width)
+    }
+
+    @Test fun draggingTheRightOrBottomEdgeKeepsTheTopLeftStill() {
+        val prev = MiniRect(100, 100, 480, MiniPlayerGeometry.heightFor(480))
+        val b = MiniPlayerGeometry.resizeAnchored(prev, prev.copy(width = 640), work)
+        assertEquals(100, b.x)
+        assertEquals(100, b.y)
+        assertEquals(MiniPlayerGeometry.heightFor(640), b.height)
+    }
+
+    @Test fun aResizeThatWouldLeaveTheScreenIsPulledBack() {
+        val prev = MiniRect(1700, 700, 200, MiniPlayerGeometry.heightFor(320))
+        val now = prev.copy(width = 640, height = MiniPlayerGeometry.heightFor(640))
+        val b = MiniPlayerGeometry.resizeAnchored(prev, now, work)
+        assertTrue(b.x + b.width <= 1920 && b.y + b.height <= 1040)
+    }
+
     @Test fun twoQuickClicksAreADoubleClick() {
         val d = DoubleClickDetector(400)
         assertFalse(d.click(1_000))

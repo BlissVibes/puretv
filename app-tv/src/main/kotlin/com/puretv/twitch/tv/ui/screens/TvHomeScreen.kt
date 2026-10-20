@@ -215,6 +215,13 @@ fun TvHomeScreen(
                 onOpenStream = onOpenStream,
             )
 
+            // Signed out, the shelves above fill from the public directory; only
+            // the viewer's own follows need an account. Offered below the content,
+            // never in its place, and it never takes the initial focus.
+            if (state.sessionKnown && !state.isLoggedIn) {
+                SignInPanel(onSignIn = onOpenLogin)
+            }
+
             // Only surfaces when there's genuinely nothing to show (no cache, no
             // network) — the cached-first paint keeps this hidden in the common case.
             if (state.topStreams.isEmpty() && !state.isLoading) {
@@ -327,6 +334,35 @@ private fun heroMetaLine(stream: StreamInfo, followedLive: Boolean): String = bu
     add("${formatTvViewerCount(stream.viewerCount.toLong())} watching")
     if (followedLive) add("FOLLOWING")
 }.joinToString(" · ")
+
+/** The signed-out offer: what signing in adds, and a button straight to the sign-in screen. */
+@Composable
+private fun SignInPanel(onSignIn: () -> Unit) {
+    val c = PureTvTvTheme.colors
+    TvPanel {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(32.dp),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("See the channels you follow", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "You're watching without an account. Sign in with Twitch to bring in your follows and chat.",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            TvExpressiveButton(
+                text = "Sign in",
+                onClick = onSignIn,
+                style = TvButtonStyle.Filled,
+                size = TvButtonSize.Medium,
+                icon = ExpressiveIcons.SignIn,
+            )
+        }
+    }
+}
 
 /** Update-available banner: tertiary tonal strip, jumps to Settings to install. */
 @Composable

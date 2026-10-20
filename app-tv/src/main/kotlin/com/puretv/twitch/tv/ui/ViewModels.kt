@@ -64,6 +64,8 @@ import kotlinx.coroutines.launch
 
 data class HomeUiState(
     val isLoggedIn: Boolean = false,
+    /** False until the stored session has been read, so a signed-in cold start never flashes the sign-in panel. */
+    val sessionKnown: Boolean = false,
     val followedLive: List<StreamInfo> = emptyList(),
     val topStreams: List<StreamInfo> = emptyList(),
     val isLoading: Boolean = false,
@@ -124,10 +126,11 @@ class HomeViewModel(
                 }
             }
         }
-        // Login flag, recomputed whenever the session changes.
+        // Login flag, recomputed whenever the session changes. Signed out, Home
+        // still loads: core reads the public directory through anonymous GQL.
         viewModelScope.launch {
             settings.flow.collect { prefs ->
-                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank()) }
+                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank(), sessionKnown = true) }
             }
         }
         refresh()

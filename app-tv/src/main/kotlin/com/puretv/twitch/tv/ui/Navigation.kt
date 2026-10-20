@@ -1,7 +1,11 @@
 package com.puretv.twitch.tv.ui
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
+import com.puretv.twitch.tv.ui.screens.TvVodScreen
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -42,10 +46,16 @@ object Routes {
     const val STREAM = "stream/{channelLogin}"
     const val CHANNEL = "channel/{channelLogin}"
     const val CATEGORY = "category/{gameId}"
+    const val VOD = "vod/{vodId}?login={login}&title={title}&thumb={thumb}"
 
     fun stream(channelLogin: String) = "stream/$channelLogin"
     fun channel(channelLogin: String) = "channel/$channelLogin"
     fun category(gameId: String) = "category/$gameId"
+
+    /** A past broadcast. Titles carry spaces, slashes and ampersands, so every value is encoded. */
+    fun vod(launch: VodLaunch) =
+        "vod/${Uri.encode(launch.vodId)}?login=${Uri.encode(launch.channelLogin)}" +
+            "&title=${Uri.encode(launch.title)}&thumb=${Uri.encode(launch.thumbnailUrl)}"
 }
 
 @Composable
@@ -104,8 +114,27 @@ fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) 
             TvChannelScreen(
                 channelLogin = channelLogin,
                 onWatch = { navController.navigate(Routes.stream(channelLogin)) },
+                onOpenVod = { navController.navigate(Routes.vod(it)) },
                 onBack = navController::popBackStack,
             )
+        }
+        composable(
+            Routes.VOD,
+            arguments = listOf(
+                navArgument("vodId") { type = NavType.StringType },
+                navArgument("login") { type = NavType.StringType; defaultValue = "" },
+                navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                navArgument("thumb") { type = NavType.StringType; defaultValue = "" },
+            ),
+        ) { backStackEntry ->
+            val args = backStackEntry.arguments
+            val launch = VodLaunch(
+                vodId = args?.getString("vodId").orEmpty(),
+                channelLogin = args?.getString("login").orEmpty(),
+                title = args?.getString("title").orEmpty(),
+                thumbnailUrl = args?.getString("thumb").orEmpty(),
+            )
+            TvVodScreen(launch = launch, onBack = navController::popBackStack)
         }
     }
 }

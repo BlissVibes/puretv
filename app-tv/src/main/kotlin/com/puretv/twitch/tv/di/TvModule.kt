@@ -23,6 +23,8 @@ import com.puretv.twitch.tv.ui.SearchViewModel
 import com.puretv.twitch.tv.ui.SettingsViewModel
 import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.TvFollowingViewModel
+import com.puretv.twitch.tv.ui.TvVodViewModel
+import com.puretv.twitch.tv.ui.VodLaunch
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import org.koin.android.ext.koin.androidContext
@@ -95,7 +97,8 @@ val tvModule = module {
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { SearchViewModel(get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
+    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> TvVodViewModel(launch, get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     // Device Code Grant flow: (httpClient, settingsStore, userRepository).
     viewModel { LoginViewModel(get(), get(), get()) }

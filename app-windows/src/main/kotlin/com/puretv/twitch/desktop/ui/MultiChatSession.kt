@@ -258,11 +258,17 @@ internal fun eventsForRoom(batch: List<ChatEvent>, login: String, joined: Boolea
                 mine += event
             }
             is ChatEvent.Message ->
-                if (event.message.channel.equals(login, ignoreCase = true)) mine += event
+                if (event.message.channel.equals(login, ignoreCase = true)) {
+                    open = true // a row from this room proves its connection is up
+                    mine += event
+                }
             is ChatEvent.UserNotice -> {
                 val room = event.raw?.channel
                 if (room != null) {
-                    if (room.equals(login, ignoreCase = true)) mine += event
+                    if (room.equals(login, ignoreCase = true)) {
+                        open = true
+                        mine += event
+                    }
                 } else if (open) {
                     mine += event
                 }

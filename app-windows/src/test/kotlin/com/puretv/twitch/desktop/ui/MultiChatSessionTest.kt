@@ -5,7 +5,6 @@ import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.MessagePart
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class MultiChatSessionTest {
@@ -55,7 +54,15 @@ class MultiChatSessionTest {
             ChatEvent.UserNotice("sub", msg("oldroom")),
         )
         val (mine, joined) = eventsForRoom(batch, "newroom", joined = false)
-        assertFalse(joined)
+        assertTrue(joined)
         assertEquals(listOf(batch[1]), mine)
+    }
+
+    @Test
+    fun aRowFromThisRoomOpensTheGate() {
+        val batch = listOf(ChatEvent.Message(msg("newroom")), ChatEvent.RoomState(slowModeSeconds = 5))
+        val (mine, joined) = eventsForRoom(batch, "newroom", joined = false)
+        assertTrue(joined)
+        assertEquals(batch, mine)
     }
 }

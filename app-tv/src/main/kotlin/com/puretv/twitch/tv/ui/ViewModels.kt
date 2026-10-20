@@ -565,6 +565,9 @@ class StreamViewModel(
     private var tpChannelEmotes: List<ChannelEmote> = emptyList()
     /** Live 7TV changes this stream, replayed over each third-party list that finishes loading. */
     private val liveEmoteDeltas = ArrayList<SevenTvEmoteDelta>()
+
+    /** The channel whose 7TV feed is open; a delta buffered from another channel is ignored. */
+    private var liveEmoteChannelId: String? = null
     private var tpGlobalEmotes: List<ChannelEmote> = emptyList()
 
     // Flipping: a burst of presses becomes one change (see PendingFlip), and a
@@ -621,6 +624,7 @@ class StreamViewModel(
     init {
         viewModelScope.launch {
             sevenTvEventClient.updates.collect { delta ->
+                if (delta.channelTwitchId != liveEmoteChannelId) return@collect
                 liveEmoteDeltas += delta
                 tpChannelEmotes = applySevenTvDelta(tpChannelEmotes, delta) ?: return@collect
                 rebuildEmotes()
@@ -666,6 +670,7 @@ class StreamViewModel(
         freshSessionRetries = 0
         tpChannelEmotes = emptyList()
         liveEmoteDeltas.clear()
+        liveEmoteChannelId = null
         // The old channel's sockets go first, so nothing of it lands in the new one.
         chatClient.disconnect()
         sevenTvEventClient.disconnect()
@@ -710,7 +715,10 @@ class StreamViewModel(
                 // Live 7TV emote changes for as long as this stream is open. The socket
                 // does not wait for the emote lists below, which can take a moment; changes pushed
                 // meanwhile are replayed over them.
-                channel?.let { sevenTvEventClient.connect(it.id) }
+                channel?.let {
+                    liveEmoteChannelId = it.id
+                    sevenTvEventClient.connect(it.id)
+                }
 
                 // Third-party (7TV/BTTV/FFZ) emotes: the copy cached from the last visit
                 // first, so the first lines already render, then the fresh set.

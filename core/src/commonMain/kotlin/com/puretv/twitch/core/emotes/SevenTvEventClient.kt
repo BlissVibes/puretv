@@ -84,46 +84,66 @@ class SevenTvEventClient(
     fun connect(channelTwitchId: String, cosmetics: Boolean = false) {
         connectionJob?.cancel()
         connectionJob = scope.launch {
-            // Resolve the emote-set id once per channel (it's stable for the session;
-            // a broadcaster swapping sets is signalled separately and is out of scope).
-            val setId = runCatching { fetchEmoteSetId(channelTwitchId) }.getOrNull()
-            val subscriptions = buildList {
-                if (setId != null) add(emoteSetSubscribeFrame(setId))
-                if (cosmetics) COSMETIC_TYPES.forEach { add(channelSubscribeFrame(it, channelTwitchId)) }
-            }
-            if (subscriptions.isEmpty()) return@launch
-            var backoffMs = INITIAL_BACKOFF_MS
+            // The emote-set id is stable for the session (a broadcaster swapping sets is
+            // signalled separately and is out of scope), but the lookup can fail on a
+            // transient 7tv.io error, so it is retried on every dial until it lands.
+            var setId: String? = null
+            var setResolved = false
+            val backoff = ReconnectBackoff()
             while (isActive) {
-                try {
-                    httpClient.webSocket(WS_ENDPOINT) {
-                        backoffMs = INITIAL_BACKOFF_MS // a healthy connect resets the backoff
-                        // Subscribe right away (again on every redial); the server
-                        // tolerates SUBSCRIBE sent before we read its HELLO and
-                        // replies with an ACK.
-                        subscriptions.forEach { send(Frame.Text(it)) }
-                        while (isActive) {
-                            // Server HEARTBEATs about every 48s; no frame for READ_IDLE_MS
-                            // means a half-open socket, so break to reconnect.
-                            val frame = withTimeoutOrNull(READ_IDLE_MS) {
-                                incoming.receiveCatching().getOrNull()
-                            } ?: break
-                            if (frame is Frame.Text) {
-                                when (val event = parseFrame(frame.readText(), setId)) {
-                                    is SevenTvEmoteDelta ->
-                                        if (event.added.isNotEmpty() || event.removed.isNotEmpty()) _updates.emit(event)
-                                    is SevenTvCosmeticEvent -> if (cosmetics) _cosmetics.emit(event)
+                if (!setResolved) {
+                    try {
+                        setId = fetchEmoteSetId(channelTwitchId)
+                        setResolved = true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // retry on the next pass
+                    }
+                }
+                val subscriptions = buildList {
+                    setId?.let { add(emoteSetSubscribeFrame(it)) }
+                    if (cosmetics) COSMETIC_TYPES.forEach { add(channelSubscribeFrame(it, channelTwitchId)) }
+                }
+                // A channel with no linked set and no cosmetics has nothing to listen for.
+                if (setResolved && subscriptions.isEmpty()) return@launch
+                if (subscriptions.isNotEmpty()) {
+                    try {
+                        httpClient.webSocket(WS_ENDPOINT) {
+                            // Subscribe right away (again on every redial); the server
+                            // tolerates SUBSCRIBE sent before we read its HELLO and
+                            // replies with an ACK.
+                            subscriptions.forEach { send(Frame.Text(it)) }
+                            // Without the set id this socket only carries cosmetics, so
+                            // cut it short to look the set up again.
+                            val idleMs = if (setResolved) READ_IDLE_MS else LOOKUP_RETRY_MS
+                            while (isActive) {
+                                // Server HEARTBEATs about every 48s; no frame for the idle
+                                // window means a half-open socket, so break to reconnect.
+                                val frame = withTimeoutOrNull(idleMs) {
+                                    incoming.receiveCatching().getOrNull()
+                                } ?: break
+                                // Only a frame from the server proves the connection is
+                                // healthy; a socket that opens and closes straight away
+                                // keeps backing off.
+                                backoff.onFrame()
+                                if (frame is Frame.Text) {
+                                    when (val event = parseFrame(frame.readText(), setId)) {
+                                        is SevenTvEmoteDelta ->
+                                            if (event.added.isNotEmpty() || event.removed.isNotEmpty()) _updates.emit(event)
+                                        is SevenTvCosmeticEvent -> if (cosmetics) _cosmetics.emit(event)
+                                    }
                                 }
                             }
                         }
+                    } catch (e: CancellationException) {
+                        throw e // disconnect()/scope cancellation, do NOT reconnect
+                    } catch (_: Exception) {
+                        // fall through to backoff + redial
                     }
-                } catch (e: CancellationException) {
-                    throw e // disconnect()/scope cancellation — do NOT reconnect
-                } catch (_: Exception) {
-                    // fall through to backoff + redial
                 }
                 if (!isActive) break
-                delay(backoffMs + Random.nextLong(0, BACKOFF_JITTER_MS))
-                backoffMs = (backoffMs * 2).coerceAtMost(MAX_BACKOFF_MS)
+                delay(backoff.nextDelayMs(Random.nextLong(0, BACKOFF_JITTER_MS)))
             }
         }
     }
@@ -206,11 +226,36 @@ class SevenTvEventClient(
         const val OP_DISPATCH = 0
         const val OP_SUBSCRIBE = 35
         val COSMETIC_TYPES = listOf(TYPE_COSMETIC_CREATE, TYPE_ENTITLEMENT_CREATE, TYPE_ENTITLEMENT_DELETE)
-        const val INITIAL_BACKOFF_MS = 1_000L
-        const val MAX_BACKOFF_MS = 30_000L
         const val BACKOFF_JITTER_MS = 500L
+        const val LOOKUP_RETRY_MS = 30_000L
         // > 7TV's heartbeat (about every 48s, `heartbeat_interval` in HELLO) with
         // slack, so a quiet-but-healthy subscription isn't mistaken for a dead socket.
         const val READ_IDLE_MS = 90_000L
+    }
+}
+
+/**
+ * Reconnect delay for [SevenTvEventClient]: doubles up to a cap, and goes back to the
+ * start only once the server has actually sent a frame since the last dial.
+ */
+internal class ReconnectBackoff(
+    private val initialMs: Long = 1_000L,
+    private val maxMs: Long = 30_000L,
+) {
+    private var currentMs = initialMs
+    private var healthy = false
+
+    /** The server sent a frame (hello, ack, dispatch or heartbeat) on this connection. */
+    fun onFrame() {
+        healthy = true
+    }
+
+    /** The delay to wait before the next dial, plus [jitterMs]; advances the backoff. */
+    fun nextDelayMs(jitterMs: Long = 0L): Long {
+        if (healthy) currentMs = initialMs
+        healthy = false
+        val delayMs = currentMs + jitterMs
+        currentMs = (currentMs * 2).coerceAtMost(maxMs)
+        return delayMs
     }
 }

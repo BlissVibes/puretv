@@ -116,6 +116,8 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onShowBadges = { on -> settingsStore.updateSettings { it.copy(showBadges = on) } },
             compact = state.settings.compactMode,
             onCompact = { on -> settingsStore.updateSettings { it.copy(compactMode = on) } },
+            showNamePaints = state.settings.showSevenTvPaints,
+            onShowNamePaints = { on -> settingsStore.updateSettings { it.copy(showSevenTvPaints = on) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -330,6 +332,8 @@ private fun ChatPanel(
     onShowBadges: (Boolean) -> Unit,
     compact: Boolean,
     onCompact: (Boolean) -> Unit,
+    showNamePaints: Boolean,
+    onShowNamePaints: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -358,6 +362,13 @@ private fun ChatPanel(
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(label = "Compact chat", description = "Tighter rows, so more messages fit on screen.") {
                 ExpressiveSwitch(checked = compact, onCheckedChange = onCompact)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Show 7TV name paints",
+                description = "Show the gradient names 7TV users pick for themselves.",
+            ) {
+                ExpressiveSwitch(checked = showNamePaints, onCheckedChange = onShowNamePaints)
             }
         }
     }

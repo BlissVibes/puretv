@@ -22,4 +22,34 @@ class UserStateParseTest {
         assertIs<ChatEvent.SelfState>(event)
         assertEquals("#9B5DE5", event.color)
     }
+
+    @Test fun globalUserStateCarriesTheViewersUserId() {
+        val line = "@badges=;color=#00FF00;display-name=Dhawal;user-id=123456 :tmi.twitch.tv GLOBALUSERSTATE"
+        val event = TwitchIrcParser.parse(line, "shroud")
+        assertIs<ChatEvent.SelfState>(event)
+        assertEquals("123456", event.userId)
+    }
+
+    @Test fun userStateHasNoUserId() {
+        // Twitch only sends user-id on GLOBALUSERSTATE; USERSTATE must not invent one.
+        val line = "@badges=;color=#00FF00;display-name=Dhawal :tmi.twitch.tv USERSTATE #shroud"
+        val event = TwitchIrcParser.parse(line, "shroud")
+        assertIs<ChatEvent.SelfState>(event)
+        assertEquals("", event.userId)
+    }
+
+    @Test fun privmsgCarriesTheAuthorsUserId() {
+        val line = "@badges=;color=#FF0000;display-name=Alice;id=m1;tmi-sent-ts=1;user-id=987 " +
+            ":alice!alice@alice.tmi.twitch.tv PRIVMSG #shroud :hello"
+        val event = TwitchIrcParser.parse(line, "shroud")
+        assertIs<ChatEvent.Message>(event)
+        assertEquals("987", event.message.userId)
+    }
+
+    @Test fun privmsgWithoutUserIdLeavesItBlank() {
+        val line = "@display-name=Alice;id=m2 :alice!alice@alice.tmi.twitch.tv PRIVMSG #shroud :hi"
+        val event = TwitchIrcParser.parse(line, "shroud")
+        assertIs<ChatEvent.Message>(event)
+        assertEquals("", event.message.userId)
+    }
 }

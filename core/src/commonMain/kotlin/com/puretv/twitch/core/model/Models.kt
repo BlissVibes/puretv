@@ -140,6 +140,9 @@ data class ChatMessage(
     /** This incoming message @-mentions the local viewer; drives row highlighting.
      *  Viewer-relative, so it is computed at receipt (when selfLogin is known). */
     val mentionsSelf: Boolean = false,
+    /** The author's numeric Twitch id (IRC `user-id` tag). Blank when unknown, for
+     *  example on system rows. Looks up per-user extras such as 7TV name paints. */
+    val userId: String = "",
 )
 
 /** A non-base emote drawn over a base emote (7TV zero-width / overlay cosmetics). */
@@ -187,7 +190,13 @@ sealed class ChatEvent {
         val followersOnlyMinutes: Int? = null,
         val subsOnly: Boolean? = null,
     ) : ChatEvent()
-    data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
+    /** The viewer's own identity. [userId] comes only with GLOBALUSERSTATE; USERSTATE leaves it blank. */
+    data class SelfState(
+        val displayName: String,
+        val color: String,
+        val badges: List<Badge>,
+        val userId: String = "",
+    ) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
     /**
      * A NOTICE from Twitch addressed to this viewer, usually about a message they
@@ -280,4 +289,8 @@ data class AppSettings(
     val tvChatMode: String = TV_CHAT_OVER_VIDEO,
     // How solid the chat panel is, from 0.4 (see-through) to 1.
     val tvChatOpacity: Float = 0.85f,
+
+    // 7TV name paints (Windows only for now)
+    // Draw chatters' 7TV name paints (gradient names) in chat.
+    val showSevenTvPaints: Boolean = true,
 )

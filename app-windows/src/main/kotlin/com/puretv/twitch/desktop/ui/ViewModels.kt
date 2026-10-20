@@ -27,6 +27,8 @@ import com.puretv.twitch.core.emotes.SevenTvEmoteDelta
 import com.puretv.twitch.core.chat.buildSelfEcho
 import com.puretv.twitch.core.chat.outgoingChatBody
 import com.puretv.twitch.core.emotes.SevenTvEventClient
+import com.puretv.twitch.core.emotes.SevenTvPaint
+import com.puretv.twitch.core.emotes.SevenTvPaintStore
 import com.puretv.twitch.core.emotes.applySevenTvDelta
 import com.puretv.twitch.core.emotes.buildEmoteIndex
 import com.puretv.twitch.core.emotes.applyThirdPartyEmotes
@@ -327,7 +329,12 @@ data class StreamUiState(
     /** A stream-level fatal error (e.g. the local proxy port is in use). Distinct from
      *  a transient player-engine error; shown in place of the video with priority. */
     val fatalError: String? = null,
+    /** 7TV name paints by chatter Twitch id, an immutable snapshot (see [SevenTvPaintStore]). */
+    val namePaints: Map<String, SevenTvPaint> = emptyMap(),
 )
+
+/** How often learned 7TV name paints reach the chat: at most twice a second. */
+private const val NAME_PAINT_BATCH_MS = 500L
 
 /** Stream failures no retry can fix: say why straight away. */
 private val FINAL_FAILURES = setOf(FailureKind.OFFLINE, FailureKind.RESTRICTED, FailureKind.REGION_BLOCKED)
@@ -360,6 +367,8 @@ class StreamViewModel(
     private var selfDisplayName: String? = null
     private var selfColor: String? = null
     private var selfBadges: List<Badge> = emptyList()
+    // From GLOBALUSERSTATE only, so our own echoed lines can wear our 7TV name paint.
+    private var selfUserId: String = ""
     private var echoCounter = 0
     private val chatTimeline = ChatTimeline(channelLogin, selfLogin = { selfLogin }, clock = System::currentTimeMillis)
     private val playbackStallWatchdog = PlaybackStallWatchdog()
@@ -460,12 +469,27 @@ class StreamViewModel(
             }
             twitchChannelEmotes = twitchChannelLookup.await()
             rebuildEmoteIndicesAndPublish()
-            // Subscribe to live 7TV emote add/remove for this channel (EventAPI).
-            channel?.let { sevenTvEventClient.connect(it.id) }
+            // Subscribe to live 7TV emote add/remove for this channel (EventAPI),
+            // plus name paints (receive only, no 7TV presence is ever sent).
+            channel?.let { sevenTvEventClient.connect(it.id, cosmetics = true) }
         }
         // Live 7TV emote updates: fold each delta into the channel set and rebuild.
         scope.launch {
             sevenTvEventClient.updates.collect { applyEmoteDelta(it) }
+        }
+        // 7TV name paints: this one collector owns the store (the scope is
+        // multi-threaded), and chat gets an immutable snapshot at most twice a
+        // second, only when something changed.
+        scope.launch {
+            val paintStore = SevenTvPaintStore()
+            sevenTvEventClient.cosmetics.batchedEvery(NAME_PAINT_BATCH_MS).collect { batch ->
+                var changed = false
+                batch.forEach { if (paintStore.apply(it)) changed = true }
+                if (changed) {
+                    val snapshot = paintStore.snapshot()
+                    _state.update { it.copy(namePaints = snapshot) }
+                }
+            }
         }
         // Per-provider emote toggles are live: flipping show7tv/showBttv/showFfz in
         // Settings re-filters the visible emotes without leaving the stream. drop(1)
@@ -552,6 +576,7 @@ class StreamViewModel(
                         self.displayName.ifBlank { null }?.let { selfDisplayName = it }
                         selfColor = self.color
                         selfBadges = self.badges
+                        self.userId.ifBlank { null }?.let { selfUserId = it }
                     },
                     decorate = { it.copy(parsedParts = applyThirdPartyEmotes(it.parsedParts, emoteIndex)) },
                 )
@@ -643,6 +668,7 @@ class StreamViewModel(
             timestamp = System.currentTimeMillis(),
             replyParent = replyParent,
             emoteIndex = selfEchoIndex,
+            userId = selfUserId,
         )
         val echoed = listOf(ChatChange.Add(echo))
         _state.update { it.withChat(echoed).copy(replyingTo = null) }

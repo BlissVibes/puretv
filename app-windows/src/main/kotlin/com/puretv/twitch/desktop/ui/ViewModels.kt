@@ -64,6 +64,8 @@ import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -116,7 +118,9 @@ class HomeViewModel(
     private val followStore: FollowStore,
     private val settingsStore: DesktopSettingsStore,
 ) : DesktopViewModel() {
-    private val _state = MutableStateFlow(HomeUiState())
+    // Seeded from the in-memory session flag so a signed-in cold start never
+    // flashes the signed-out layout before the first emission.
+    private val _state = MutableStateFlow(HomeUiState(isLoggedIn = settingsStore.isLoggedIn))
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
 
     // Live status of the locally-followed channels. Refreshed when the followed
@@ -124,20 +128,17 @@ class HomeViewModel(
     // so anything saved-but-absent here renders as offline.
     private val followedLive = MutableStateFlow<List<StreamInfo>>(emptyList())
 
+    // One load at a time: Retry, Refresh and a sign-in change cancel and replace
+    // the load in flight instead of racing it.
+    private var loadJob: Job? = null
+
     init {
-        scope.launch {
-            _state.update { it.copy(isLoading = true) }
-            loadDirectory()
-            refreshFollowedLive()
-            _state.update { it.copy(isLoading = false) }
-        }
+        load(showSkeleton = true)
         scope.launch {
             combine(
                 streamRepository.topStreams,
                 followStore.followed,
                 followedLive,
-                // Signing in or out while Home is open swaps the sign-in prompt
-                // and the signed-out category shelf without a reload.
                 settingsStore.loggedInState,
             ) { top, followed, live, loggedIn -> HomeSources(top, followed, live, loggedIn) }
                 .collect { (top, followed, live, loggedIn) ->
@@ -154,13 +155,21 @@ class HomeViewModel(
         scope.launch {
             followStore.followed.collect { refreshFollowedLive() }
         }
+        // Signing in or out while Home is open reloads from the right source:
+        // Helix once signed in, the anonymous directory (with its category
+        // shelf) once signed out.
+        scope.launch {
+            settingsStore.loggedInState.drop(1).distinctUntilChanged().collect { refresh() }
+        }
     }
 
     private suspend fun refreshFollowedLive() {
         val logins = followStore.followed.value.map { it.login }
-        followedLive.value =
+        val live =
             if (logins.isEmpty()) emptyList()
             else runCatching { streamRepository.streamsForChannels(logins) }.getOrDefault(emptyList())
+        currentCoroutineContext().ensureActive()
+        followedLive.value = live
     }
 
     private fun buildFollowingCards(
@@ -195,9 +204,16 @@ class HomeViewModel(
             )
     }
 
-    fun refresh() = scope.launch {
-        loadDirectory()
-        refreshFollowedLive()
+    fun refresh() = load(showSkeleton = false)
+
+    private fun load(showSkeleton: Boolean) {
+        loadJob?.cancel()
+        loadJob = scope.launch {
+            if (showSkeleton) _state.update { it.copy(isLoading = true) }
+            loadDirectory()
+            refreshFollowedLive()
+            _state.update { it.copy(isLoading = false) }
+        }
     }
 
     /**
@@ -213,6 +229,9 @@ class HomeViewModel(
         }
         val streamsOk = runCatching { streamRepository.refreshTopStreams() }.isSuccess
         val loadedGames = games?.await()
+        // runCatching also swallows cancellation: a load replaced mid-flight
+        // must not write its result over the newer one.
+        ensureActive()
         _state.update { it.copy(loadFailed = !streamsOk, topGames = loadedGames ?: it.topGames) }
     }
 

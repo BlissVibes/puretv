@@ -107,6 +107,22 @@ class HomeSignedOutTest {
         s.vm.dispose()
     }
 
+    @Test fun aSignedInColdStartNeverStartsSignedOut() {
+        val s = setup(signedIn = true)
+        assertTrue(s.vm.state.value.isLoggedIn, "the first state must already be signed in, or Home flashes the signed-out layout")
+        s.vm.dispose()
+    }
+
+    @Test fun signingOutWhileHomeIsOpenLoadsTheCategoryShelf() {
+        val s = setup(signedIn = true)
+        s.vm.state.awaitMatching { !it.isLoading && it.topStreams.isNotEmpty() }
+        s.settings.clearTokens()
+        val state = s.vm.state.awaitMatching { !it.isLoggedIn && it.topGames.isNotEmpty() }
+        assertEquals(listOf("Just Chatting"), state.topGames.map { it.name })
+        assertEquals(listOf("caseoh_"), s.vm.state.awaitMatching { it.topStreams.firstOrNull()?.userLogin == "caseoh_" }.topStreams.map { it.userLogin })
+        s.vm.dispose()
+    }
+
     @Test fun signingInWhileHomeIsOpenDropsThePrompt() {
         val s = setup(signedIn = false)
         s.vm.state.awaitMatching { !it.isLoading }

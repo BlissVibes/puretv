@@ -158,7 +158,17 @@ fun MainScaffold(
         runCatching { navController.popBackStack(Routes.HOME, inclusive = false) }
         pendingOpen?.filterNotNull()?.collect { route ->
             pendingOpen.value = null
-            runCatching { if (route in TOP_TAB_ROUTES) navController.switchTab(route) else navController.go(route) }
+            runCatching {
+                val onStream = navController.currentBackStackEntry?.destination?.route == Routes.STREAM
+                when {
+                    route in TOP_TAB_ROUTES -> navController.switchTab(route)
+                    // Watching another stream: a fresh entry on top. launchSingleTop
+                    // would reuse the open stream's entry, and with it that stream's
+                    // view model, for the new channel.
+                    onStream -> navController.navigate(route)
+                    else -> navController.go(route)
+                }
+            }
         }
     }
     AskForGoLiveNotifications()

@@ -83,6 +83,27 @@ class AdBlockChannelStatusTest {
     }
 
     @Test
+    fun aLateReportFromAClosedTileDoesNotTouchThePill() = runTest {
+        val e = engine()
+        e.reportAdBlocked("shroud")
+        e.forgetChannel("shroud")
+        e.resetForNewStream()
+        e.reportFiltered(e.filterPlaylist(AD_PLAYLIST), "shroud")
+        assertEquals(AdBlockStatus.UNKNOWN, e.status.value)
+        assertEquals(AdBlockStatus.UNKNOWN, e.statusFor("shroud").first())
+    }
+
+    @Test
+    fun aReleasedChannelReportsAgainOnceItIsPlayedAgain() = runTest {
+        val e = engine()
+        e.forgetChannel("shroud")
+        e.claimChannel("shroud")
+        e.reportAdBlocked("shroud")
+        assertEquals(AdBlockStatus.AD_BLOCKED, e.status.value)
+        assertEquals(AdBlockStatus.AD_BLOCKED, e.statusFor("shroud").first())
+    }
+
+    @Test
     fun theCleanerReportsOnTheChannelItWasGiven() = runTest {
         val e = engine()
         val http = HttpClient(MockEngine { respond("", HttpStatusCode.OK) })

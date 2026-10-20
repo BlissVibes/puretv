@@ -194,6 +194,8 @@ class LocalStreamProxy(
 
                     totalRequests.incrementAndGet()
                     streamFailures.remove(channel.lowercase())
+                    // A new play of this channel: its reports count again.
+                    adBlockEngine.claimChannel(channel)
                     runCatching {
                         val playable = playableStreamCache.get(channel)
                         // Resolution already fetched and validated the master; reuse it.

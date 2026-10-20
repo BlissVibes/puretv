@@ -61,9 +61,23 @@ class AdBlockEngine(
     fun forgetChannel(channel: String) {
         val key = channel.lowercase()
         channelStatuses.update { if (key in it) it - key else it }
+        // A tile that was just closed can still have a playlist refresh in flight. Its
+        // late report must not touch the pill of whatever is watched next, so the
+        // channel stays muted until something starts it again ([claimChannel]).
+        released.update { if (key in it) it else (it + key).toList().takeLast(MAX_CHANNEL_STATUSES).toSet() }
     }
 
+    /** Starts listening to [channel]'s reports again, after a [forgetChannel]. */
+    fun claimChannel(channel: String) {
+        val key = channel.lowercase()
+        released.update { if (key in it) it - key else it }
+    }
+
+    // Insertion ordered, so the oldest entry is dropped first.
+    private val released = MutableStateFlow<Set<String>>(emptySet())
+
     private fun publish(status: AdBlockStatus, channel: String?) {
+        if (!channel.isNullOrBlank() && channel.lowercase() in released.value) return
         _status.value = status
         if (channel.isNullOrBlank()) return
         val key = channel.lowercase()
@@ -103,6 +117,7 @@ class AdBlockEngine(
      * ad") stayed on the new channel's pill until its first playlist refresh.
      */
     fun resetForNewStream(channel: String? = null) {
+        if (!channel.isNullOrBlank()) claimChannel(channel)
         publish(if (isEnabled) AdBlockStatus.UNKNOWN else AdBlockStatus.DISABLED, channel)
     }
 

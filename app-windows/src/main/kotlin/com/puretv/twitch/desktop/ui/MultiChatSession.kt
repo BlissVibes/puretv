@@ -147,7 +147,16 @@ class MultiChatSession(
                 chatClient.events.batchedEvery().collect { batch ->
                     // The socket is shared across switches; a straggler from the previous
                     // room must never land in this one.
-                    val mine = batch.filter { it !is ChatEvent.Message || it.message.channel.equals(login, ignoreCase = true) }
+                    // Only messages and notices that carry a row name their room; the other
+                    // events (room modes, deletions) carry none and cannot be told apart.
+                    val mine = batch.filter { event ->
+                        val room = when (event) {
+                            is ChatEvent.Message -> event.message.channel
+                            is ChatEvent.UserNotice -> event.raw?.channel
+                            else -> null
+                        }
+                        room == null || room.equals(login, ignoreCase = true)
+                    }
                     val changes = timeline.changesFor(
                         mine,
                         onSelfState = { self ->

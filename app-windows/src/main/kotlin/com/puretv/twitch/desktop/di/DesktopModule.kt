@@ -171,7 +171,7 @@ val desktopModule = module {
         StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     factory { (channelLogin: String) ->
-        MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }

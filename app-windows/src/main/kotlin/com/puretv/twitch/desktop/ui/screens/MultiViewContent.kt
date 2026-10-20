@@ -344,8 +344,11 @@ private fun Tile(
             contentAlignment = Alignment.Center,
         ) {
             val player = info.player
+            // The video surface stays mounted even when the tile has something to say
+            // (the message is in the strip below): removing it would leave the player
+            // holding a dead window, and a later reload would play into nothing.
             when {
-                info.message != null -> Text(
+                player == null && info.message != null -> Text(
                     info.message,
                     color = c.onSurfaceVariant,
                     style = MaterialTheme.typography.bodyMedium,
@@ -379,11 +382,18 @@ private fun Tile(
                     overflow = TextOverflow.Ellipsis,
                 )
                 val sub = when {
+                    info.message != null -> info.message
                     isActive -> "You are listening"
-                    info.isBuffering && info.message == null -> "Loading..."
+                    info.isBuffering -> "Loading..."
                     else -> "Click to listen"
                 }
-                Text(sub, style = MaterialTheme.typography.labelSmall, color = if (isActive) c.primary else c.onSurfaceVariant, maxLines = 1)
+                Text(
+                    sub,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (info.message == null && isActive) c.primary else c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             if (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null) AdBlockPill(info.adBlockStatus)
             ExpressiveIconButton(

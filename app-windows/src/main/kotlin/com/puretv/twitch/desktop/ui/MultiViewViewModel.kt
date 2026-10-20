@@ -13,7 +13,9 @@ import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.core.stream.Failure
 import com.puretv.twitch.core.stream.FailureKind
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
 import com.puretv.twitch.desktop.player.DEFAULT_VOLUME
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
@@ -80,11 +82,24 @@ class MultiViewViewModel(
     emoteRepository: EmoteRepository,
     badgeRepository: BadgeRepository,
     apiClient: TwitchApiClient,
+    private val players: DesktopPlayerProvider,
+    private val notifier: DesktopLiveNotifier,
 ) : DesktopViewModel() {
 
+    // Start at the volume the viewer last had on the normal stream screen, when that
+    // player exists and is not at zero; the settings hold no volume of their own.
     private val _state = MutableStateFlow(
-        MultiViewUiState(layout = MultiViewState().add(initialLogin)),
+        MultiViewUiState(
+            layout = MultiViewState().add(initialLogin),
+            volume = initialVolume(),
+        ),
     )
+
+    private fun initialVolume(): Int {
+        var volume = DEFAULT_VOLUME
+        players.ifCreated { p -> p.status.value.volume.takeIf { it > 0 }?.let { volume = it } }
+        return volume
+    }
     val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
 
     // One chat connection for the whole screen, following the active tile.
@@ -106,6 +121,14 @@ class MultiViewViewModel(
         @Volatile var autoRetries = 0
         @Volatile var playingHeight = 0
         @Volatile var closed = false
+        private val freed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        /** Stops and releases [player] exactly once, whichever of close and setup gets here first. */
+        fun freeOnce(player: VlcPlayer) {
+            if (!freed.compareAndSet(false, true)) return
+            player.stop()
+            player.release()
+        }
         val jobs = ArrayList<Job>()
     }
 
@@ -118,6 +141,11 @@ class MultiViewViewModel(
     init {
         scope.launch { startProxy() }
         _state.value.layout.tiles.forEach { openRuntime(it) }
+        // Go-live toasts skip every channel on screen, not only the one App knows about.
+        scope.launch {
+            _state.map { s -> s.layout.tiles.mapTo(HashSet()) { it.login } }.distinctUntilChanged()
+                .collect { notifier.alsoWatching = it }
+        }
         // Chat belongs to the active tile: when the sound moves, so does the chat.
         scope.launch {
             _state.map { it.layout.active?.login }.distinctUntilChanged().collect { chat.switchTo(it) }
@@ -209,15 +237,14 @@ class MultiViewViewModel(
             // libVLC is built on first use and its plugin scan is slow: not on the UI thread.
             val player = VlcPlayer(engine, audioOutput = TILE_AUDIO_OUTPUT)
             if (rt.closed) {
-                player.release()
+                rt.freeOnce(player)
                 return@launch
             }
             rt.player = player
             // A close that landed between the check above and this assignment saw no
-            // player to free, so free it here.
+            // player to free, so free it here (a no-op if the close got there first).
             if (rt.closed) {
-                player.stop()
-                player.release()
+                rt.freeOnce(player)
                 return@launch
             }
             updateInfo(rt.id) {
@@ -228,7 +255,7 @@ class MultiViewViewModel(
             }
             if (!player.isAvailable) return@launch
             applyAudio()
-            adBlockEngine.resetForNewStream(rt.login)
+            if (!rt.closed) adBlockEngine.resetForNewStream(rt.login)
             // Wait for the shared proxy start before the first request goes out.
             proxyReady.first { it != null }
             if (proxyReady.value != true || rt.closed) return@launch
@@ -342,16 +369,14 @@ class MultiViewViewModel(
             runtimes.remove(id)?.also { it.closed = true }
         } ?: return
         synchronized(lock) { rt.jobs.toList() }.forEach { it.cancel() }
-        rt.player?.let {
-            it.stop()
-            it.release()
-        }
+        rt.player?.let { rt.freeOnce(it) }
         adBlockEngine.forgetChannel(rt.login)
     }
 
     /** Stops and frees every tile, so leaving the screen leaves nothing playing or decoding. */
     override fun onCleared() {
         chat.close()
+        notifier.alsoWatching = emptySet()
         val ids = synchronized(lock) { runtimes.keys.toList() }
         ids.forEach { closeRuntime(it) }
     }

@@ -36,29 +36,27 @@ import kotlinx.serialization.json.putJsonArray
  *
  * Every input travels as a GQL variable, never spliced into the query text,
  * so a search for `"}{` is just a search.
+ *
+ * One page per list, on purpose: anonymously, every `after` cursor (top
+ * streams, a channel's videos) is refused with "failed integrity check"
+ * (live capture, 2026-10-20). No cursor is handed out, so nothing can build
+ * paging on one that cannot work.
  */
 class TwitchGqlDirectoryClient(
     private val httpClient: HttpClient,
     private val json: Json = Json { ignoreUnknownKeys = true },
 ) {
 
-    /** Live streams across Twitch, most viewers first. Pass [after] from the previous page. */
-    suspend fun topStreams(first: Int = 20, after: String? = null): GqlStreamPage {
+    /**
+     * Live streams across Twitch, most viewers first. One page of at most
+     * [TOP_STREAMS_MAX] (GQL refuses more for this list).
+     */
+    suspend fun topStreams(first: Int = 20): List<StreamInfo> {
         val data: GqlTopStreamsData = execute(
             TOP_STREAMS_QUERY,
-            buildJsonObject {
-                put("first", first.coerceIn(1, MAX_PAGE))
-                after?.let { put("after", it) }
-            },
+            buildJsonObject { put("first", first.coerceIn(1, TOP_STREAMS_MAX)) },
         )
-        val connection = data.streams
-        val edges = connection?.edges.orEmpty().filterNotNull()
-        val cursor = if (connection?.pageInfo?.hasNextPage == true) {
-            edges.lastOrNull()?.cursor?.takeIf { it.isNotBlank() }
-        } else {
-            null
-        }
-        return GqlStreamPage(edges.mapNotNull { it.node?.liveStreamInfo() }, cursor)
+        return data.streams?.edges.orEmpty().mapNotNull { it?.node?.liveStreamInfo() }
     }
 
     /** Top categories by current viewers, like Helix `/games/top`. */
@@ -148,16 +146,22 @@ class TwitchGqlDirectoryClient(
             throw GqlDirectoryException("Twitch GQL request failed: HTTP ${response.status.value}")
         }
         val parsed = json.decodeFromString<GqlDirectoryResponse<T>>(response.bodyAsText())
-        // A bad query is HTTP 200 with `errors` and no `data`: that is a failure,
-        // not an empty directory.
-        return parsed.data ?: throw GqlDirectoryException(
-            "Twitch GQL returned no data: " +
-                parsed.errors.joinToString("; ") { it.message }.ifBlank { "empty response" },
-        )
+        // GQL reports failures as HTTP 200 with `errors`, usually beside a `data`
+        // whose field is null ({"streams":null} for an out-of-range page size or a
+        // failed integrity check). Any error is a failure, never an empty directory.
+        if (parsed.errors.isNotEmpty()) {
+            throw GqlDirectoryException(
+                "Twitch GQL request failed: " + parsed.errors.joinToString("; ") { it.message }.ifBlank { "unknown error" },
+            )
+        }
+        return parsed.data ?: throw GqlDirectoryException("Twitch GQL returned no data")
     }
 
-    private companion object {
-        // Helix's page cap; GQL honours the same size for these connections.
+    companion object {
+        /** Top-level `streams` refuses a page above 30 ("value must be between 1 and 30"). */
+        const val TOP_STREAMS_MAX = 30
+
+        /** `games`, `game.streams`, `searchFor`, `users` and `videos` all accept 100 (measured). */
         const val MAX_PAGE = 100
     }
 }
@@ -173,8 +177,8 @@ private const val STREAM_FIELDS =
         "game { id name displayName } freeformTags { name }"
 
 internal const val TOP_STREAMS_QUERY =
-    "query(\$first: Int, \$after: Cursor) { streams(first: \$first, after: \$after, options: {sort: VIEWER_COUNT}) " +
-        "{ edges { cursor node { $STREAM_FIELDS } } pageInfo { hasNextPage } } }"
+    "query(\$first: Int) { streams(first: \$first, options: {sort: VIEWER_COUNT}) " +
+        "{ edges { node { $STREAM_FIELDS } } } }"
 
 internal const val TOP_GAMES_QUERY =
     "query(\$first: Int) { games(first: \$first, options: {sort: VIEWER_COUNT}) " +

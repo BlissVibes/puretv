@@ -30,11 +30,8 @@ internal data class GqlDirectoryResponse<T>(
 @Serializable
 internal data class GqlDirectoryError(val message: String = "")
 
-/** A directory query failed: non-2xx, an `errors` body, or no `data` at all. */
+/** A directory query failed: non-2xx, any `errors` entry, or no `data` at all. */
 class GqlDirectoryException(message: String) : Exception(message)
-
-/** One page of top streams; [cursor] is null on the last page. */
-data class GqlStreamPage(val streams: List<StreamInfo>, val cursor: String?)
 
 // ---- Shared node shapes ----
 
@@ -79,16 +76,10 @@ internal data class GqlGame(
 internal data class GqlTag(val name: String? = null)
 
 @Serializable
-internal data class GqlPageInfo(val hasNextPage: Boolean = false)
+internal data class GqlStreamEdge(val node: GqlStreamNode? = null)
 
 @Serializable
-internal data class GqlStreamEdge(val cursor: String? = null, val node: GqlStreamNode? = null)
-
-@Serializable
-internal data class GqlStreamConnection(
-    val edges: List<GqlStreamEdge?> = emptyList(),
-    val pageInfo: GqlPageInfo? = null,
-)
+internal data class GqlStreamConnection(val edges: List<GqlStreamEdge?> = emptyList())
 
 // ---- Per-query data shapes ----
 

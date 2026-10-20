@@ -42,7 +42,7 @@ class StreamRepository(
         val streams = when {
             anonymous == null -> apiClient.getStreams(gameIds = listOfNotNull(gameId))
             gameId != null -> anonymous.streamsForGame(gameId, first = 20)
-            else -> anonymous.topStreams(first = 20).streams
+            else -> anonymous.topStreams(first = 20)
         }
         _topStreams.value = streams
         return streams

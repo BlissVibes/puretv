@@ -56,18 +56,18 @@ class TwitchGqlDirectoryClientTest {
         val api = replying(
             """
             {"data":{"streams":{"edges":[
-              {"cursor":"c1","node":$caseohNode},
+              {"node":$caseohNode},
               null,
-              {"cursor":"c2","node":{"id":"9","type":"rerun","broadcaster":{"login":"old"}}},
-              {"cursor":"c3","node":{"id":"10","title":"no broadcaster"}}
-            ],"pageInfo":{"hasNextPage":true}}}}
+              {"node":{"id":"9","type":"rerun","broadcaster":{"login":"old"}}},
+              {"node":{"id":"10","title":"no broadcaster"}}
+            ]}}}
             """.trimIndent(),
         )
 
-        val page = api.topStreams(first = 20)
+        val streams = api.topStreams(first = 20)
 
-        assertEquals(1, page.streams.size, "null edges, non-live and broadcaster-less nodes are dropped")
-        val s = page.streams.single()
+        assertEquals(1, streams.size, "null edges, non-live and broadcaster-less nodes are dropped")
+        val s = streams.single()
         assertEquals("320909928288", s.id)
         assertEquals("267160288", s.userId)
         assertEquals("caseoh_", s.userLogin)
@@ -84,23 +84,41 @@ class TwitchGqlDirectoryClientTest {
             "screens fill a Helix-style size template, so the concrete size must become one",
         )
         assertEquals(listOf("English", "funny"), s.tags)
-        assertEquals("c3", page.cursor, "the next page starts after the last edge")
     }
 
-    @Test fun lastPageHasNoCursor() = runTest {
-        val api = replying("""{"data":{"streams":{"edges":[{"cursor":"c1","node":$caseohNode}],"pageInfo":{"hasNextPage":false}}}}""")
-        assertNull(api.topStreams().cursor)
+    @Test fun pageSizesAreClampedPerQuery() = runTest {
+        val firsts = mutableMapOf<String, String?>()
+        val api = client { request ->
+            val body = request.bodyJson()
+            val vars = body["variables"]!!.jsonObject
+            val key = when (body["query"]!!.jsonPrimitive.content) {
+                TOP_STREAMS_QUERY -> "streams"
+                TOP_GAMES_QUERY -> "games"
+                SEARCH_QUERY -> "search"
+                else -> "other"
+            }
+            firsts[key] = (vars["first"] ?: vars["limit"])?.jsonPrimitive?.content
+            respond("""{"data":{"streams":{"edges":[]},"games":{"edges":[]},"searchFor":null}}""", HttpStatusCode.OK, jsonHeaders)
+        }
+        api.topStreams(first = 500)
+        api.topGames(first = 500)
+        api.searchChannels("x", first = 500)
+        // Captured: top-level streams answers first=31 with "value must be between 1 and 30".
+        assertEquals("30", firsts["streams"])
+        assertEquals("100", firsts["games"])
+        assertEquals("100", firsts["search"])
     }
 
-    @Test fun topStreamsSendTheCursorAsAVariable() = runTest {
+    @Test fun topStreamsSendNoCursor() = runTest {
+        // Anonymous cursors fail the integrity check, so none is ever sent.
         var variables: JsonObject? = null
         val api = client { request ->
             variables = request.bodyJson()["variables"]?.jsonObject
             respond("""{"data":{"streams":{"edges":[]}}}""", HttpStatusCode.OK, jsonHeaders)
         }
-        api.topStreams(first = 30, after = "abc")
-        assertEquals("30", variables?.get("first")?.jsonPrimitive?.content)
-        assertEquals("abc", variables?.get("after")?.jsonPrimitive?.content)
+        api.topStreams(first = 25)
+        assertEquals("25", variables?.get("first")?.jsonPrimitive?.content)
+        assertNull(variables?.get("after"))
     }
 
     @Test fun topGamesUseDisplayNamesAndSizeTemplates() = runTest {
@@ -130,6 +148,24 @@ class TwitchGqlDirectoryClientTest {
     @Test fun unknownGameIsEmptyNotAnError() = runTest {
         val api = replying("""{"data":{"game":null}}""")
         assertEquals(emptyList(), api.streamsForGame("0"))
+    }
+
+    @Test fun errorsBesideDataAreAFailure() = runTest {
+        // Captured: Twitch's real failures are HTTP 200 with errors AND a data
+        // object whose field is null, so "data is present" is not success.
+        val api = replying(
+            """{"errors":[{"message":"argument 'first' value must be between 1 and 30.","path":["streams"]}],"data":{"streams":null}}""",
+        )
+        val e = assertFailsWith<GqlDirectoryException> { api.topStreams() }
+        assertTrue(e.message!!.contains("between 1 and 30"), "the GQL message is kept for diagnostics")
+    }
+
+    @Test fun aFailedIntegrityCheckIsAFailure() = runTest {
+        val api = replying(
+            """{"errors":[{"message":"failed integrity check","path":["streams"],"extensions":{"code":"IntegrityCheckFailed"}}],""" +
+                """"data":{"streams":null}}""",
+        )
+        assertFailsWith<GqlDirectoryException> { api.topStreams() }
     }
 
     @Test fun anErrorsBodyWithNoDataIsAFailure() = runTest {

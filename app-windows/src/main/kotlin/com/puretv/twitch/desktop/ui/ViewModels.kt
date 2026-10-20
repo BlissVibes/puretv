@@ -63,6 +63,7 @@ import com.puretv.twitch.desktop.player.DesktopPlayer
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -102,11 +103,16 @@ data class HomeUiState(
     val isLoggedIn: Boolean = false,
     val following: List<FollowCardState> = emptyList(),
     val topStreams: List<StreamInfo> = emptyList(),
+    /** Popular categories, loaded only while signed out (signed in, Browse has them). */
+    val topGames: List<GameInfo> = emptyList(),
     val isLoading: Boolean = false,
+    /** The last live-streams load failed, so an empty Home can say so and offer a retry. */
+    val loadFailed: Boolean = false,
 )
 
 class HomeViewModel(
     private val streamRepository: StreamRepository,
+    private val channelRepository: ChannelRepository,
     private val followStore: FollowStore,
     private val settingsStore: DesktopSettingsStore,
 ) : DesktopViewModel() {
@@ -121,7 +127,7 @@ class HomeViewModel(
     init {
         scope.launch {
             _state.update { it.copy(isLoading = true) }
-            runCatching { streamRepository.refreshTopStreams() }
+            loadDirectory()
             refreshFollowedLive()
             _state.update { it.copy(isLoading = false) }
         }
@@ -130,12 +136,14 @@ class HomeViewModel(
                 streamRepository.topStreams,
                 followStore.followed,
                 followedLive,
-            ) { top, followed, live -> Triple(top, followed, live) }
-                .collect { (top, followed, live) ->
+                // Signing in or out while Home is open swaps the sign-in prompt
+                // and the signed-out category shelf without a reload.
+                settingsStore.loggedInState,
+            ) { top, followed, live, loggedIn -> HomeSources(top, followed, live, loggedIn) }
+                .collect { (top, followed, live, loggedIn) ->
                     _state.update {
                         it.copy(
-                            // Audit U9: in-memory flag, not a per-emission token decrypt.
-                            isLoggedIn = settingsStore.isLoggedIn,
+                            isLoggedIn = loggedIn,
                             following = buildFollowingCards(followed, live),
                             topStreams = top,
                         )
@@ -188,8 +196,36 @@ class HomeViewModel(
     }
 
     fun refresh() = scope.launch {
-        runCatching { streamRepository.refreshTopStreams() }
+        loadDirectory()
         refreshFollowedLive()
+    }
+
+    /**
+     * Top live streams, plus popular categories when signed out. Signed out,
+     * the repositories read both through anonymous GQL; the category shelf is
+     * skipped when signed in so a signed-in Home makes no extra call.
+     */
+    private suspend fun loadDirectory() = coroutineScope {
+        val games = if (settingsStore.isLoggedIn) {
+            null
+        } else {
+            async { runCatching { channelRepository.topGames().take(HOME_CATEGORY_COUNT) }.getOrNull() }
+        }
+        val streamsOk = runCatching { streamRepository.refreshTopStreams() }.isSuccess
+        val loadedGames = games?.await()
+        _state.update { it.copy(loadFailed = !streamsOk, topGames = loadedGames ?: it.topGames) }
+    }
+
+    private data class HomeSources(
+        val top: List<StreamInfo>,
+        val followed: List<FollowedChannel>,
+        val live: List<StreamInfo>,
+        val loggedIn: Boolean,
+    )
+
+    private companion object {
+        // Enough to fill the shelf on a wide window; Browse has the full list.
+        const val HOME_CATEGORY_COUNT = 12
     }
 }
 

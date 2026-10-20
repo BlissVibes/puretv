@@ -194,8 +194,10 @@ class LocalStreamProxy(
 
                     totalRequests.incrementAndGet()
                     streamFailures.remove(channel.lowercase())
-                    // A new play of this channel: its reports count again.
-                    adBlockEngine.claimChannel(channel)
+                    // A new play of this channel: its reports count again. Multi-stream tiles
+                    // (they send a cap) claim their own channel when they open, so a request
+                    // from a tile that was just closed cannot bring the channel back to life.
+                    if (capHeight == null) adBlockEngine.claimChannel(channel)
                     runCatching {
                         val playable = playableStreamCache.get(channel)
                         // Resolution already fetched and validated the master; reuse it.

@@ -183,6 +183,16 @@ object MultiShortcuts {
         return action
     }
 
+    /**
+     * The volume and mute state after Up or Down. Muted: Up brings the sound back (at the
+     * stepped volume when the stored one is 0, so it is never silent), Down stays quiet.
+     */
+    fun nudged(volume: Int, soundOff: Boolean, up: Boolean): Pair<Int, Boolean> = when {
+        soundOff && !up -> volume to true
+        soundOff && volume > 0 -> volume to false
+        else -> PlayerShortcuts.steppedVolume(volume, up) to false
+    }
+
     /** The one-line hint under the grid, from the same table the keys use. */
     const val HINT = "Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move the active channel"
 }

@@ -226,11 +226,10 @@ class MultiViewViewModel(
     /** Up or Down on the keyboard: volume for the active tile, as on the normal stream screen. */
     fun nudgeVolume(up: Boolean) {
         val s = _state.value
-        when {
-            // Muted: Up brings back the volume from before the mute; Down stays quiet.
-            s.soundOff -> if (up) toggleMute()
-            else -> setVolume(PlayerShortcuts.steppedVolume(s.volume, up))
-        }
+        val (volume, off) = MultiShortcuts.nudged(s.volume, s.soundOff, up)
+        if (off == s.soundOff && volume == s.volume) return
+        _state.update { it.copy(volume = volume, soundOff = off) }
+        applyAudio()
     }
 
     fun setVolume(volume: Int) {

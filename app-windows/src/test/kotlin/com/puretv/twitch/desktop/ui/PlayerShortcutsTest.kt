@@ -156,4 +156,12 @@ class PlayerShortcutsTest {
     @Test fun theMultiStreamHintHasNoLongDashes() {
         assertTrue(MultiShortcuts.HINT.none { it.code == 0x2013 || it.code == 0x2014 })
     }
+
+    @Test fun upFromMutedBringsBackSoundEvenWhenTheStoredVolumeIsZero() {
+        assertEquals(40 to false, MultiShortcuts.nudged(40, soundOff = true, up = true))
+        assertEquals(5 to false, MultiShortcuts.nudged(0, soundOff = true, up = true))
+        assertEquals(40 to true, MultiShortcuts.nudged(40, soundOff = true, up = false))
+        assertEquals(45 to false, MultiShortcuts.nudged(40, soundOff = false, up = true))
+        assertEquals(0 to false, MultiShortcuts.nudged(0, soundOff = false, up = false))
+    }
 }

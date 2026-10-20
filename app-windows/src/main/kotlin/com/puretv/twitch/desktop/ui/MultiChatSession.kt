@@ -142,21 +142,14 @@ class MultiChatSession(
             // Everything below is a child of this room's job, so a switch cancels the
             // emote and badge loads along with the chat collector.
             coroutineScope {
+                var joined = false
                 launch { loadEmotes() }
                 chatClient.connect(login, saved?.accessToken, saved?.login)
                 chatClient.events.batchedEvery().collect { batch ->
                     // The socket is shared across switches; a straggler from the previous
                     // room must never land in this one.
-                    // Only messages and notices that carry a row name their room; the other
-                    // events (room modes, deletions) carry none and cannot be told apart.
-                    val mine = batch.filter { event ->
-                        val room = when (event) {
-                            is ChatEvent.Message -> event.message.channel
-                            is ChatEvent.UserNotice -> event.raw?.channel
-                            else -> null
-                        }
-                        room == null || room.equals(login, ignoreCase = true)
-                    }
+                    val (mine, nowJoined) = eventsForRoom(batch, login, joined)
+                    joined = nowJoined
                     val changes = timeline.changesFor(
                         mine,
                         onSelfState = { self ->
@@ -244,4 +237,38 @@ class MultiChatSession(
             }
         }
     }
+}
+
+/**
+ * The events of [batch] that belong to the room [login], and whether this room's own
+ * connection has opened by the end of it ([joined] going in).
+ *
+ * Messages and notices that carry a row name their room, so those are matched by
+ * name. Room modes, deletions and server notices carry none; each connection starts
+ * with its own "connected" event, so anything of that kind seen before it comes from
+ * the previous room's socket and is dropped.
+ */
+internal fun eventsForRoom(batch: List<ChatEvent>, login: String, joined: Boolean): Pair<List<ChatEvent>, Boolean> {
+    var open = joined
+    val mine = ArrayList<ChatEvent>(batch.size)
+    for (event in batch) {
+        when (event) {
+            is ChatEvent.ConnectionState -> {
+                if (event.connected) open = true
+                mine += event
+            }
+            is ChatEvent.Message ->
+                if (event.message.channel.equals(login, ignoreCase = true)) mine += event
+            is ChatEvent.UserNotice -> {
+                val room = event.raw?.channel
+                if (room != null) {
+                    if (room.equals(login, ignoreCase = true)) mine += event
+                } else if (open) {
+                    mine += event
+                }
+            }
+            else -> if (open) mine += event
+        }
+    }
+    return mine to open
 }

@@ -12,6 +12,8 @@ import androidx.compose.ui.graphics.Shader
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import com.puretv.twitch.core.emotes.SevenTvPaint
 import com.puretv.twitch.core.emotes.SevenTvPaintFunction
 import kotlin.math.PI
@@ -97,6 +99,52 @@ fun namePaintSpec(paint: SevenTvPaint): NamePaintSpec? {
     }
 }
 
+/** The WCAG contrast ratio (1 to 21) between two colours. */
+fun contrastRatio(a: Color, b: Color): Float {
+    val la = a.luminance()
+    val lb = b.luminance()
+    return (maxOf(la, lb) + 0.05f) / (minOf(la, lb) + 0.05f)
+}
+
+/** The smallest ratio a name paint may have against the chat background before it is lifted. */
+const val MIN_NAME_PAINT_CONTRAST = 3f
+
+/**
+ * Keeps a paint readable on [background]: when the mean luminance of its colours
+ * has a contrast ratio below [minRatio], every colour is blended the same small
+ * amount towards white (dark background) or black (light background) until it
+ * does. A paint that already reads fine comes back unchanged, and a lifted one
+ * keeps its hues and its gradient shape.
+ */
+fun NamePaintSpec.withContrastOn(background: Color, minRatio: Float = MIN_NAME_PAINT_CONTRAST): NamePaintSpec {
+    val colors = when (this) {
+        is NamePaintSpec.Solid -> listOf(color)
+        is NamePaintSpec.Linear -> colors
+        is NamePaintSpec.Radial -> colors
+    }
+    fun meanContrast(blend: (Color) -> Color): Float {
+        val mean = colors.map { blend(it).luminance() }.average().toFloat()
+        val bg = background.luminance()
+        return (maxOf(mean, bg) + 0.05f) / (minOf(mean, bg) + 0.05f)
+    }
+    if (meanContrast { it } >= minRatio) return this
+    val target = if (background.luminance() < 0.18f) Color.White else Color.Black
+    // Blending all the way reaches the best contrast there is; if even that falls
+    // short (a mid-grey background) take it anyway.
+    var low = 0f
+    var high = 1f
+    repeat(12) {
+        val mid = (low + high) / 2f
+        if (meanContrast { lerp(it, target, mid) } >= minRatio) high = mid else low = mid
+    }
+    val lift = { color: Color -> lerp(color, target, high) }
+    return when (this) {
+        is NamePaintSpec.Solid -> copy(color = lift(color))
+        is NamePaintSpec.Linear -> copy(colors = colors.map(lift))
+        is NamePaintSpec.Radial -> copy(colors = colors.map(lift))
+    }
+}
+
 /**
  * The CSS gradient line for [angleDegrees] across a [size] box: centred, pointing
  * along the angle (0 up, 90 right, clockwise), and long enough that its ends touch
@@ -171,15 +219,21 @@ object NamePaintBrushes {
      * the shader for its own size), built once when the row or its paint changes,
      * never per frame.
      */
-    fun brushFor(paint: SevenTvPaint): Brush? = when (val spec = specFor(paint)) {
-        null -> null
-        is NamePaintSpec.Solid -> SolidColor(spec.color)
-        is NamePaintSpec.Linear -> LinearPaintBrush(spec)
-        is NamePaintSpec.Radial -> RadialPaintBrush(spec)
+    fun brushFor(paint: SevenTvPaint, background: Color = Color.Unspecified): Brush? {
+        val raw = specFor(paint) ?: return null
+        val spec = if (background == Color.Unspecified) raw else raw.withContrastOn(background)
+        return when (spec) {
+            is NamePaintSpec.Solid -> SolidColor(spec.color)
+            is NamePaintSpec.Linear -> LinearPaintBrush(spec)
+            is NamePaintSpec.Radial -> RadialPaintBrush(spec)
+        }
     }
 }
 
-/** The brush for [paint] on this row, or null to keep the Twitch name colour. */
+/**
+ * The brush for [paint] on this row, or null to keep the Twitch name colour. Pass
+ * the colour the name sits on so a paint too close to it is lifted to stay readable.
+ */
 @Composable
-fun rememberNamePaintBrush(paint: SevenTvPaint?): Brush? =
-    remember(paint) { paint?.let(NamePaintBrushes::brushFor) }
+fun rememberNamePaintBrush(paint: SevenTvPaint?, background: Color = Color.Unspecified): Brush? =
+    remember(paint, background) { paint?.let { NamePaintBrushes.brushFor(it, background) } }

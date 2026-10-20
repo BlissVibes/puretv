@@ -119,6 +119,13 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **Smoother busy chats.** Very fast chats update in small batches instead
   of redrawing for every message, so the video and chat stay smooth.
 
+- **Multi-stream grows up (Windows).** The sleep timer now follows you into multi-stream and stops every tile.
+  Up, Down and M change the volume and mute of the tile you are listening to, and Ctrl with Left or Right moves a tile.
+- **Mute a channel's go-live banner on TV.** Press Menu on a channel in Following. Muted channels are listed in Settings.
+- **Badges and Twitch emotes before you sign in.** Chat shows Twitch's own badges and most emotes even when signed out.
+- **Show badges** can now be switched off on phone and TV, and a text chip still shows for any badge picture that did not load.
+- **7TV names stay readable.** Very dark or very light name colours are nudged so they can be read on the chat background.
+
 ### Fixed
 - **The phone app stays signed in.** It only renewed your sign-in when it
   started, so with background play, follows and chat stopped working after a

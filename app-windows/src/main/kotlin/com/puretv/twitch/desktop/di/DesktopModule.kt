@@ -48,27 +48,27 @@ import org.koin.core.parameter.parametersOf
 import org.koin.dsl.module
 
 /**
- * SECTION 11/12.4 — Windows-specific Koin bindings layered on top of
+ * SECTION 11/12.4: Windows-specific Koin bindings layered on top of
  * `coreModule` (shared API client, repositories, ad-block engine, chat
- * client — Sections 3–5). Mirrors `androidModule`/`tvModule` in shape;
+ * client - Sections 3 to 5). Mirrors `androidModule`/`tvModule` in shape;
  * differs in *what* backs persistence (file-based, not Room/DataStore) and
  * playback (VLCJ + local proxy, not ExoPlayer).
  *
- * NOTE — ViewModels are bound with `factory { }`, not Koin's `viewModel { }`
+ * NOTE - ViewModels are bound with `factory { }`, not Koin's `viewModel { }`
  * DSL (that's an AndroidX-lifecycle integration this plain-JVM module doesn't
  * pull in). Screens obtain them via `rememberDesktopViewModel { koin.get() }`
  * / `rememberDesktopViewModel(login) { koin.get { parametersOf(login) } }`.
  */
 val desktopModule = module {
     // --- Networking engine (coreModule provides `single { buildKtorClient(get()) }`,
-    // which resolves an `HttpClientEngine` — OkHttp here, matching Android/TV). ---
+    // which resolves an `HttpClientEngine` - OkHttp here, matching Android/TV). ---
     single<HttpClientEngine> { OkHttp.create() }
 
     // --- Persistence -------------------------------------------------------
     // Takes TokenHolder (from coreModule) so saved tokens flow back into the
     // shared HttpClient auth path on both fresh login and cold-start restore.
     single { DesktopSettingsStore(get()) }
-    // Local "Following" list (the in-app library) — see FollowStore.
+    // Local "Following" list (the in-app library) - see FollowStore.
     single { FollowStore() }
     // Go-live alerts. The monitor is the app's one asker of "which follows are live"
     // (see LiveFollowsMonitor): the rail reads through it, the alert timer in main.kt
@@ -96,11 +96,11 @@ val desktopModule = module {
         val monitor = get<LiveFollowsMonitor>()
         FollowedChannelsService(get(), followedLive = { userId -> monitor.followedLive(userId) })
     }
-    // Per-VOD playback positions ("continue watching") — see WatchProgressStore.
+    // Per-VOD playback positions ("continue watching") - see WatchProgressStore.
     single { WatchProgressStore() }
-    // Locally-persisted viewer-count history for the channel stats panel — see ViewerHistoryStore.
+    // Locally-persisted viewer-count history for the channel stats panel - see ViewerHistoryStore.
     single { ViewerHistoryStore() }
-    // In-app auto-updater (GitHub Releases) — see UpdateManager.
+    // In-app auto-updater (GitHub Releases) - see UpdateManager.
     single { UpdateManager() }
     // One Coil disk cache for the whole app: the image loader fills it with
     // avatars, thumbnails and emotes, and the animated-emote decoder reads from
@@ -141,7 +141,7 @@ val desktopModule = module {
     // --- Auth ------------------------------------------------------------------
     single { DesktopOAuthManager() }
 
-    // --- ViewModels (plain factories — see note above) -------------------------
+    // --- ViewModels (plain factories - see note above) -------------------------
     factory { HomeViewModel(get(), get(), get()) }
     factory {
         val store = get<DesktopSettingsStore>()

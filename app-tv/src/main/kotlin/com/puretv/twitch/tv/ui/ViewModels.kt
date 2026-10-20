@@ -130,7 +130,15 @@ class HomeViewModel(
         // still loads: core reads the public directory through anonymous GQL.
         viewModelScope.launch {
             settings.flow.collect { prefs ->
-                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank(), sessionKnown = true) }
+                val loggedIn = prefs.accessToken.isNotBlank()
+                _state.update {
+                    it.copy(
+                        isLoggedIn = loggedIn,
+                        sessionKnown = true,
+                        // Logging out drops the follows the moment it happens.
+                        followedLive = if (loggedIn) it.followedLive else emptyList(),
+                    )
+                }
             }
         }
         refresh()
@@ -147,6 +155,10 @@ class HomeViewModel(
             if (prefs.userId.isNotBlank()) {
                 runCatching { streamRepository.followedLiveStreams(prefs.userId) }
                     .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+            } else {
+                // Signed out (or just logged out): the last account's follows must
+                // not linger as a FOLLOWING hero above the sign-in panel.
+                _state.update { it.copy(followedLive = emptyList()) }
             }
             val ok = loadTopStreamsResilient()
             _state.update {

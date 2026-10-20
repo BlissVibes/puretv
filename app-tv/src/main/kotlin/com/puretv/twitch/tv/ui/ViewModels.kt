@@ -704,6 +704,11 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(lowLatencyMode = enabled) }
     }
 
+    // PureTvTvApp hands the saved value to the player, which applies it live.
+    fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioNormalizer = enabled) }
+    }
+
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {
         settingsStore.update { it.copy(adBlockStrategy = strategy.name.lowercase()) }
     }

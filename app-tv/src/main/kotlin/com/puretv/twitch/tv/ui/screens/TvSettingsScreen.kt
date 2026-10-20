@@ -110,6 +110,8 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
                 onSelect = viewModel::setPreferredQuality,
                 lowLatency = state.settings.lowLatencyMode,
                 onLowLatencyChange = viewModel::setLowLatency,
+                audioNormalizer = state.settings.audioNormalizer,
+                onAudioNormalizerChange = viewModel::setAudioNormalizer,
             )
         }
         TvDivider()
@@ -255,6 +257,8 @@ private fun StreamQualitySection(
     onSelect: (StreamQuality) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    audioNormalizer: Boolean,
+    onAudioNormalizerChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTvTheme.colors
     Column {
@@ -287,6 +291,25 @@ private fun StreamQualitySection(
                 )
             }
             Switch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+        }
+        Spacer(Modifier.height(20.dp))
+        TvDivider()
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Even out loud and quiet audio", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                        "leave the volume alone. Music can sound flatter with it on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
         }
     }
 }

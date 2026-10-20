@@ -89,6 +89,7 @@ fun TvFollowingScreen(
     viewModel: TvFollowingViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
+    val muted by viewModel.mutedLogins.collectAsState()
     val c = PureTvTvTheme.colors
     val drawerFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -165,6 +166,13 @@ fun TvFollowingScreen(
             verticalArrangement = Arrangement.spacedBy(32.dp),
         ) {
             TvPageTitle("Following")
+            if (state.isLoggedIn && !noData) {
+                Text(
+                    "Press Menu on a channel to mute or unmute its go-live banner.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
 
             when {
                 !state.isLoggedIn -> SignedOutBlock(onSignIn = onOpenLogin, focusRequester = firstFocusRequester)
@@ -196,6 +204,8 @@ fun TvFollowingScreen(
                     if (state.live.isNotEmpty()) {
                         LiveSection(
                             rows = state.live,
+                            muted = muted,
+                            onToggleMute = viewModel::toggleMute,
                             onOpenChannel = onOpenChannel,
                             firstCardFocusRequester = firstFocusRequester,
                         )
@@ -203,6 +213,8 @@ fun TvFollowingScreen(
                     if (state.offline.isNotEmpty()) {
                         OfflineSection(
                             rows = state.offline,
+                            muted = muted,
+                            onToggleMute = viewModel::toggleMute,
                             onOpenChannel = onOpenChannel,
                             firstRowFocusRequester = if (state.live.isEmpty()) firstFocusRequester else null,
                         )
@@ -271,6 +283,8 @@ private fun ErrorBlock(reason: String?, onRetry: () -> Unit, focusRequester: Foc
 @Composable
 private fun LiveSection(
     rows: List<FollowRow>,
+    muted: Set<String>,
+    onToggleMute: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
     firstCardFocusRequester: FocusRequester?,
 ) {
@@ -285,6 +299,8 @@ private fun LiveSection(
                 TvFollowLiveCard(
                     row = row,
                     onClick = { onOpenChannel(row.login) },
+                    muted = row.login.lowercase() in muted,
+                    onToggleMute = { onToggleMute(row.login) },
                     modifier = if (index == 0 && firstCardFocusRequester != null) {
                         Modifier.focusRequester(firstCardFocusRequester)
                     } else {
@@ -303,7 +319,13 @@ private fun LiveSection(
  * [FlowRow] gap above so a focused card's ~8% grow never overlaps the next one.
  */
 @Composable
-private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvFollowLiveCard(
+    row: FollowRow,
+    onClick: () -> Unit,
+    muted: Boolean,
+    onToggleMute: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
@@ -312,6 +334,7 @@ private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modi
         modifier = modifier
             .padding(6.dp)
             .width(220.dp)
+            .onMenuKey(onToggleMute)
             .prewarmStreamOnFocus(row.login, live = row.isLive)
             .tvFocusClickable(
                 interaction = interaction,
@@ -364,6 +387,9 @@ private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modi
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            if (muted) {
+                Text("Banner muted", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, maxLines = 1)
+            }
         }
     }
 }
@@ -372,6 +398,8 @@ private fun TvFollowLiveCard(row: FollowRow, onClick: () -> Unit, modifier: Modi
 @Composable
 private fun OfflineSection(
     rows: List<FollowRow>,
+    muted: Set<String>,
+    onToggleMute: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
     firstRowFocusRequester: FocusRequester?,
 ) {
@@ -388,6 +416,8 @@ private fun OfflineSection(
                 TvFollowOfflineRow(
                     row = row,
                     onClick = { onOpenChannel(row.login) },
+                    muted = row.login.lowercase() in muted,
+                    onToggleMute = { onToggleMute(row.login) },
                     modifier = if (index == 0 && firstRowFocusRequester != null) {
                         Modifier.focusRequester(firstRowFocusRequester)
                     } else {
@@ -407,7 +437,13 @@ private fun OfflineSection(
  * second nested focus stop for a trailing button.
  */
 @Composable
-private fun TvFollowOfflineRow(row: FollowRow, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun TvFollowOfflineRow(
+    row: FollowRow,
+    onClick: () -> Unit,
+    muted: Boolean,
+    onToggleMute: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
@@ -418,6 +454,7 @@ private fun TvFollowOfflineRow(row: FollowRow, onClick: () -> Unit, modifier: Mo
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         modifier = modifier
             .fillMaxWidth()
+            .onMenuKey(onToggleMute)
             .tvFocusClickable(
                 interaction = interaction,
                 onClick = onClick,
@@ -439,7 +476,7 @@ private fun TvFollowOfflineRow(row: FollowRow, onClick: () -> Unit, modifier: Mo
             modifier = Modifier.weight(1f),
         )
         Text(
-            text = "Offline",
+            text = if (muted) "Banner muted · Offline" else "Offline",
             style = PureTvTvType.data,
             color = if (focused) c.onPrimary else c.onSurfaceVariant,
         )
@@ -474,3 +511,16 @@ private fun TvFollowAvatar(displayName: String, imageUrl: String?, modifier: Mod
 /** Twitch hands back thumbnail URLs with `{width}`/`{height}` placeholders. Blank for an offline channel. */
 private fun String.streamThumb(width: Int, height: Int): String? =
     takeIf { it.isNotBlank() }?.replace("{width}", "$width")?.replace("{height}", "$height")
+
+/**
+ * The remote's Menu key, the TV's stand-in for a long-press. Consumes only the key
+ * press, so every other key still moves focus exactly as before.
+ */
+private fun Modifier.onMenuKey(action: () -> Unit): Modifier = onPreviewKeyEvent { event ->
+    if (event.key == Key.Menu) {
+        if (event.type == KeyEventType.KeyDown) action()
+        true
+    } else {
+        false
+    }
+}

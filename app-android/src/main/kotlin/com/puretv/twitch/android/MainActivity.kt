@@ -62,6 +62,10 @@ internal val LocalIsInPip = staticCompositionLocalOf { false }
 class MainActivity : ComponentActivity() {
 
     private var currentRouteIsStream: Boolean = false
+
+    /** The channel open on the stream screen, or null; only counts while the Activity is started. */
+    private var openStreamLogin: String? = null
+    private var isStarted = false
     private val isInPipState = mutableStateOf(false)
 
     /** Drives the theme. Read in composition; only ever written from IO. */
@@ -143,9 +147,9 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(navController) {
                 navController.currentBackStackEntryFlow.collect { entry ->
                     currentRouteIsStream = entry.destination.route == Routes.STREAM
-                    // No go-live alert for the channel already on screen.
-                    goLiveNotifications.watchingLogin =
+                    openStreamLogin =
                         if (currentRouteIsStream) entry.arguments?.getString("channelLogin") else null
+                    updateWatchingLogin()
                 }
             }
 
@@ -210,14 +214,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * No go-live alert for the channel on screen. It counts only while the Activity
+     * is started: stopped (another app in front, screen off) the viewer is not
+     * watching, and a broadcast of that channel starting later is news. Leaving the
+     * stream screen clears it through the back stack collector above.
+     */
+    private fun updateWatchingLogin() {
+        goLiveNotifications.watchingLogin = if (isStarted) openStreamLogin else null
+    }
+
     // The in-app go-live timer runs only while PureTV is on screen (PiP counts:
     // the Activity stays started). Off screen the 15 minute worker takes over.
     override fun onStart() {
         super.onStart()
+        isStarted = true
+        updateWatchingLogin()
         runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(true) }
     }
 
     override fun onStop() {
+        isStarted = false
+        updateWatchingLogin()
         runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(false) }
         super.onStop()
     }
@@ -262,6 +280,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        isStarted = false
+        openStreamLogin = null
+        goLiveNotifications.watchingLogin = null
         uiScope.cancel()
         // Free the shared player only on a real finish (not a config-change teardown;
         // the manifest's configChanges already blocks rotation recreation). If the

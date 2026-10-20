@@ -33,6 +33,7 @@ class GoLiveWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     private val tokenRefresher: TokenRefresher by inject()
     private val monitor: LiveFollowsMonitor by inject()
     private val inApp: GoLiveMonitor by inject()
+    private val notifications: GoLiveNotifications by inject()
 
     override suspend fun doWork(): Result {
         try {
@@ -40,6 +41,9 @@ class GoLiveWorker(context: Context, params: WorkerParameters) : CoroutineWorker
             if (!settings.liveNotifications || settings.accessToken.isBlank()) return Result.success()
             // On screen, the in-app timer is already polling more often than this.
             if (inApp.isAppVisible) return Result.success()
+            // Nothing could be shown (permission denied, notifications blocked for the
+            // app), so asking Twitch would only wake the radio for nothing.
+            if (!notifications.canPost()) return Result.success()
             tokenRefresher.refreshIfNeeded()
             monitor.pollNow()
         } catch (c: CancellationException) {

@@ -10,6 +10,7 @@ import com.puretv.twitch.android.notify.GoLiveScheduler
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.di.coreModule
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import android.util.Log
 import com.puretv.twitch.core.perf.TimingLog
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -130,7 +131,12 @@ class PureTvApp : Application() {
             koinApp.koin.get<AppSettingsStore>().flow
                 .map { it.liveNotifications && it.accessToken.isNotBlank() }
                 .distinctUntilChanged()
-                .collect { wanted -> GoLiveScheduler.sync(this@PureTvApp, wanted) }
+                .collect { wanted ->
+                    GoLiveScheduler.sync(this@PureTvApp, wanted)
+                    // Alerts stopped (switched off, signed out): the first poll after
+                    // they resume seeds silently instead of announcing a backlog.
+                    if (!wanted) runCatching { koinApp.koin.get<LiveFollowsMonitor>().alertsStopped() }
+                }
         }
         koinApp.koin.get<GoLiveMonitor>().start(appScope)
     }

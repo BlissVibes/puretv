@@ -6,6 +6,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.foundation.ContextMenuArea
+import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -52,6 +54,9 @@ import com.puretv.twitch.desktop.ui.theme.PureTvType
  * The parent already supplies the section's top padding and paints the
  * surfaceContainer ground this sits on, so every row here only owns its own
  * horizontal padding and hover fill.
+ *
+ * Right-clicking a row offers to mute or unmute that channel's go-live alerts
+ * ([mutedLogins] holds lowercased logins).
  */
 @Composable
 fun FollowedRail(
@@ -60,7 +65,24 @@ fun FollowedRail(
     onOpenChannel: (String) -> Unit,
     onSignIn: () -> Unit,
     modifier: Modifier = Modifier,
+    mutedLogins: Set<String> = emptySet(),
+    onToggleMute: ((String) -> Unit)? = null,
 ) {
+    @Composable
+    fun RailEntry(row: FollowRow) {
+        if (onToggleMute == null) {
+            FollowRowItem(row, onClick = { onOpenChannel(row.login) })
+            return
+        }
+        val muted = row.login.lowercase() in mutedLogins
+        ContextMenuArea(
+            items = {
+                listOf(ContextMenuItem(if (muted) "Unmute go-live alerts" else "Mute go-live alerts") { onToggleMute(row.login) })
+            },
+        ) {
+            FollowRowItem(row, onClick = { onOpenChannel(row.login) })
+        }
+    }
     val c = PureTvTheme.colors
     Column(modifier = modifier.fillMaxWidth()) {
         if (!state.isLoggedIn) {
@@ -102,13 +124,13 @@ fun FollowedRail(
                     Text("No followed channels live", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                 }
                 // Keyed by login (live + offline are disjoint, so keys stay unique across both).
-                else -> items(state.live, key = { it.login }) { FollowRowItem(it, onClick = { onOpenChannel(it.login) }) }
+                else -> items(state.live, key = { it.login }) { RailEntry(it) }
             }
 
             if (state.offline.isNotEmpty()) {
                 item { OfflineToggleRow(expanded = state.offlineExpanded, count = state.offline.size, onClick = onToggleOffline) }
                 if (state.offlineExpanded) {
-                    items(state.offline, key = { it.login }) { FollowRowItem(it, onClick = { onOpenChannel(it.login) }) }
+                    items(state.offline, key = { it.login }) { RailEntry(it) }
                 }
             }
         }

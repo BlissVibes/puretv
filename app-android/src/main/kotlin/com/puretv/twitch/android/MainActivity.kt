@@ -1,6 +1,7 @@
 package com.puretv.twitch.android
 
 import android.app.PictureInPictureParams
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +18,8 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.navigation.compose.rememberNavController
+import com.puretv.twitch.android.notify.GoLiveMonitor
+import com.puretv.twitch.android.notify.GoLiveNotifications
 import com.puretv.twitch.android.player.BackgroundPlayback
 import com.puretv.twitch.android.player.TwitchPlayer
 import com.puretv.twitch.android.update.AndroidUpdateManager
@@ -32,6 +35,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -45,7 +49,7 @@ import org.koin.android.ext.android.inject
 internal val LocalIsInPip = staticCompositionLocalOf { false }
 
 /**
- * SECTION 06.1 / 06.5 [CRITICAL] — single-Activity host for the Navigation
+ * SECTION 06.1 / 06.5 [CRITICAL]: single-Activity host for the Navigation
  * Compose graph. Its one responsibility beyond hosting Compose is to trigger
  * Picture-in-Picture from [onUserLeaveHint] whenever the user backgrounds the
  * app while a stream is open (Section 6.5).
@@ -58,6 +62,10 @@ internal val LocalIsInPip = staticCompositionLocalOf { false }
 class MainActivity : ComponentActivity() {
 
     private var currentRouteIsStream: Boolean = false
+
+    /** The channel open on the stream screen, or null; only counts while the Activity is started. */
+    private var openStreamLogin: String? = null
+    private var isStarted = false
     private val isInPipState = mutableStateOf(false)
 
     /** Drives the theme. Read in composition; only ever written from IO. */
@@ -75,6 +83,13 @@ class MainActivity : ComponentActivity() {
     // finishing so codec/audio resources are not held for the process lifetime.
     private val twitchPlayer: TwitchPlayer by inject()
     private val backgroundPlayback: BackgroundPlayback by inject()
+    private val goLiveNotifications: GoLiveNotifications by inject()
+
+    /**
+     * A route a tapped go-live notification asked for, waiting for the signed-in
+     * shell to open it (see MainScaffold). Null when there is nothing to open.
+     */
+    private val pendingOpen = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,6 +125,22 @@ class MainActivity : ComponentActivity() {
 
         observeTheme()
 
+        // A restored Activity (process death, Recents) still holds the intent it was
+        // first started with; re-reading it would reopen an old notification's stream.
+        if (savedInstanceState == null) takeOpenRequest(intent)
+
+        // Silent launch update check: surfaces an "Update available" banner on
+        // Home / a prompt in Settings when a newer Android APK is published.
+        // Fully fail-soft (no manifest / offline -> stays idle, no nagging). Here
+        // rather than in PureTvApp so only opening the app checks, never a
+        // background process start (the go-live worker). Once per Activity creation.
+        if (savedInstanceState == null) {
+            uiScope.launch(Dispatchers.IO) {
+                runCatching { getKoin().get<AndroidUpdateManager>().checkForUpdates() }
+                    .onFailure { Log.w(TAG, "Update check failed", it) }
+            }
+        }
+
         setContent {
             val navController = rememberNavController()
 
@@ -117,6 +148,9 @@ class MainActivity : ComponentActivity() {
                 navController.currentBackStackEntryFlow.collect { entry ->
                     // A past broadcast floats and plays on in the background like a live stream.
                     currentRouteIsStream = entry.destination.route == Routes.STREAM || entry.destination.route == Routes.VOD
+                    openStreamLogin =
+                        if (currentRouteIsStream) entry.arguments?.getString("channelLogin") else null
+                    updateWatchingLogin()
                 }
             }
 
@@ -125,7 +159,7 @@ class MainActivity : ComponentActivity() {
                     variant = themeVariant.value,
                     shapeIntensity = shapeIntensity.value,
                 ) {
-                    RootScreen(navController = navController)
+                    RootScreen(navController = navController, pendingOpen = pendingOpen)
                 }
             }
         }
@@ -157,6 +191,56 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** A go-live notification tapped while PureTV was already running (singleTop). */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        takeOpenRequest(intent)
+    }
+
+    /**
+     * Reads where a go-live notification wants to go, once: the extras are removed
+     * so nothing that re-reads this intent later opens it again.
+     */
+    private fun takeOpenRequest(intent: Intent?) {
+        intent ?: return
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val channel = intent.getStringExtra(GoLiveNotifications.EXTRA_OPEN_CHANNEL)?.takeIf { it.isNotBlank() }
+        val following = intent.getBooleanExtra(GoLiveNotifications.EXTRA_OPEN_FOLLOWING, false)
+        intent.removeExtra(GoLiveNotifications.EXTRA_OPEN_CHANNEL)
+        intent.removeExtra(GoLiveNotifications.EXTRA_OPEN_FOLLOWING)
+        when {
+            channel != null -> pendingOpen.value = Routes.stream(channel)
+            following -> pendingOpen.value = Routes.FOLLOWING
+        }
+    }
+
+    /**
+     * No go-live alert for the channel on screen. It counts only while the Activity
+     * is started: stopped (another app in front, screen off) the viewer is not
+     * watching, and a broadcast of that channel starting later is news. Leaving the
+     * stream screen clears it through the back stack collector above.
+     */
+    private fun updateWatchingLogin() {
+        goLiveNotifications.watchingLogin = if (isStarted) openStreamLogin else null
+    }
+
+    // The in-app go-live timer runs only while PureTV is on screen (PiP counts:
+    // the Activity stays started). Off screen the 15 minute worker takes over.
+    override fun onStart() {
+        super.onStart()
+        isStarted = true
+        updateWatchingLogin()
+        runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(true) }
+    }
+
+    override fun onStop() {
+        isStarted = false
+        updateWatchingLogin()
+        runCatching { getKoin().get<GoLiveMonitor>().setAppVisible(false) }
+        super.onStop()
+    }
+
     /**
      * Picks the update back up after the viewer has been to system Settings to
      * grant "install unknown apps". Nothing was downloaded before they left, by
@@ -176,7 +260,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Section 6.5 — entering PiP when the user navigates away (home button,
+     * Section 6.5: entering PiP when the user navigates away (home button,
      * recents) while watching a stream keeps playback visible in a floating
      * window. The 16:9 aspect ratio matches Twitch's source video shape.
      */
@@ -197,6 +281,9 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        isStarted = false
+        openStreamLogin = null
+        goLiveNotifications.watchingLogin = null
         uiScope.cancel()
         // Free the shared player only on a real finish (not a config-change teardown;
         // the manifest's configChanges already blocks rotation recreation). If the

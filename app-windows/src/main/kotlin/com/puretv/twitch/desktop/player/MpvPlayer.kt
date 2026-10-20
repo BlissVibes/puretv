@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.audio.AudioNormalizerProfile
 import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.sun.jna.Native
@@ -146,6 +147,11 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         l.mpv_set_option_string(c, "keep-open", "yes")
         l.mpv_set_option_string(c, "network-timeout", "10")
         mpvScalerProps(mode, shaderPaths).forEach { (k, v) -> l.mpv_set_option_string(c, k, v) }
+        // Audio normalizer: a fresh context per surface, so the filter is set here
+        // as well as live in setAudioNormalizer.
+        if (settingsStore.settings.value.audioNormalizer) {
+            l.mpv_set_option_string(c, "af", AudioNormalizerProfile.mpvAudioFilter())
+        }
         // OSD styling for the upscaling stats overlay (show-text): a restrained
         // top-left mono readout, not a loud HUD. Consolas ships on Windows. These
         // only take effect when we actually push OSD text (the F3 overlay).
@@ -213,6 +219,7 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
                 ctx = c
                 initialized = true
                 attachedCanvas = panel
+                normalizerOverride?.let { applyNormalizer(l, c, it) }
                 observedProps.forEach { l.mpv_observe_property(c, 0L, it, MpvConst.MPV_FORMAT_NONE) }
                 val handle = EventLoopHandle()
                 loopHandle = handle
@@ -399,6 +406,26 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
             runCatching { l.mpv_set_property_string(c, k, v) }
         }
     }
+
+    /**
+     * Swap the audio normalizer in or out of the running context: `af` is
+     * runtime-settable, and an empty list clears it. No-op when not attached;
+     * `applyPreInitOptions` reads the saved setting for the next stream.
+     */
+    override fun setAudioNormalizer(enabled: Boolean) {
+        // Remembered first: a context still coming up (ctx is null until its attach
+        // finishes) applies it as soon as it is live, so a switch flipped
+        // mid-bring-up is never lost.
+        normalizerOverride = enabled
+        withCtx { l, c -> applyNormalizer(l, c, enabled) }
+    }
+
+    private fun applyNormalizer(l: MpvLibrary, c: Pointer, enabled: Boolean) {
+        runCatching { l.mpv_set_property_string(c, "af", if (enabled) AudioNormalizerProfile.mpvAudioFilter() else "") }
+    }
+
+    // The newest live switch, for a context that was being created when it came in.
+    @Volatile private var normalizerOverride: Boolean? = null
 
     override fun release() {
         // App shutdown — tear the live context down exactly like a surface detach

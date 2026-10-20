@@ -1,5 +1,7 @@
 package com.puretv.twitch.android.ui.screens
 
+import android.content.Intent
+import android.provider.Settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -35,10 +37,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import com.puretv.twitch.android.BuildConfig
 import com.puretv.twitch.android.data.AppSettingsStore
+import com.puretv.twitch.android.notify.GoLiveNotifications
 import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.components.ExpressiveButton
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
@@ -51,6 +57,7 @@ import com.puretv.twitch.android.ui.components.ExpressiveSwitch
 import com.puretv.twitch.android.ui.components.PageTitle
 import com.puretv.twitch.android.ui.components.SegmentedToggle
 import com.puretv.twitch.android.ui.components.expressiveClickable
+import com.puretv.twitch.android.ui.components.rememberNotificationPermissionRequest
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.android.ui.theme.ShapeIntensity
@@ -68,7 +75,7 @@ import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
 /**
- * SECTION 06.4 / 09.2 — a stack of [ExpressivePanel]s: colour and shape are the
+ * SECTION 06.4 / 09.2: a stack of [ExpressivePanel]s: colour and shape are the
  * new presentation controls, the rest (playback, ad blocking, account, about)
  * carry forward every setting [SettingsViewModel] already exposed. Backed by
  * [com.puretv.twitch.android.data.AppSettingsStore] (DataStore + EncryptedSharedPreferences).
@@ -129,12 +136,21 @@ fun SettingsScreen(onBack: () -> Unit) {
             onBackgroundPlayChange = viewModel::setBackgroundPlay,
             onPipOnLeaveChange = viewModel::setPipOnLeave,
             onAudioOnlyInBackgroundChange = viewModel::setAudioOnlyInBackground,
+            onAudioNormalizerChange = viewModel::setAudioNormalizer,
         )
         Spacer(Modifier.height(16.dp))
 
         ChatPanel(
             selected = ChatTextSize.from(state.settings.chatFontSize),
             onSelect = viewModel::setChatTextSize,
+        )
+        Spacer(Modifier.height(16.dp))
+
+        NotificationsPanel(
+            enabled = state.settings.liveNotifications,
+            mutedCount = state.settings.notifyMutedLogins.size,
+            onEnabledChange = viewModel::setLiveNotifications,
+            onUnmuteAll = viewModel::unmuteAllLiveNotifications,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -301,6 +317,7 @@ private fun PlaybackPanel(
     onBackgroundPlayChange: (Boolean) -> Unit,
     onPipOnLeaveChange: (Boolean) -> Unit,
     onAudioOnlyInBackgroundChange: (Boolean) -> Unit,
+    onAudioNormalizerChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -342,6 +359,25 @@ private fun PlaybackPanel(
                     )
                 }
                 ExpressiveSwitch(checked = settings.lowLatencyMode, onCheckedChange = onLowLatencyChange)
+            }
+
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Even out loud and quiet audio", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                            "leave the volume alone. Music can sound flatter with it on.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(checked = settings.audioNormalizer, onCheckedChange = onAudioNormalizerChange)
             }
 
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
@@ -418,6 +454,104 @@ private fun PlaybackPanel(
                 }
                 ExpressiveSwitch(checked = settings.animateEmotes, onCheckedChange = onAnimateEmotesChange)
             }
+        }
+    }
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+/**
+ * Go-live alerts. Turning them on asks for notification permission (Android 13+),
+ * and the panel says so when Android is blocking them anyway, with a way to the
+ * system settings for the "Channels going live" channel.
+ */
+@Composable
+private fun NotificationsPanel(
+    enabled: Boolean,
+    mutedCount: Int,
+    onEnabledChange: (Boolean) -> Unit,
+    onUnmuteAll: () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    val context = LocalContext.current
+    val notifications = koinInject<GoLiveNotifications>()
+    var blocked by remember { mutableStateOf(!notifications.canPost()) }
+    val requestPermission = rememberNotificationPermissionRequest { blocked = !notifications.canPost() }
+    // Back from system settings: re-read whether Android lets them through.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { blocked = !notifications.canPost() }
+
+    ExpressivePanel {
+        Column {
+            Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Tell me when channels I follow go live", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text(
+                        "PureTV asks Twitch itself, every couple of minutes while it's open and about every " +
+                            "15 minutes in the background. In the background an alert may arrive a few minutes " +
+                            "late while the phone is idle. Long-press a channel on Following to mute it.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = c.onSurfaceVariant,
+                    )
+                }
+                ExpressiveSwitch(
+                    checked = enabled,
+                    onCheckedChange = { on ->
+                        onEnabledChange(on)
+                        if (on) requestPermission()
+                    },
+                )
+            }
+
+            if (enabled && blocked) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    "Android is not showing PureTV notifications, so these alerts can't appear. " +
+                        "Turn them on in notification settings.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.error,
+                )
+            }
+
+            if (mutedCount > 0) {
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Text(
+                        if (mutedCount == 1) "1 channel muted" else "$mutedCount channels muted",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = c.onSurface,
+                        modifier = Modifier.weight(1f),
+                    )
+                    ExpressiveButton(text = "Unmute all", onClick = onUnmuteAll, style = ExpressiveButtonStyle.Outlined)
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            ExpressiveButton(
+                text = "Notification settings",
+                onClick = {
+                    notifications.ensureChannel()
+                    // With the whole app blocked, the channel page has nothing to
+                    // switch on, so go to the app's notification page instead.
+                    val intent = if (blocked) {
+                        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    } else {
+                        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                            .putExtra(Settings.EXTRA_CHANNEL_ID, GoLiveNotifications.CHANNEL_ID)
+                    }.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                    runCatching { context.startActivity(intent) }
+                },
+                style = ExpressiveButtonStyle.Tonal,
+            )
         }
     }
 }

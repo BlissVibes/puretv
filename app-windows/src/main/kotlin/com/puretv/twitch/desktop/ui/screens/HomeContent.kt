@@ -59,6 +59,7 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.desktop.ui.components.ExpressiveCard
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
+import com.puretv.twitch.desktop.ui.components.ExpressivePanel
 import com.puretv.twitch.desktop.ui.components.LivePill
 import com.puretv.twitch.desktop.ui.components.SectionHeading
 import com.puretv.twitch.desktop.ui.components.ShieldPill
@@ -86,6 +87,10 @@ import org.koin.core.Koin
  *     living here, restyled to the same card language as "Live now".
  *  4. "Live now": a 4-column grid of [StreamGridCard]s.
  *
+ * Signed out, the same page fills from the public directory (anonymous GQL in
+ * core), with a gentle [SignInPrompt] where follows would come from and a
+ * "Popular categories" shelf, since a viewer with no follows needs a way in.
+ *
  * Everything lives in ONE [LazyVerticalGrid] (`GridCells.Fixed(4)`) rather than a
  * LazyColumn wrapping a nested LazyVerticalGrid: a full-span `item` carries the
  * hero, each heading and the continue-watching shelf, while the stream cards are
@@ -93,7 +98,14 @@ import org.koin.core.Koin
  * cheap with hundreds of streams, since only the grid cells on screen compose.
  */
 @Composable
-fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLaunch) -> Unit) {
+fun HomeContent(
+    koin: Koin,
+    onOpenChannel: (String) -> Unit,
+    onResumeVod: (VodLaunch) -> Unit,
+    onOpenCategory: (gameId: String, gameName: String) -> Unit,
+    onOpenBrowse: () -> Unit,
+    onSignIn: () -> Unit,
+) {
     val viewModel = rememberDesktopViewModel { koin.get<HomeViewModel>() }
     val state by viewModel.state.collectAsState()
 
@@ -115,14 +127,6 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         when {
-            !state.isLoggedIn -> item(span = { GridItemSpan(maxLineSpan) }) {
-                EditorialEmptyState(
-                    kicker = "Not signed in",
-                    title = "Sign in to see live channels",
-                    message = "Connect your Twitch account from the Account tab to follow channels and watch live.",
-                )
-            }
-
             state.isLoading -> {
                 item(span = { GridItemSpan(maxLineSpan) }) {
                     SectionHeading(title = "Live now")
@@ -201,6 +205,36 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                     }
                 }
 
+                // Signed out, Home still fills from the public directory; the
+                // one thing missing is the viewer's own follows, so ask gently.
+                if (!state.isLoggedIn) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        SignInPrompt(onSignIn = onSignIn, modifier = Modifier.padding(top = 20.dp))
+                    }
+                }
+
+                if (!state.isLoggedIn && state.topGames.isNotEmpty()) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        Column(Modifier.padding(top = 20.dp)) {
+                            SectionHeading(title = "Popular categories", actionLabel = "See all", onAction = onOpenBrowse)
+                            Spacer(Modifier.height(16.dp))
+                            LazyRow(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            ) {
+                                items(state.topGames, key = { "game_${it.id}" }) { game ->
+                                    GameTile(
+                                        name = game.name,
+                                        boxArtUrl = game.boxArtUrl,
+                                        onClick = { onOpenCategory(game.id, game.name) },
+                                        modifier = Modifier.width(150.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (state.topStreams.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         SectionHeading(title = "Live now", modifier = Modifier.padding(top = 20.dp))
@@ -220,14 +254,59 @@ fun HomeContent(koin: Koin, onOpenChannel: (String) -> Unit, onResumeVod: (VodLa
                     }
                 } else if (state.following.isEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
-                        EditorialEmptyState(
-                            kicker = "Nothing live",
-                            title = "No live streams right now",
-                            message = "Your session may have expired. Try signing in again from the Account tab.",
-                        )
+                        when {
+                            state.isLoggedIn -> EditorialEmptyState(
+                                kicker = "Nothing live",
+                                title = "No live streams right now",
+                                message = "Your session may have expired. Try signing in again from the Account tab.",
+                            )
+                            state.loadFailed -> EditorialEmptyState(
+                                kicker = "Live now",
+                                title = "Couldn't load live channels",
+                                message = "Check your connection and try again.",
+                                actionLabel = "Retry",
+                                onAction = { viewModel.refresh() },
+                            )
+                            else -> EditorialEmptyState(
+                                kicker = "Nothing live",
+                                title = "No live streams right now",
+                                message = "Check back in a moment.",
+                                actionLabel = "Refresh",
+                                onAction = { viewModel.refresh() },
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * The signed-out nudge: one slim panel, copy on the left and a Sign in button
+ * on the right, so it reads as an offer rather than a gate. Everything else
+ * on Home works without an account.
+ */
+@Composable
+private fun SignInPrompt(onSignIn: () -> Unit, modifier: Modifier = Modifier) {
+    val c = PureTvTheme.colors
+    ExpressivePanel(modifier = modifier.fillMaxWidth(), padding = 24.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Column(Modifier.weight(1f)) {
+                Text("See the channels you follow", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "You're watching without an account. Sign in with Twitch to bring in your follows and chat.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            ExpressiveButton(
+                text = "Sign in",
+                onClick = onSignIn,
+                style = ExpressiveButtonStyle.Filled,
+                size = ExpressiveButtonSize.Medium,
+            )
         }
     }
 }

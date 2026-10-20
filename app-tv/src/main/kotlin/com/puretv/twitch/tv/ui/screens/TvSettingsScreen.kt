@@ -110,6 +110,8 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
                 onSelect = viewModel::setPreferredQuality,
                 lowLatency = state.settings.lowLatencyMode,
                 onLowLatencyChange = viewModel::setLowLatency,
+                audioNormalizer = state.settings.audioNormalizer,
+                onAudioNormalizerChange = viewModel::setAudioNormalizer,
             )
         }
         TvDivider()
@@ -138,6 +140,14 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
                 onEnabledChange = viewModel::setAdBlockEnabled,
                 strategyKey = state.settings.adBlockStrategy,
                 onStrategySelect = viewModel::setAdBlockStrategy,
+            )
+        }
+        TvDivider()
+
+        TvPanel {
+            GoLiveSection(
+                enabled = state.settings.liveNotifications,
+                onEnabledChange = viewModel::setLiveNotifications,
             )
         }
         TvDivider()
@@ -255,6 +265,8 @@ private fun StreamQualitySection(
     onSelect: (StreamQuality) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    audioNormalizer: Boolean,
+    onAudioNormalizerChange: (Boolean) -> Unit,
 ) {
     val c = PureTvTvTheme.colors
     Column {
@@ -287,6 +299,25 @@ private fun StreamQualitySection(
                 )
             }
             Switch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+        }
+        Spacer(Modifier.height(20.dp))
+        TvDivider()
+        Spacer(Modifier.height(20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Even out loud and quiet audio", style = MaterialTheme.typography.bodyLarge, color = c.onSurface)
+                Text(
+                    "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                        "leave the volume alone. Music can sound flatter with it on.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            }
+            Switch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
         }
     }
 }
@@ -411,6 +442,30 @@ private fun strategyLabel(strategy: AdBlockStrategy): String = when (strategy) {
     AdBlockStrategy.PROXY_PRIMARY -> "Proxy"
     AdBlockStrategy.MANIFEST_REWRITE_ONLY -> "Manifest rewrite"
     AdBlockStrategy.DISABLED -> "Disabled"
+}
+
+// ── Go-live banner ──────────────────────────────────────────────────────
+
+@Composable
+private fun GoLiveSection(enabled: Boolean, onEnabledChange: (Boolean) -> Unit) {
+    val c = PureTvTvTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("Go-live banner", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "While PureTV is open, a banner in the corner says when a channel you follow starts " +
+                    "streaming. It never moves your selection, so the remote keeps doing what it was doing.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.onSurfaceVariant,
+            )
+        }
+        Switch(checked = enabled, onCheckedChange = onEnabledChange)
+    }
 }
 
 // ── Account ─────────────────────────────────────────────────────────────

@@ -35,11 +35,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import com.puretv.twitch.core.model.PlaybackBackend
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.platform.Diagnostics
+import com.puretv.twitch.desktop.platform.WindowsStartup
 import com.puretv.twitch.desktop.platform.openInBrowser
+import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
+import androidx.compose.ui.window.isTraySupported
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
@@ -104,6 +109,11 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             lowLatency = state.settings.lowLatencyMode,
             onLowLatencyChange = viewModel::setLowLatency,
+            audioNormalizer = state.settings.audioNormalizer,
+            onAudioNormalizerChange = viewModel::setAudioNormalizer,
+            // The engine running now, not the saved one: an engine switch itself waits for a restart.
+            normalizerNeedsRestart = koin.get<DesktopPlayerProvider>()
+                .runningBackend(state.settings.playbackBackend) == PlaybackBackend.VLC,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -116,6 +126,22 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onShowBadges = { on -> settingsStore.updateSettings { it.copy(showBadges = on) } },
             compact = state.settings.compactMode,
             onCompact = { on -> settingsStore.updateSettings { it.copy(compactMode = on) } },
+            showNamePaints = state.settings.showSevenTvPaints,
+            onShowNamePaints = { on -> settingsStore.updateSettings { it.copy(showSevenTvPaints = on) } },
+        )
+        Spacer(Modifier.height(16.dp))
+
+        NotificationsPanel(
+            liveAlerts = state.settings.liveNotifications,
+            onLiveAlerts = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
+            closeToTray = state.settings.closeToTray,
+            onCloseToTray = { on -> settingsStore.updateSettings { it.copy(closeToTray = on, trayHintShown = true) } },
+            startWithWindows = state.settings.startWithWindows,
+            onStartWithWindows = { on ->
+                if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
+            },
+            mutedChannels = state.settings.notifyMutedLogins,
+            onUnmuteAll = { settingsStore.updateSettings { it.copy(notifyMutedLogins = emptySet()) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -280,6 +306,9 @@ private fun PlaybackPanel(
     onAnimateEmotesChange: (Boolean) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    audioNormalizer: Boolean,
+    onAudioNormalizerChange: (Boolean) -> Unit,
+    normalizerNeedsRestart: Boolean,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -307,6 +336,15 @@ private fun PlaybackPanel(
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(
+                label = "Even out loud and quiet audio",
+                description = "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
+                    "leave the volume alone. Music can sound flatter with it on." +
+                    if (normalizerNeedsRestart) " Applies after restart." else "",
+            ) {
+                ExpressiveSwitch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
                 label = "Animate emotes",
                 description = "Play animated 7TV and BTTV emotes. Off shows a still frame, which is lighter on the CPU.",
             ) {
@@ -330,6 +368,8 @@ private fun ChatPanel(
     onShowBadges: (Boolean) -> Unit,
     compact: Boolean,
     onCompact: (Boolean) -> Unit,
+    showNamePaints: Boolean,
+    onShowNamePaints: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -358,6 +398,89 @@ private fun ChatPanel(
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(label = "Compact chat", description = "Tighter rows, so more messages fit on screen.") {
                 ExpressiveSwitch(checked = compact, onCheckedChange = onCompact)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Show 7TV name paints",
+                description = "Show the gradient names 7TV users pick for themselves.",
+            ) {
+                ExpressiveSwitch(checked = showNamePaints, onCheckedChange = onShowNamePaints)
+            }
+        }
+    }
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────────
+
+/**
+ * Go-live alerts and the tray. Alerts arrive as Windows notifications from the tray
+ * icon while PureTV is running; keeping it in the tray when the window closes is what
+ * lets them keep coming. Without a system tray (rare on Windows) neither works, so
+ * the panel says so instead of offering switches that would do nothing.
+ */
+@Composable
+private fun NotificationsPanel(
+    liveAlerts: Boolean,
+    onLiveAlerts: (Boolean) -> Unit,
+    closeToTray: Boolean,
+    onCloseToTray: (Boolean) -> Unit,
+    startWithWindows: Boolean,
+    onStartWithWindows: (Boolean) -> Unit,
+    mutedChannels: Set<String>,
+    onUnmuteAll: () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    val trayAvailable = remember { isTraySupported }
+    val startupAvailable = remember { WindowsStartup.isAvailable }
+    ExpressivePanel {
+        Column {
+            Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(20.dp))
+            if (!trayAvailable) {
+                Text(
+                    "Go-live alerts need the Windows system tray, which is not available here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+                return@Column
+            }
+            SettingsRow(
+                label = "Go-live alerts",
+                description = "Tell me when channels I follow go live. Checks about every 90 seconds while PureTV is running.",
+            ) {
+                ExpressiveSwitch(checked = liveAlerts, onCheckedChange = onLiveAlerts)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Keep running in the tray",
+                description = "Closing the window keeps PureTV in the tray, so alerts still arrive. Quit from the tray icon.",
+            ) {
+                ExpressiveSwitch(checked = closeToTray, onCheckedChange = onCloseToTray)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Start with Windows",
+                description = if (startupAvailable) {
+                    "Open PureTV in the tray when you sign in to Windows."
+                } else {
+                    "Available in the installed app."
+                },
+            ) {
+                if (startupAvailable) ExpressiveSwitch(checked = startWithWindows, onCheckedChange = onStartWithWindows)
+            }
+            if (mutedChannels.isNotEmpty()) {
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+                SettingsRow(
+                    label = "Muted channels",
+                    description = "No alerts for ${mutedChannels.sorted().joinToString(", ")}.",
+                ) {
+                    ExpressiveButton(
+                        text = "Unmute all",
+                        onClick = onUnmuteAll,
+                        style = ExpressiveButtonStyle.Outlined,
+                        size = ExpressiveButtonSize.Small,
+                    )
+                }
             }
         }
     }

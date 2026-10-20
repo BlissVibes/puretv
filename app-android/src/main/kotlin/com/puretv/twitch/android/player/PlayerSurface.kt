@@ -28,7 +28,7 @@ import com.puretv.twitch.android.ui.theme.PureTvTheme
 import org.koin.compose.koinInject
 
 /**
- * SECTION 06.3 — Compose host for the [TwitchPlayer]/ExoPlayer surface.
+ * SECTION 06.3: Compose host for the [TwitchPlayer]/ExoPlayer surface.
  * Wrapped in [AndroidView] since Media3's `PlayerView` has no Compose-native
  * equivalent yet.
  *
@@ -62,6 +62,8 @@ fun PlayerSurface(
     metadata: MediaMetadata = MediaMetadata.EMPTY,
     // Settings > Low latency, applied when a new stream starts.
     lowLatency: Boolean = false,
+    // The stream view model's claim on the shared player (see PlayOwnership).
+    ticket: TwitchPlayer.PlayTicket? = null,
     modifier: Modifier = Modifier,
     // False when the caller already started [playableUrl] itself: a VOD is
     // played by its view model through TwitchPlayer.playVod, never playUrl.
@@ -88,7 +90,7 @@ fun PlayerSurface(
         // (which also resets the transient-error retry budget for the new stream).
         val currentUri = player.currentMediaItem?.localConfiguration?.uri?.toString()
         if (startsPlayback && currentUri != url) {
-            twitchPlayer.playUrl(url, currentMetadata, currentLowLatency)
+            twitchPlayer.playUrl(url, currentMetadata, currentLowLatency, ticket)
         }
         // Still in the foreground here, which is the only place Android 12+ lets
         // the foreground service start. No-op when background play is off.

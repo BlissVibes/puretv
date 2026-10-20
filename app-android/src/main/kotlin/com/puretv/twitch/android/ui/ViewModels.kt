@@ -54,6 +54,7 @@ import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.VideoInfo
 import com.puretv.twitch.core.model.VideoType
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -80,8 +81,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * SECTION 11 — ViewModels backing the phone/tablet screens. Each pulls
- * shared business logic from `core` repositories/clients (Sections 3–5)
+ * SECTION 11: ViewModels backing the phone/tablet screens. Each pulls
+ * shared business logic from `core` repositories/clients (Sections 3 to 5)
  * and exposes simple immutable UI state via [StateFlow].
  */
 
@@ -105,6 +106,7 @@ class HomeViewModel(
     private val watchHistoryDao: WatchHistoryDao,
     private val cachedStreamDao: CachedStreamDao,
     private val vodProgressDao: VodProgressDao,
+    private val liveFollows: LiveFollowsMonitor,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -182,11 +184,13 @@ class HomeViewModel(
      * Followed "Live now", asked of Twitch directly (one /streams/followed call)
      * on every load and refresh. It used to be recomputed only when the follow
      * list changed, so live status went stale while every refresh still
-     * re-downloaded the whole follow list.
+     * re-downloaded the whole follow list. Asked through the shared
+     * [LiveFollowsMonitor], so a refresh right after the go-live timer (or
+     * Following) fetched reuses that answer, and a go-live it sees is announced.
      */
     private suspend fun refreshFollowedLive() {
         val id = userId.ifBlank { return }
-        runCatching { streamRepository.followedLiveStreams(id) }
+        runCatching { liveFollows.followedLive(id) }
             .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
     }
 
@@ -422,14 +426,25 @@ class StreamViewModel(
     private var twitchGlobalEmotes: List<ChannelEmote> = emptyList()
 
     private val openTiming = StreamOpenTiming(channelLogin)
-    private val firstFrameListener: () -> Unit = { openTiming.mark("first_frame") }
-    private val gaveUpListener: (androidx.media3.common.PlaybackException) -> Unit = { onPlaybackGaveUp() }
+
+    // The quality this screen last set on the player; null until it has set one.
+    @Volatile private var appliedQuality: StreamQuality? = null
+
+    /**
+     * This screen's claim on the shared player, handed to PlayerSurface. Callbacks
+     * are installed when playback actually starts, not here, so a stream opened on
+     * top of another does not take them before it plays and gets no say in them
+     * after the screen below has taken the player back.
+     */
+    val playTicket = TwitchPlayer.PlayTicket(
+        onFirstFrame = { openTiming.mark("first_frame") },
+        onGaveUp = { onPlaybackGaveUp() },
+        quality = { appliedQuality },
+    )
     private var freshSessionRetries = 0
 
     init {
         adBlockEngine.resetForNewStream()
-        twitchPlayer.onFirstFrame = firstFrameListener
-        twitchPlayer.onGaveUp = gaveUpListener
         // Playback first: resolving the stream does not need the channel info
         // below, so the player starts while the metadata and emotes load.
         viewModelScope.launch { resolvePlayable() }
@@ -501,12 +516,13 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         viewModelScope.launch {
-            // Anonymous (read-only) IRC login when the user hasn't authenticated yet —
+            // Anonymous (read-only) IRC login when the user hasn't authenticated yet,
             // `TwitchChatClient` falls back to a `justinfanNNNN` identity for `null`.
             // Sending requires a real OAuth token (see Section 5.1).
             val settings = settingsStore.flow.first()
             val preferred = StreamQuality.fromSetting(settings.preferredQuality)
             twitchPlayer.setQuality(preferred)
+            appliedQuality = preferred
             _state.update {
                 it.copy(
                     chatFraction = settings.chatFraction,
@@ -633,6 +649,7 @@ class StreamViewModel(
     /** A quality picked in the player: applied now and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
         twitchPlayer.setQuality(quality)
+        appliedQuality = quality
         _state.update { it.copy(quality = quality) }
         StreamQuality.preferenceFor(quality)?.let { preference ->
             viewModelScope.launch { settingsStore.update { it.copy(preferredQuality = preference) } }
@@ -654,13 +671,14 @@ class StreamViewModel(
         // Teardown lives here, not in PlayerSurface.onDispose: onCleared fires only
         // on a real back-stack pop (leaving the stream), not on rotation or PiP,
         // so playback is not torn down and re-buffered on a config change.
-        twitchPlayer.stop()
-        // A stream opened on top of this one may already own the callbacks.
-        if (twitchPlayer.onFirstFrame === firstFrameListener) twitchPlayer.onFirstFrame = null
-        if (twitchPlayer.onGaveUp === gaveUpListener) twitchPlayer.onGaveUp = null
-        // In-app Back means done watching, not "keep playing in the background":
-        // the media notification goes with the stream.
-        backgroundPlayback.onStreamClosed()
+        // Only while this screen still owns the player: when a stream opened on top of
+        // another is popped, the one below has usually taken the player back by now,
+        // and clearing it here would leave that one black.
+        if (twitchPlayer.stopIfOwner(playTicket)) {
+            // In-app Back means done watching, not "keep playing in the background":
+            // the media notification goes with the stream.
+            backgroundPlayback.onStreamClosed()
+        }
     }
 
     private companion object {
@@ -825,12 +843,25 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(audioOnlyInBackground = enabled) }
     }
 
+    // PureTvApp hands the saved value to the player, which applies it live.
+    fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioNormalizer = enabled) }
+    }
+
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {
         settingsStore.update { it.copy(adBlockStrategy = strategy.name.lowercase()) }
     }
 
     fun setProxyUrl(url: String) = viewModelScope.launch {
         settingsStore.update { it.copy(customProxyUrl = url) }
+    }
+
+    fun setLiveNotifications(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(liveNotifications = enabled) }
+    }
+
+    fun unmuteAllLiveNotifications() = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyMutedLogins = emptySet()) }
     }
 
     fun logOut() = settingsStore.clearSession()
@@ -946,9 +977,24 @@ data class FollowingUiState(
 class FollowingViewModel(
     private val source: FollowedChannelsSource,
     private val sessionManager: SessionManager,
+    private val settingsStore: AppSettingsStore,
 ) : ViewModel() {
     private val _state = MutableStateFlow(FollowingUiState(isLoggedIn = sessionManager.state.value is SessionState.LoggedIn))
     val state: StateFlow<FollowingUiState> = _state.asStateFlow()
+
+    /** Lowercased logins whose go-live alerts are muted (long-press a row to change). */
+    val mutedLogins: StateFlow<Set<String>> = settingsStore.flow
+        .map { it.notifyMutedLogins }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
+
+    /** Mutes [login]'s go-live alerts, or unmutes them if they were muted. */
+    fun toggleMute(login: String) = viewModelScope.launch {
+        val key = login.lowercase()
+        settingsStore.update { s ->
+            val muted = s.notifyMutedLogins
+            s.copy(notifyMutedLogins = if (key in muted) muted - key else muted + key)
+        }
+    }
 
     // A single in-flight load. Cancel-and-replace on refresh() so a double-tapped
     // pull-to-refresh and a sign-in landing mid-load can't both write the final

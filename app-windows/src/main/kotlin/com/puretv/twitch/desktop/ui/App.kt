@@ -74,7 +74,9 @@ import com.puretv.twitch.desktop.update.UpdateState
 import com.puretv.twitch.desktop.ui.components.CountBadge
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.FollowedRail
+import com.puretv.twitch.desktop.ui.components.TrayHintBanner
 import com.puretv.twitch.desktop.ui.components.UpdateBanner
+import androidx.compose.ui.window.isTraySupported
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.screens.BrowseContent
 import com.puretv.twitch.desktop.ui.screens.CategoryContent
@@ -123,8 +125,24 @@ private sealed class Route {
 private val RAIL_EXPANDED = 236.dp
 private val RAIL_COLLAPSED = 88.dp
 
+/**
+ * The window's content.
+ *
+ * [onClose] is the window's own close (the title bar X), which may hide PureTV to
+ * the tray. [onQuit] always exits for real; the updater uses it, because an update
+ * that only hid the window would leave PureTV running while the installer replaces
+ * its files.
+ */
 @Composable
-fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: AwtWindow) {
+fun App(
+    koin: Koin,
+    windowState: WindowState,
+    onClose: () -> Unit,
+    onQuit: () -> Unit,
+    awtWindow: AwtWindow,
+    onWatching: (String?) -> Unit = {},
+    windowVisible: Boolean = true,
+) {
     // coil3's setSingletonImageLoaderFactory is itself @Composable and internally
     // memoizes the singleton, so calling it here in the composable body (idempotent
     // factory swap) is the intended usage; it can't be hoisted into remember{}.
@@ -155,6 +173,12 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
     var updateDismissed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { updateManager.checkForUpdates() }
 
+    // The one-time tray offer (closing still quits by default): only to someone signed
+    // in with alerts on, since that is who loses alerts by closing the window.
+    val signedIn by settingsStore.loggedInState.collectAsState()
+    val showTrayHint = isTraySupported && signedIn && settings.liveNotifications &&
+        !settings.closeToTray && !settings.trayHintShown
+
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
         val streamPrewarm = remember {
@@ -174,6 +198,27 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
             val c = PureTvTheme.colors
             val shapes = PureTvTheme.shapes
 
+            // A click on a go-live notification opens that stream.
+            LaunchedEffect(Unit) {
+                koin.get<NavigationRequests>().openStream.collect { login ->
+                    shell.exitImmersive()
+                    route = Route.Stream(login)
+                }
+            }
+            // Go-live toasts skip the channel that is open on screen.
+            LaunchedEffect(route, windowVisible) {
+                val r = route
+                onWatching(if (windowVisible && r is Route.Stream) r.login else null)
+            }
+            // Hidden in the tray, nothing should keep playing or keep chat sockets open:
+            // leaving the stream (or VOD) route disposes its player and chat.
+            LaunchedEffect(windowVisible) {
+                if (!windowVisible && (route is Route.Stream || route is Route.Vod)) {
+                    shell.exitImmersive()
+                    route = Route.Top
+                }
+            }
+
             // The window ground is the DEEPEST surface in the ladder, so the rail and
             // the content pane read as two cards floating on it. That separation is
             // what the 8dp gutter and the 28dp pane corners are for; without the
@@ -187,11 +232,17 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
                                 state = updateState,
                                 onUpdate = {
                                     val s = updateState
-                                    if (s is UpdateState.Available) updateManager.downloadAndInstall(s.info, onClose)
+                                    if (s is UpdateState.Available) updateManager.downloadAndInstall(s.info, onQuit)
                                     else updateManager.checkForUpdates(force = true)
                                 },
                                 onOpenReleasePage = { url -> openInBrowser(url) },
                                 onDismiss = { updateDismissed = true },
+                            )
+                        }
+                        if (showTrayHint) {
+                            TrayHintBanner(
+                                onKeepInTray = { settingsStore.updateSettings { it.copy(closeToTray = true, trayHintShown = true) } },
+                                onDismiss = { settingsStore.updateSettings { it.copy(trayHintShown = true) } },
                             )
                         }
                     }
@@ -283,6 +334,9 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
                                         koin = koin,
                                         onOpenChannel = { login -> route = Route.Channel(login) },
                                         onResumeVod = { launch -> route = Route.Vod(launch) },
+                                        onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) },
+                                        onOpenBrowse = { destination = Destination.BROWSE },
+                                        onSignIn = { destination = Destination.ACCOUNT },
                                     )
                                     Destination.FOLLOWING -> FollowingContent(
                                         koin = koin,
@@ -291,7 +345,7 @@ fun App(koin: Koin, windowState: WindowState, onClose: () -> Unit, awtWindow: Aw
                                     )
                                     Destination.BROWSE -> BrowseContent(koin = koin, onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) })
                                     Destination.SEARCH -> SearchContent(koin = koin, onOpenChannel = { login -> route = Route.Channel(login) })
-                                    Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onClose)
+                                    Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
                                 }
                             }
@@ -563,6 +617,8 @@ private fun NavigationRail(
     val shapes = PureTvTheme.shapes
     val railVm = rememberDesktopViewModel { koin.get<FollowedRailViewModel>() }
     val railState by railVm.state.collectAsState()
+    val railSettingsStore = remember { koin.get<DesktopSettingsStore>() }
+    val railSettings by railSettingsStore.settings.collectAsState()
     val windowInfo = LocalWindowInfo.current
     val width by animateDpAsState(
         targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
@@ -697,6 +753,13 @@ private fun NavigationRail(
                 onToggleOffline = { railVm.toggleOffline() },
                 onOpenChannel = onOpenChannel,
                 onSignIn = onSignIn,
+                mutedLogins = railSettings.notifyMutedLogins,
+                onToggleMute = { login ->
+                    val key = login.lowercase()
+                    railSettingsStore.updateSettings {
+                        it.copy(notifyMutedLogins = if (key in it.notifyMutedLogins) it.notifyMutedLogins - key else it.notifyMutedLogins + key)
+                    }
+                },
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp),
             )
         }

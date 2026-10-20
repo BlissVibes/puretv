@@ -35,14 +35,27 @@ class TokenRefresher(
 ) {
     private val mutex = Mutex()
 
-    suspend fun refreshIfNeeded(nowEpochSeconds: Long = System.currentTimeMillis() / 1_000): Unit = mutex.withLock {
+    /** When this process last renewed the token, so a forced renewal is not repeated back to back. */
+    @Volatile private var lastRefreshAtEpochSeconds = 0L
+
+    /**
+     * [force] renews even a token that looks fresh, for a Helix 401 on a token the
+     * stored expiry says is still good (Twitch invalidated it early). Still at most
+     * once a minute, so a caller retrying a 401 cannot spin the refresh token.
+     */
+    suspend fun refreshIfNeeded(
+        nowEpochSeconds: Long = System.currentTimeMillis() / 1_000,
+        force: Boolean = false,
+    ): Unit = mutex.withLock {
         val refresh = settingsStore.currentRefreshToken()?.takeIf { it.isNotBlank() }
+        val forced = force && nowEpochSeconds - lastRefreshAtEpochSeconds >= FORCE_MIN_GAP_SECONDS
         if (refresh != null &&
-            SessionRefreshPolicy.shouldRefresh(settingsStore.tokenExpiresAtEpochSeconds(), nowEpochSeconds)
+            (forced || SessionRefreshPolicy.shouldRefresh(settingsStore.tokenExpiresAtEpochSeconds(), nowEpochSeconds))
         ) {
             val current = settingsStore.flow.first()
             runCatching { DeviceAuth.refreshToken(httpClient, refresh) }
                 .onSuccess { token ->
+                    lastRefreshAtEpochSeconds = nowEpochSeconds
                     settingsStore.setSession(
                         accessToken = token.accessToken,
                         // Twitch may or may not rotate the refresh token; keep the old
@@ -78,5 +91,9 @@ class TokenRefresher(
             username = me.login,
             userId = me.id,
         )
+    }
+
+    private companion object {
+        const val FORCE_MIN_GAP_SECONDS = 60L
     }
 }

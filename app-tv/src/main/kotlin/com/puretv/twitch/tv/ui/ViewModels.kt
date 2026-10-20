@@ -32,6 +32,7 @@ import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.repository.UserRepository
@@ -58,15 +59,17 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * SECTION 11 / 07 — ViewModels backing the TV screens. Functionally
+ * SECTION 11 / 07: ViewModels backing the TV screens. Functionally
  * identical to the phone app's `ViewModels.kt` (same `core` repositories,
- * same UI-state shape) — duplicated rather than shared because Android
+ * same UI-state shape), duplicated rather than shared because Android
  * `ViewModel`/`viewModelScope` and this app's `AppSettingsStore` are
  * platform/app-specific (Section 12.2).
  */
 
 data class HomeUiState(
     val isLoggedIn: Boolean = false,
+    /** False until the stored session has been read, so a signed-in cold start never flashes the sign-in panel. */
+    val sessionKnown: Boolean = false,
     val followedLive: List<StreamInfo> = emptyList(),
     val topStreams: List<StreamInfo> = emptyList(),
     val isLoading: Boolean = false,
@@ -76,9 +79,9 @@ data class HomeUiState(
 /**
  * Landing-screen state. Rebuilt (from the one-shot loader the TV app shipped
  * with) to match the phone app's resilience:
- *   • Cached-first paint — last session's streams show instantly from Room,
+ *   • Cached-first paint: last session's streams show instantly from Room,
  *     so the grid is never empty on a cold, offline, or token-expired start.
- *   • Write-through — every fresh network result is persisted (24h TTL).
+ *   • Write-through: every fresh network result is persisted (24h TTL).
  *   • [refresh] is re-runnable and IS wired (resume + periodic, see
  *     `TvHomeScreen`), so "Live Now" repopulates instead of freezing on the
  *     first snapshot. On a failed refresh it refreshes the token once and
@@ -90,6 +93,7 @@ class HomeViewModel(
     private val settings: AppSettingsStore,
     private val cachedStreamDao: CachedStreamDao,
     private val tokenRefresher: TokenRefresher,
+    private val liveFollows: LiveFollowsMonitor,
 ) : ViewModel() {
     private val _state = MutableStateFlow(HomeUiState())
     val state: StateFlow<HomeUiState> = _state.asStateFlow()
@@ -127,10 +131,19 @@ class HomeViewModel(
                 }
             }
         }
-        // Login flag, recomputed whenever the session changes.
+        // Login flag, recomputed whenever the session changes. Signed out, Home
+        // still loads: core reads the public directory through anonymous GQL.
         viewModelScope.launch {
             settings.flow.collect { prefs ->
-                _state.update { it.copy(isLoggedIn = prefs.accessToken.isNotBlank()) }
+                val loggedIn = prefs.accessToken.isNotBlank()
+                _state.update {
+                    it.copy(
+                        isLoggedIn = loggedIn,
+                        sessionKnown = true,
+                        // Logging out drops the follows the moment it happens.
+                        followedLive = if (loggedIn) it.followedLive else emptyList(),
+                    )
+                }
             }
         }
         refresh()
@@ -143,10 +156,15 @@ class HomeViewModel(
             val prefs = settings.flow.first()
             // Live status straight from Twitch on every refresh (resume and the 90s
             // poll): one /streams/followed call instead of re-downloading the whole
-            // follow list and then checking it.
+            // follow list and then checking it. Through the shared monitor, so this
+            // refresh is also the go-live banner's check and never doubles it.
             if (prefs.userId.isNotBlank()) {
-                runCatching { streamRepository.followedLiveStreams(prefs.userId) }
+                runCatching { liveFollows.followedLive(prefs.userId) }
                     .onSuccess { live -> _state.update { it.copy(followedLive = live.sortedByDescending { s -> s.viewerCount }) } }
+            } else {
+                // Signed out (or just logged out): the last account's follows must
+                // not linger as a FOLLOWING hero above the sign-in panel.
+                _state.update { it.copy(followedLive = emptyList()) }
             }
             val ok = loadTopStreamsResilient()
             _state.update {
@@ -252,7 +270,7 @@ data class BrowseUiState(
 
 /**
  * Category grid. Previously a one-shot load that swallowed any failure into an
- * empty list — so a transient network/token failure blanked the grid until a
+ * empty list, so a transient network/token failure blanked the grid until a
  * full relaunch (the reported "categories just disappear" bug). Now it keeps the
  * last-known games on failure, surfaces an error + retry only when it has nothing
  * to show, and refreshes the token once before giving up.
@@ -477,7 +495,7 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         viewModelScope.launch {
-            // Section 7.4 — TV viewers are overwhelmingly unauthenticated/lean-back;
+            // Section 7.4: TV viewers are overwhelmingly unauthenticated/lean-back;
             // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
             // the phone app when no OAuth session is present (Section 5.1).
             val settings = settingsStore.flow.first()
@@ -531,8 +549,8 @@ class StreamViewModel(
      * Resolve the signed master-playlist URL the player consumes.
      *
      * The failure branch is the point of this function. `runCatching { }` with
-     * only an `onSuccess` swallows every cause — a GQL schema change, a blocked
-     * usher host, an offline channel, a dead network — and leaves [playableUrl]
+     * only an `onSuccess` swallows every cause (a GQL schema change, a blocked
+     * usher host, an offline channel, a dead network) and leaves [playableUrl]
      * null, which the screen renders as an indistinguishable black frame. Every
      * one of those needs a different fix, so the message is surfaced verbatim
      * and logged under [TAG] for `adb logcat`.
@@ -622,7 +640,7 @@ data class ChannelUiState(
     val channel: com.puretv.twitch.core.model.ChannelInfo? = null,
     val isLive: Boolean = false,
     val viewerCount: Long = 0L,
-    /** Past broadcasts, newest first. Empty and hidden while signed out: Helix /videos needs a session. */
+    /** Past broadcasts, newest first. Signed out this is a single page from the anonymous GQL directory. */
     val videos: List<VideoInfo> = emptyList(),
     /** Helix cursor for the next page; null when there is nothing more. */
     val videoCursor: String? = null,
@@ -648,7 +666,8 @@ class ChannelViewModel(
             _state.update {
                 it.copy(channel = channel, isLive = stream != null, viewerCount = stream?.viewerCount?.toLong() ?: 0L)
             }
-            if (channel != null && settings.flow.first().accessToken.isNotBlank()) loadMoreVideos()
+            // Signed out the repository reads one page from the anonymous GQL directory (no cursor, so no "More").
+            if (channel != null) loadMoreVideos()
         }
     }
 
@@ -713,6 +732,15 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setLowLatency(enabled: Boolean) = viewModelScope.launch {
         settingsStore.update { it.copy(lowLatencyMode = enabled) }
+    }
+
+    fun setLiveNotifications(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(liveNotifications = enabled) }
+    }
+
+    // PureTvTvApp hands the saved value to the player, which applies it live.
+    fun setAudioNormalizer(enabled: Boolean) = viewModelScope.launch {
+        settingsStore.update { it.copy(audioNormalizer = enabled) }
     }
 
     fun setAdBlockStrategy(strategy: com.puretv.twitch.core.adblock.AdBlockStrategy) = viewModelScope.launch {

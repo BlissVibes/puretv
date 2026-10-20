@@ -140,6 +140,9 @@ data class ChatMessage(
     /** This incoming message @-mentions the local viewer; drives row highlighting.
      *  Viewer-relative, so it is computed at receipt (when selfLogin is known). */
     val mentionsSelf: Boolean = false,
+    /** The author's numeric Twitch id (IRC `user-id` tag). Blank when unknown, for
+     *  example on system rows. Looks up per-user extras such as 7TV name paints. */
+    val userId: String = "",
 )
 
 /** A non-base emote drawn over a base emote (7TV zero-width / overlay cosmetics). */
@@ -187,7 +190,13 @@ sealed class ChatEvent {
         val followersOnlyMinutes: Int? = null,
         val subsOnly: Boolean? = null,
     ) : ChatEvent()
-    data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
+    /** The viewer's own identity. [userId] comes only with GLOBALUSERSTATE; USERSTATE leaves it blank. */
+    data class SelfState(
+        val displayName: String,
+        val color: String,
+        val badges: List<Badge>,
+        val userId: String = "",
+    ) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
     /**
      * A NOTICE from Twitch addressed to this viewer, usually about a message they
@@ -246,6 +255,19 @@ data class AppSettings(
     // rendition instead of video nobody sees. Android phone only.
     val audioOnlyInBackground: Boolean = true,
 
+    // Go-live alerts for followed channels. Windows shows a tray notification,
+    // the phone a system notification, TV an in-app banner. Muted logins are
+    // lowercased.
+    val liveNotifications: Boolean = true,
+    val notifyMutedLogins: Set<String> = emptySet(),
+    // Windows only: closing the window hides it to the tray instead of quitting,
+    // and PureTV can start hidden in the tray when Windows starts. Both off by
+    // default: the close button quits, as it always has.
+    val closeToTray: Boolean = false,
+    val startWithWindows: Boolean = false,
+    // Windows only: the one-time "keep PureTV in the tray" hint was answered.
+    val trayHintShown: Boolean = false,
+
     // Ad Block
     val adBlockEnabled: Boolean = true,
     val adBlockStrategy: String = "proxy", // proxy, rewrite, disabled
@@ -280,4 +302,13 @@ data class AppSettings(
     val tvChatMode: String = TV_CHAT_OVER_VIDEO,
     // How solid the chat panel is, from 0.4 (see-through) to 1.
     val tvChatOpacity: Float = 0.85f,
+
+    // 7TV name paints (Windows only for now)
+    // Draw chatters' 7TV name paints (gradient names) in chat.
+    val showSevenTvPaints: Boolean = true,
+
+    // Audio normalizer (Wave 4): evens out loud and quiet audio with the shared
+    // curve in `audio.AudioNormalizerProfile`. Off by default because it changes
+    // the broadcaster's mix. Instant on mpv, phone and TV; VLC after a restart.
+    val audioNormalizer: Boolean = false,
 )

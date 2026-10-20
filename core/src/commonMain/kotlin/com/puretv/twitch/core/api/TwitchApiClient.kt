@@ -40,6 +40,13 @@ class TwitchApiClient(
 ) {
     private suspend fun authedClient() = httpClient.also { /* headers attached per-request below */ }
 
+    /**
+     * True when a user token is on hand, read fresh on every call because sign
+     * in and sign out happen while the app runs. A blank token counts as none:
+     * Helix would refuse it exactly as it refuses a missing one.
+     */
+    fun hasUserToken(): Boolean = !tokenProvider().isNullOrBlank()
+
     private suspend inline fun <reified T> get(
         path: String,
         params: Map<String, String?> = emptyMap(),

@@ -322,6 +322,26 @@ class FollowedChannelsServiceTest {
         assertEquals(4, counts.follows.get(), "an old list is fetched again")
     }
 
+    @Test fun liveStatusCanComeFromTheSharedMonitor() = runTest {
+        val counts = Counts()
+        val api = TwitchApiClient(followedStreamsClient(counts)) { "token" }
+        val monitor = com.puretv.twitch.core.notify.LiveFollowsMonitor(
+            fetchLive = { api.getFollowedStreams(it) },
+            store = com.puretv.twitch.core.notify.InMemoryLiveNotifyStateStore(),
+            settings = { com.puretv.twitch.core.model.AppSettings() },
+            userId = { "user123" },
+            clock = { testScheduler.currentTime },
+            onGoLive = {},
+        )
+        val service = FollowedChannelsService(api, followedLive = { monitor.followedLive(it) })
+
+        monitor.pollNow()
+        val result = service.load("user123", localPins = emptyList()) {}
+
+        assertEquals(setOf("c0", "c1", "c2"), result.live.map { it.login }.toSet())
+        assertEquals(1, counts.followed.get(), "the rail reused the monitor's fresh answer")
+    }
+
     @Test fun aChannelFollowedSinceTheListWasCachedShowsUpWhenLive() = runTest {
         val service = FollowedChannelsService(TwitchApiClient(followedStreamsClient(Counts(), extraLive = "newfave")) { "token" })
 

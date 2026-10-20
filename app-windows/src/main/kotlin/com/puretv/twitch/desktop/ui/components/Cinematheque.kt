@@ -64,6 +64,11 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.core.emotes.SevenTvPaint
+import com.puretv.twitch.desktop.ui.chat.rememberNamePaintBrush
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import java.awt.Color as AwtColor
 
 /**
@@ -363,6 +368,8 @@ fun ChatMessageRow(
     modifier: Modifier = Modifier,
     showTimestamps: Boolean = LocalChatAppearance.current.showTimestamps,
     onReply: ((ChatMessage) -> Unit)? = null,
+    /** The author's 7TV name paint, drawn over their Twitch colour when set. */
+    namePaint: SevenTvPaint? = null,
 ) {
     val c = PureTvTheme.colors
     val appearance = LocalChatAppearance.current
@@ -443,12 +450,29 @@ fun ChatMessageRow(
             if (message.isSubscriber) ChatBadge("SUB", c.secondaryContainer, c.onSecondaryContainer)
         }
 
-        Text(
-            message.displayName,
-            color = nameColor,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.Bold,
-        )
+        // A 7TV name paint is a span brush, which wins over the plain name colour
+        // and fits its gradient to the name. Built once per row and paint.
+        val nameBrush = rememberNamePaintBrush(namePaint)
+        val paintedName = remember(message.displayName, nameBrush) {
+            nameBrush?.let { brush ->
+                buildAnnotatedString { withStyle(SpanStyle(brush = brush)) { append(message.displayName) } }
+            }
+        }
+        if (paintedName != null) {
+            Text(
+                paintedName,
+                color = nameColor,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        } else {
+            Text(
+                message.displayName,
+                color = nameColor,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+            )
+        }
 
         if (message.deleted) {
             // Moderator removed this message (timeout/ban/delete). Tombstone it

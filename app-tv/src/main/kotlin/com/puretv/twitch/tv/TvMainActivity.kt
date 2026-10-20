@@ -5,12 +5,23 @@ import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.media3.common.util.UnstableApi
+import androidx.navigation.compose.rememberNavController
 import com.puretv.twitch.core.stream.PlayableStreamCache
 import com.puretv.twitch.tv.data.AppSettingsStore
+import com.puretv.twitch.tv.notify.TvGoLiveMonitor
+import com.puretv.twitch.tv.ui.Routes
 import com.puretv.twitch.tv.ui.components.LocalStreamPrewarm
+import com.puretv.twitch.tv.ui.components.TvGoLiveBanner
 import com.puretv.twitch.tv.update.TvUpdateManager
 import com.puretv.twitch.tv.ui.PureTvTvNavHost
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
@@ -28,19 +39,19 @@ import kotlinx.coroutines.withContext
 import org.koin.android.ext.android.getKoin
 
 /**
- * SECTION 07.1 / 07.2 [CRITICAL] — single-Activity host for the TV Navigation
+ * SECTION 07.1 / 07.2 [CRITICAL]: single-Activity host for the TV Navigation
  * Compose graph, launched via the LEANBACK_LAUNCHER intent filter.
  *
  * Two responsibilities beyond hosting Compose (mirrors `MainActivity` on the
- * phone, minus PiP — Android TV doesn't support Picture-in-Picture):
+ * phone, minus PiP: Android TV doesn't support Picture-in-Picture):
  *
  *  1. Capture the OAuth redirect (`puretv-twitch://auth?code=...&state=...`)
  *     and forward it to whichever `TvLoginViewModel` is alive via
- *     [AuthRedirectBus] — same in-process pub/sub pattern as the phone app,
+ *     [AuthRedirectBus]: same in-process pub/sub pattern as the phone app,
  *     bridging Activity Intent handling into the Compose tree.
  *  2. Nothing else needs platform-activity wiring: D-pad/remote input is
  *     handled declaratively by Compose's focus system inside each screen
- *     (Section 7.3) — no `dispatchKeyEvent` override required at this layer.
+ *     (Section 7.3): no `dispatchKeyEvent` override required at this layer.
  *
  * ## Why the theme is not read from inside composition
  *
@@ -74,13 +85,44 @@ class TvMainActivity : ComponentActivity() {
 
         val playableStreamCache = getKoin().get<PlayableStreamCache>()
         val streamPrewarm: (String) -> Unit = { login -> playableStreamCache.prewarm(login) }
+        val goLive = getKoin().get<TvGoLiveMonitor>()
         setContent {
+            val navController = rememberNavController()
+            // No banner for the channel already playing.
+            LaunchedEffect(navController) {
+                navController.currentBackStackEntryFlow.collect { entry ->
+                    goLive.watchingLogin =
+                        if (entry.destination.route == Routes.STREAM) entry.arguments?.getString("channelLogin") else null
+                }
+            }
             PureTvTvTheme(variant = themeVariant.value) {
                 CompositionLocalProvider(LocalStreamPrewarm provides streamPrewarm) {
-                    PureTvTvNavHost()
+                    Box(Modifier.fillMaxSize()) {
+                        PureTvTvNavHost(navController = navController)
+                        // Drawn above every screen and never focusable (see TvGoLiveBanner),
+                        // so it shows over Home, Following or a playing stream without
+                        // touching where the D-pad is.
+                        TvGoLiveBanner(
+                            queue = goLive.banners,
+                            modifier = Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 48.dp),
+                        )
+                    }
                 }
             }
         }
+    }
+
+    // Go-live banners poll only while PureTV is on screen; a TV app sitting in the
+    // background never touches the network for them.
+    override fun onStart() {
+        super.onStart()
+        runCatching { getKoin().get<TvGoLiveMonitor>().start() }
+            .onFailure { Log.w(TAG, "Could not start go-live checks", it) }
+    }
+
+    override fun onStop() {
+        runCatching { getKoin().get<TvGoLiveMonitor>().stop() }
+        super.onStop()
     }
 
     /**
@@ -123,7 +165,7 @@ class TvMainActivity : ComponentActivity() {
         handleAuthRedirect(intent)
     }
 
-    /** Section 3.2 — extracts `code`/`state` from the `puretv-twitch://auth` deep link. */
+    /** Section 3.2: extracts `code`/`state` from the `puretv-twitch://auth` deep link. */
     private fun handleAuthRedirect(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme != "puretv-twitch" || data.host != "auth") return
@@ -144,8 +186,8 @@ class TvMainActivity : ComponentActivity() {
  * Minimal in-process pub/sub so [TvMainActivity.onNewIntent] (which fires
  * outside Compose's lifecycle) can hand the OAuth `code`/`state` pair to
  * whichever `LoginViewModel` instance is currently collecting. Identical
- * design to the phone app's `AuthRedirectBus` (kept as a separate object —
- * not shared — since it lives in this app's package and is wired into this
+ * design to the phone app's `AuthRedirectBus` (kept as a separate object,
+ * not shared, since it lives in this app's package and is wired into this
  * app's `TvMainActivity`/`LoginViewModel` only).
  */
 object AuthRedirectBus {

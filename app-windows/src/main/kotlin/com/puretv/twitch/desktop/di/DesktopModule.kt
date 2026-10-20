@@ -3,8 +3,15 @@ package com.puretv.twitch.desktop.di
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.FollowStore
+import com.puretv.twitch.desktop.data.LiveNotifyFileStore
+import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
+import com.puretv.twitch.desktop.ui.NavigationRequests
+import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import androidx.compose.ui.window.TrayState
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
+import com.puretv.twitch.core.audio.AudioNormalizerProfile
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.desktop.player.DesktopPlayer
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
@@ -42,35 +49,59 @@ import org.koin.core.parameter.parametersOf
 import org.koin.dsl.module
 
 /**
- * SECTION 11/12.4 — Windows-specific Koin bindings layered on top of
+ * SECTION 11/12.4: Windows-specific Koin bindings layered on top of
  * `coreModule` (shared API client, repositories, ad-block engine, chat
- * client — Sections 3–5). Mirrors `androidModule`/`tvModule` in shape;
+ * client - Sections 3 to 5). Mirrors `androidModule`/`tvModule` in shape;
  * differs in *what* backs persistence (file-based, not Room/DataStore) and
  * playback (VLCJ + local proxy, not ExoPlayer).
  *
- * NOTE — ViewModels are bound with `factory { }`, not Koin's `viewModel { }`
+ * NOTE - ViewModels are bound with `factory { }`, not Koin's `viewModel { }`
  * DSL (that's an AndroidX-lifecycle integration this plain-JVM module doesn't
  * pull in). Screens obtain them via `rememberDesktopViewModel { koin.get() }`
  * / `rememberDesktopViewModel(login) { koin.get { parametersOf(login) } }`.
  */
 val desktopModule = module {
     // --- Networking engine (coreModule provides `single { buildKtorClient(get()) }`,
-    // which resolves an `HttpClientEngine` — OkHttp here, matching Android/TV). ---
+    // which resolves an `HttpClientEngine` - OkHttp here, matching Android/TV). ---
     single<HttpClientEngine> { OkHttp.create() }
 
     // --- Persistence -------------------------------------------------------
     // Takes TokenHolder (from coreModule) so saved tokens flow back into the
     // shared HttpClient auth path on both fresh login and cold-start restore.
     single { DesktopSettingsStore(get()) }
-    // Local "Following" list (the in-app library) — see FollowStore.
+    // Local "Following" list (the in-app library) - see FollowStore.
     single { FollowStore() }
-    // Followed-rail data: real Twitch follows (paginated) ∪ local pins.
-    single<FollowedChannelsSource> { FollowedChannelsService(get()) }
-    // Per-VOD playback positions ("continue watching") — see WatchProgressStore.
+    // Go-live alerts. The monitor is the app's one asker of "which follows are live"
+    // (see LiveFollowsMonitor): the rail reads through it, the alert timer in main.kt
+    // polls it, and whatever just went live becomes a tray notification.
+    single { TrayState() }
+    single { NavigationRequests() }
+    single { DesktopLiveNotifier() }
+    single { LiveNotifyFileStore() }
+    single {
+        val store = get<DesktopSettingsStore>()
+        val api = get<TwitchApiClient>()
+        val notifier = get<DesktopLiveNotifier>()
+        LiveFollowsMonitor(
+            fetchLive = { userId -> api.getFollowedStreams(userId) },
+            store = get<LiveNotifyFileStore>(),
+            settings = { store.settings.value },
+            userId = { if (store.isLoggedIn) store.sessionUserId else null },
+            clock = System::currentTimeMillis,
+            onGoLive = { streams -> notifier.show(streams) },
+        )
+    }
+    // Followed-rail data: real Twitch follows (paginated) plus local pins, with live
+    // status from the shared monitor.
+    single<FollowedChannelsSource> {
+        val monitor = get<LiveFollowsMonitor>()
+        FollowedChannelsService(get(), followedLive = { userId -> monitor.followedLive(userId) })
+    }
+    // Per-VOD playback positions ("continue watching") - see WatchProgressStore.
     single { WatchProgressStore() }
-    // Locally-persisted viewer-count history for the channel stats panel — see ViewerHistoryStore.
+    // Locally-persisted viewer-count history for the channel stats panel - see ViewerHistoryStore.
     single { ViewerHistoryStore() }
-    // In-app auto-updater (GitHub Releases) — see UpdateManager.
+    // In-app auto-updater (GitHub Releases) - see UpdateManager.
     single { UpdateManager() }
     // One Coil disk cache for the whole app: the image loader fills it with
     // avatars, thumbnails and emotes, and the animated-emote decoder reads from
@@ -96,7 +127,12 @@ val desktopModule = module {
     single {
         val store = get<DesktopSettingsStore>()
         DesktopPlayerProvider {
-            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) MpvPlayer(store) else VlcPlayer()
+            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) {
+                MpvPlayer(store)
+            } else {
+                // VLC takes the audio normalizer only as instance arguments.
+                VlcPlayer(if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList())
+            }
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }
@@ -111,8 +147,8 @@ val desktopModule = module {
     // --- Auth ------------------------------------------------------------------
     single { DesktopOAuthManager() }
 
-    // --- ViewModels (plain factories — see note above) -------------------------
-    factory { HomeViewModel(get(), get(), get()) }
+    // --- ViewModels (plain factories - see note above) -------------------------
+    factory { HomeViewModel(get(), get(), get(), get()) }
     factory {
         val store = get<DesktopSettingsStore>()
         val follows = get<FollowStore>()
@@ -131,7 +167,11 @@ val desktopModule = module {
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }
-    factory { SettingsViewModel(get()) }
+    factory {
+        val players = get<DesktopPlayerProvider>()
+        // Live on mpv; never builds a player just to tell it about the setting.
+        SettingsViewModel(get(), onAudioNormalizerChange = { on -> players.ifCreated { it.setAudioNormalizer(on) } })
+    }
     // LoginViewModel collaborators: settingsStore, oauthManager, httpClient,
     // tokenHolder (for "set token BEFORE first authed call"), apiClient (for
     // resolving the broadcaster's own userId/login via GET /users).

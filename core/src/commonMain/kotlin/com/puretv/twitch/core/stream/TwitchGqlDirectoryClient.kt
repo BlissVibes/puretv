@@ -1,6 +1,8 @@
 package com.puretv.twitch.core.stream
 
 import com.puretv.twitch.core.api.ChannelSearchResult
+import com.puretv.twitch.core.api.ChatBadgeSetDto
+import com.puretv.twitch.core.model.ChannelEmote
 import com.puretv.twitch.core.api.TwitchConfig
 import com.puretv.twitch.core.model.ChannelInfo
 import com.puretv.twitch.core.model.GameInfo
@@ -156,6 +158,35 @@ class TwitchGqlDirectoryClient(
         }
     }
 
+    /** Twitch's global chat badges (staff, moderator, turbo, ...) in the Helix set shape. */
+    suspend fun globalBadgeSets(): List<ChatBadgeSetDto> {
+        val data: GqlGlobalBadgesData = execute(GLOBAL_BADGES_QUERY, buildJsonObject { })
+        return data.badges.orEmpty().toBadgeSets()
+    }
+
+    /** A channel's own badge sets (subscriber tiers, bits, ...). Empty for an unknown id. */
+    suspend fun channelBadgeSets(broadcasterId: String): List<ChatBadgeSetDto> {
+        if (broadcasterId.isBlank()) return emptyList()
+        val data: GqlChatUserData = execute(CHANNEL_CHAT_QUERY, buildJsonObject { put("id", broadcasterId) })
+        return data.user?.broadcastBadges.orEmpty().toBadgeSets()
+    }
+
+    /** Twitch's global emotes (emote set 0), for the picker. */
+    suspend fun globalEmotes(): List<ChannelEmote> {
+        val data: GqlGlobalEmotesData = execute(GLOBAL_EMOTES_QUERY, buildJsonObject { })
+        return data.emoteSet?.emotes.orEmpty().toTwitchEmotes()
+    }
+
+    /**
+     * A channel's subscriber emotes. Bits and follower emotes are not offered
+     * anonymously, so this is the sub tiers only, a little less than Helix returns.
+     */
+    suspend fun channelEmotes(broadcasterId: String): List<ChannelEmote> {
+        if (broadcasterId.isBlank()) return emptyList()
+        val data: GqlChatUserData = execute(CHANNEL_CHAT_QUERY, buildJsonObject { put("id", broadcasterId) })
+        return data.user?.subscriptionProducts.orEmpty().filterNotNull().flatMap { it.emotes.orEmpty() }.toTwitchEmotes()
+    }
+
     private suspend inline fun <reified T> execute(query: String, variables: JsonObject): T {
         val response = httpClient.post(TwitchConfig.GQL_ENDPOINT) {
             header("Client-ID", TwitchConfig.GQL_CLIENT_ID)
@@ -230,3 +261,13 @@ internal const val VIDEOS_QUERY =
 
 internal const val USERS_QUERY =
     "query(\$logins: [String!]) { users(logins: \$logins) { stream { $STREAM_FIELDS } } }"
+
+internal const val GLOBAL_BADGES_QUERY =
+    "query { badges { setID version title imageURL(size: DOUBLE) } }"
+
+internal const val GLOBAL_EMOTES_QUERY =
+    "query { emoteSet(id: \"0\") { emotes { id token assetType } } }"
+
+internal const val CHANNEL_CHAT_QUERY =
+    "query(\$id: ID!) { user(id: \$id) { broadcastBadges { setID version title imageURL(size: DOUBLE) } " +
+        "subscriptionProducts { emotes { id token assetType } } } }"

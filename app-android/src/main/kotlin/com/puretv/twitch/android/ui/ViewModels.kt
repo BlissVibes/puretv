@@ -66,8 +66,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * SECTION 11 — ViewModels backing the phone/tablet screens. Each pulls
- * shared business logic from `core` repositories/clients (Sections 3–5)
+ * SECTION 11: ViewModels backing the phone/tablet screens. Each pulls
+ * shared business logic from `core` repositories/clients (Sections 3 to 5)
  * and exposes simple immutable UI state via [StateFlow].
  */
 
@@ -460,7 +460,7 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         viewModelScope.launch {
-            // Anonymous (read-only) IRC login when the user hasn't authenticated yet —
+            // Anonymous (read-only) IRC login when the user hasn't authenticated yet,
             // `TwitchChatClient` falls back to a `justinfanNNNN` identity for `null`.
             // Sending requires a real OAuth token (see Section 5.1).
             val settings = settingsStore.flow.first()

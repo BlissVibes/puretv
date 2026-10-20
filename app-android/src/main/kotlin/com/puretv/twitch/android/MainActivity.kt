@@ -49,7 +49,7 @@ import org.koin.android.ext.android.inject
 internal val LocalIsInPip = staticCompositionLocalOf { false }
 
 /**
- * SECTION 06.1 / 06.5 [CRITICAL] — single-Activity host for the Navigation
+ * SECTION 06.1 / 06.5 [CRITICAL]: single-Activity host for the Navigation
  * Compose graph. Its one responsibility beyond hosting Compose is to trigger
  * Picture-in-Picture from [onUserLeaveHint] whenever the user backgrounds the
  * app while a stream is open (Section 6.5).
@@ -241,7 +241,7 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Section 6.5 — entering PiP when the user navigates away (home button,
+     * Section 6.5: entering PiP when the user navigates away (home button,
      * recents) while watching a stream keeps playback visible in a floating
      * window. The 16:9 aspect ratio matches Twitch's source video shape.
      */

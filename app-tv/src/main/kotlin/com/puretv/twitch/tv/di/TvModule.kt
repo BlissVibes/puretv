@@ -37,7 +37,7 @@ import org.koin.dsl.module
 import java.io.File
 
 /**
- * SECTION 11 / 12.2 — TV-specific Koin bindings layered on top of
+ * SECTION 11 / 12.2: TV-specific Koin bindings layered on top of
  * `coreModule`, mirroring `androidModule` 1:1 (Room database, encrypted
  * token storage, DataStore-backed settings, the ExoPlayer wrapper, and
  * screen ViewModels) but pointed at this app's own TV-specific classes.

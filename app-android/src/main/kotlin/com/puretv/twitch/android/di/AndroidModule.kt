@@ -41,7 +41,7 @@ import org.koin.dsl.module
 import java.io.File
 
 /**
- * SECTION 11 — phone/tablet-specific Koin bindings layered on top of
+ * SECTION 11: phone/tablet-specific Koin bindings layered on top of
  * `coreModule`: Room database, encrypted token storage, DataStore-backed
  * settings, the ExoPlayer wrapper (singleton so PiP keeps the same
  * playback session across navigation), and screen ViewModels.

@@ -26,7 +26,7 @@ import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
 
 /**
- * SECTION 11 — wires `coreModule` (shared) + `androidModule` (phone/tablet
+ * SECTION 11: wires `coreModule` (shared) + `androidModule` (phone/tablet
  * specific: Room DB, ExoPlayer, DataStore, ViewModels) into a single Koin graph.
  */
 class PureTvApp : Application() {

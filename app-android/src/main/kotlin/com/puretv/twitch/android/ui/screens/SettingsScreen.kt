@@ -75,7 +75,7 @@ import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
 
 /**
- * SECTION 06.4 / 09.2 — a stack of [ExpressivePanel]s: colour and shape are the
+ * SECTION 06.4 / 09.2: a stack of [ExpressivePanel]s: colour and shape are the
  * new presentation controls, the rest (playback, ad blocking, account, about)
  * carry forward every setting [SettingsViewModel] already exposed. Backed by
  * [com.puretv.twitch.android.data.AppSettingsStore] (DataStore + EncryptedSharedPreferences).

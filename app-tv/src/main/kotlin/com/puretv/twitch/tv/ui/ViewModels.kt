@@ -43,9 +43,9 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 /**
- * SECTION 11 / 07 — ViewModels backing the TV screens. Functionally
+ * SECTION 11 / 07: ViewModels backing the TV screens. Functionally
  * identical to the phone app's `ViewModels.kt` (same `core` repositories,
- * same UI-state shape) — duplicated rather than shared because Android
+ * same UI-state shape), duplicated rather than shared because Android
  * `ViewModel`/`viewModelScope` and this app's `AppSettingsStore` are
  * platform/app-specific (Section 12.2).
  */
@@ -61,9 +61,9 @@ data class HomeUiState(
 /**
  * Landing-screen state. Rebuilt (from the one-shot loader the TV app shipped
  * with) to match the phone app's resilience:
- *   • Cached-first paint — last session's streams show instantly from Room,
+ *   • Cached-first paint: last session's streams show instantly from Room,
  *     so the grid is never empty on a cold, offline, or token-expired start.
- *   • Write-through — every fresh network result is persisted (24h TTL).
+ *   • Write-through: every fresh network result is persisted (24h TTL).
  *   • [refresh] is re-runnable and IS wired (resume + periodic, see
  *     `TvHomeScreen`), so "Live Now" repopulates instead of freezing on the
  *     first snapshot. On a failed refresh it refreshes the token once and
@@ -239,7 +239,7 @@ data class BrowseUiState(
 
 /**
  * Category grid. Previously a one-shot load that swallowed any failure into an
- * empty list — so a transient network/token failure blanked the grid until a
+ * empty list, so a transient network/token failure blanked the grid until a
  * full relaunch (the reported "categories just disappear" bug). Now it keeps the
  * last-known games on failure, surfaces an error + retry only when it has nothing
  * to show, and refreshes the token once before giving up.
@@ -415,7 +415,7 @@ class StreamViewModel(
             adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         viewModelScope.launch {
-            // Section 7.4 — TV viewers are overwhelmingly unauthenticated/lean-back;
+            // Section 7.4: TV viewers are overwhelmingly unauthenticated/lean-back;
             // fall back to the anonymous `justinfanNNNN` IRC identity exactly like
             // the phone app when no OAuth session is present (Section 5.1).
             val settings = settingsStore.flow.first()
@@ -443,8 +443,8 @@ class StreamViewModel(
      * Resolve the signed master-playlist URL the player consumes.
      *
      * The failure branch is the point of this function. `runCatching { }` with
-     * only an `onSuccess` swallows every cause — a GQL schema change, a blocked
-     * usher host, an offline channel, a dead network — and leaves [playableUrl]
+     * only an `onSuccess` swallows every cause (a GQL schema change, a blocked
+     * usher host, an offline channel, a dead network) and leaves [playableUrl]
      * null, which the screen renders as an indistinguishable black frame. Every
      * one of those needs a different fix, so the message is surfaced verbatim
      * and logged under [TAG] for `adb logcat`.

@@ -19,7 +19,11 @@ import java.awt.Window
 /** Distance, in px, from a screen edge that counts as a "drag-to-snap" drop. */
 private const val SNAP_EDGE_PX = 14
 
-enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN }
+/**
+ * MINI is the mini player: the window itself shrunk into an always-on-top corner player
+ * (see [MiniPlayerController]). It starts only when the viewer asks.
+ */
+enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
 
 /**
  * Owns window-chrome state (player mode, chat, maximize/minimize/fullscreen).
@@ -55,14 +59,68 @@ class AppShellController(
 
     private var fullscreenRestore: FullscreenRestore? = null
 
+    private val miniPlayer = MiniPlayerController(window)
+
+    /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
+    private var miniRestore: FullscreenRestore? = null
+
     fun setPlayerMode(mode: PlayerMode) {
         val previous = playerModeState
+        // From the mini player the only ways on are back to the normal window or staying put.
+        if (previous == PlayerMode.MINI && mode != PlayerMode.MINI && mode != PlayerMode.DEFAULT) return
         playerModeState = mode
         when {
+            // Fullscreen straight into mini: the window to come back to is the one from
+            // before fullscreen, so hand that over instead of restoring it only to shrink it.
+            mode == PlayerMode.MINI && previous == PlayerMode.FULLSCREEN -> {
+                miniRestore = fullscreenRestore
+                fullscreenRestore = null
+                enterMini()
+            }
             mode == PlayerMode.FULLSCREEN && previous != PlayerMode.FULLSCREEN -> enterFullscreen()
             mode != PlayerMode.FULLSCREEN && previous == PlayerMode.FULLSCREEN -> exitFullscreen()
+            mode == PlayerMode.MINI && previous != PlayerMode.MINI -> {
+                miniRestore = currentGeometry()
+                enterMini()
+            }
+            mode != PlayerMode.MINI && previous == PlayerMode.MINI -> leaveMiniWindow()
         }
     }
+
+    private fun currentGeometry() = FullscreenRestore(
+        placement = windowState.placement,
+        position = windowState.position,
+        size = windowState.size,
+    )
+
+    private fun enterMini() {
+        windowState.placement = WindowPlacement.Floating
+        (window as? Frame)?.extendedState = Frame.NORMAL
+        miniPlayer.enter()
+    }
+
+    private fun leaveMiniWindow() {
+        miniPlayer.exit()
+        val restore = miniRestore ?: return
+        miniRestore = null
+        (window as? Frame)?.extendedState = Frame.NORMAL
+        windowState.position = restore.position
+        windowState.size = restore.size
+        windowState.placement = restore.placement
+    }
+
+    /** Back to the normal window if the mini player is up; anything else is left alone. */
+    fun exitMini() {
+        if (playerModeState == PlayerMode.MINI) setPlayerMode(PlayerMode.DEFAULT)
+    }
+
+    /** The mini strip moves the window by hand: where it is now, and a place to put it. */
+    val windowX: Int get() = window.x
+    val windowY: Int get() = window.y
+    fun moveWindowTo(x: Int, y: Int) = window.setLocation(x, y)
+
+    /** A drag of the mini player ended: keep it on screen. */
+    fun settleMini() = miniPlayer.settle()
 
     private fun enterFullscreen() {
         // Capture geometry through WindowState (it holds the *floating* size even

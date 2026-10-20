@@ -133,6 +133,9 @@ class MultiViewViewModel(
     }
 
     private val lock = Any()
+    // Guards the go-live skip list so a late update cannot land after the screen closed.
+    private val watchLock = Any()
+    private var cleared = false
     private val runtimes = HashMap<Int, Runtime>()
 
     // The proxy start is shared: every tile waits for the same attempt.
@@ -144,7 +147,7 @@ class MultiViewViewModel(
         // Go-live toasts skip every channel on screen, not only the one App knows about.
         scope.launch {
             _state.map { s -> s.layout.tiles.mapTo(HashSet()) { it.login } }.distinctUntilChanged()
-                .collect { notifier.alsoWatching = it }
+                .collect { tiles -> synchronized(watchLock) { if (!cleared) notifier.alsoWatching = tiles } }
         }
         // Chat belongs to the active tile: when the sound moves, so does the chat.
         scope.launch {
@@ -216,6 +219,19 @@ class MultiViewViewModel(
     }
 
     fun swap(a: Int, b: Int) = _state.update { it.copy(layout = it.layout.swap(a, b)) }
+
+    /** Moves tile [id] one place earlier (-1) or later (1) in the grid. Only the order changes: no player is touched. */
+    fun move(id: Int, delta: Int) = _state.update { it.copy(layout = it.layout.move(id, delta)) }
+
+    /** Up or Down on the keyboard: volume for the active tile, as on the normal stream screen. */
+    fun nudgeVolume(up: Boolean) {
+        val s = _state.value
+        when {
+            // Muted: Up brings back the volume from before the mute; Down stays quiet.
+            s.soundOff -> if (up) toggleMute()
+            else -> setVolume(PlayerShortcuts.steppedVolume(s.volume, up))
+        }
+    }
 
     fun setVolume(volume: Int) {
         _state.update { it.copy(volume = volume.coerceIn(0, 100), soundOff = false) }
@@ -376,7 +392,10 @@ class MultiViewViewModel(
     /** Stops and frees every tile, so leaving the screen leaves nothing playing or decoding. */
     override fun onCleared() {
         chat.close()
-        notifier.alsoWatching = emptySet()
+        synchronized(watchLock) {
+            cleared = true
+            notifier.alsoWatching = emptySet()
+        }
         val ids = synchronized(lock) { runtimes.keys.toList() }
         ids.forEach { closeRuntime(it) }
     }

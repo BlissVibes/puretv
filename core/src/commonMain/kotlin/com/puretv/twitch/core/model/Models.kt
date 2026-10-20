@@ -175,7 +175,18 @@ sealed class ChatEvent {
     data class UserNotice(val systemMessage: String, val raw: ChatMessage?) : ChatEvent()
     data class ClearChat(val targetUser: String?, val durationSeconds: Int?) : ChatEvent()
     data class ClearMessage(val targetMessageId: String) : ChatEvent()
-    data class RoomState(val slowModeSeconds: Int?, val emoteOnly: Boolean) : ChatEvent()
+    /**
+     * The room's chat modes. Twitch sends every mode on join, then a partial
+     * update carrying only the tag that changed, so null means "unchanged by this
+     * update" and the receiver merges (see `ChatRoomModes.merge`).
+     */
+    data class RoomState(
+        val slowModeSeconds: Int? = null,
+        val emoteOnly: Boolean? = null,
+        /** -1 off, 0 any follower, N minutes of following. */
+        val followersOnlyMinutes: Int? = null,
+        val subsOnly: Boolean? = null,
+    ) : ChatEvent()
     data class SelfState(val displayName: String, val color: String, val badges: List<Badge>) : ChatEvent()
     data class ConnectionState(val connected: Boolean, val reason: String? = null) : ChatEvent()
     /**
@@ -198,6 +209,12 @@ data class ChannelEmote(
 )
 
 // ---- Settings ----
+
+/** [AppSettings.tvChatMode]: chat floats over the video (the default). */
+const val TV_CHAT_OVER_VIDEO = "overlay"
+
+/** [AppSettings.tvChatMode]: chat gets its own column and the video shrinks beside it. */
+const val TV_CHAT_BESIDE_VIDEO = "side"
 
 /** GPU video upscaling mode. STANDARD/ANIME are effective only on the mpv
  *  backend (VLC ignores them); that gating lives in the player + settings UI,
@@ -256,4 +273,11 @@ data class AppSettings(
     val accessToken: String = "",
     val username: String = "",
     val userId: String = "",
+
+    // TV chat placement (TV only)
+    // Where chat sits: TV_CHAT_OVER_VIDEO floats it over the picture,
+    // TV_CHAT_BESIDE_VIDEO shrinks the video to make room.
+    val tvChatMode: String = TV_CHAT_OVER_VIDEO,
+    // How solid the chat panel is, from 0.4 (see-through) to 1.
+    val tvChatOpacity: Float = 0.85f,
 )

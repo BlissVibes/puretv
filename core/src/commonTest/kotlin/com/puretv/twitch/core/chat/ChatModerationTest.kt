@@ -1,4 +1,4 @@
-package com.puretv.twitch.desktop.ui.chat
+package com.puretv.twitch.core.chat
 
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.MessagePart

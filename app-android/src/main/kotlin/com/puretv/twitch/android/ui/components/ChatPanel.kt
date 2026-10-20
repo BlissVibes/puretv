@@ -61,9 +61,11 @@ import androidx.compose.ui.text.PlaceholderVerticalAlign
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -72,8 +74,11 @@ import coil3.compose.AsyncImage
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
+import com.puretv.twitch.core.chat.BadgeIndex
+import com.puretv.twitch.core.chat.ChatRoomModes
 import com.puretv.twitch.core.chat.ComposerSuggestion
 import com.puretv.twitch.core.chat.completeWord
+import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.chat.composerSuggestions
 import com.puretv.twitch.core.chat.insertAtCursor
 import com.puretv.twitch.core.chat.recentChatters
@@ -113,6 +118,12 @@ fun ChatPanel(
     canSend: Boolean = true,
     /** Settings > Chat > Text size. Scales the whole message list, emotes included. */
     textScale: Float = 1f,
+    /** The room's chat modes, shown as a chip row above the composer while any is on. */
+    roomModes: ChatRoomModes = ChatRoomModes(),
+    /** Chat badge art; until it loads (or for an unknown badge) rows show text chips. */
+    badges: BadgeIndex = BadgeIndex.EMPTY,
+    /** Settings > Chat > badges. Off shows name and message only. */
+    showBadges: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -175,10 +186,18 @@ fun ChatPanel(
                     verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
                     items(messages, key = { it.id }) { message ->
-                        ChatMessageRow(message = message, emotes = emotes, modifier = Modifier.fillMaxWidth())
+                        ChatMessageRow(
+                            message = message,
+                            emotes = emotes,
+                            badges = badges,
+                            showBadges = showBadges,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             }
+
+            RoomModeChips(roomModes, Modifier.fillMaxWidth().padding(top = 6.dp))
 
             if (canSend) {
                 if (pickerOpen) {
@@ -296,8 +315,26 @@ fun ChatPanel(
  * legible while scrolling past rather than only while touched.
  */
 @Composable
-private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, modifier: Modifier = Modifier) {
+private fun ChatMessageRow(
+    message: ChatMessage,
+    emotes: Map<String, String>,
+    badges: BadgeIndex,
+    showBadges: Boolean,
+    modifier: Modifier = Modifier,
+) {
     val c = PureTvTheme.colors
+    // Subs, raids, "chat cleared" and Twitch's notices carry no user identity: one
+    // centred, muted line instead of the name, badge and emote pipeline.
+    if (message.isSystem) {
+        Text(
+            message.message,
+            style = MaterialTheme.typography.labelMedium,
+            color = c.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+        )
+        return
+    }
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -314,7 +351,9 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
     val timestamp = remember(message.timestamp) {
         runCatching { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(message.timestamp)) }.getOrDefault("")
     }
-    val (bodyText, bodyInline) = remember(message.id, emotes) { buildChatBody(message, emotes) }
+    // Keyed on the whole message, not its id: a moderator's delete arrives as a
+    // copy with the same id, and an id key would keep showing the original words.
+    val (bodyText, bodyInline) = remember(message, emotes) { buildChatBody(message, emotes) }
 
     Column(
         modifier = modifier
@@ -326,13 +365,28 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
             .padding(horizontal = 12.dp, vertical = 6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (message.isBroadcaster) {
-                ChatBadgeChip("HOST", c.primary, c.onPrimary)
-            } else if (message.isModerator) {
-                ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+            val resolvedBadges = remember(message.badges, badges) {
+                if (badges === BadgeIndex.EMPTY) emptyList()
+                else message.badges.mapNotNull { badges.resolve(it.setId, it.version) }
             }
-            if (message.isSubscriber) {
-                ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+            if (!showBadges) {
+                // Badges turned off: name and message only.
+            } else if (resolvedBadges.isNotEmpty()) {
+                // Badge art is square (BadgeIndex picks the 2x CDN image).
+                resolvedBadges.forEach { badge ->
+                    AsyncImage(model = badge.url, contentDescription = badge.title, modifier = Modifier.size(18.dp))
+                }
+            } else {
+                // Art not loaded yet (or this channel returned none): text chips keep
+                // rank legible meanwhile.
+                if (message.isBroadcaster) {
+                    ChatBadgeChip("HOST", c.primary, c.onPrimary)
+                } else if (message.isModerator) {
+                    ChatBadgeChip("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+                }
+                if (message.isSubscriber) {
+                    ChatBadgeChip("SUB", c.secondaryContainer, c.onSecondaryContainer)
+                }
             }
             Text(
                 message.displayName,
@@ -345,12 +399,52 @@ private fun ChatMessageRow(message: ChatMessage, emotes: Map<String, String>, mo
             )
             Text(timestamp, style = PureTvType.dataSmall, color = c.onSurfaceVariant.copy(alpha = 0.6f))
         }
-        Text(
-            text = bodyText,
-            inlineContent = bodyInline,
-            style = MaterialTheme.typography.bodyLarge,
-            color = c.onSurface,
-        )
+        if (message.deleted) {
+            // A moderator removed this (timeout, ban or delete). The row stays as a
+            // tombstone so the conversation around it still reads.
+            Text(
+                "<message deleted>",
+                style = MaterialTheme.typography.bodyLarge,
+                fontStyle = FontStyle.Italic,
+                color = c.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = bodyText,
+                inlineContent = bodyInline,
+                style = MaterialTheme.typography.bodyLarge,
+                color = c.onSurface,
+            )
+        }
+    }
+}
+
+/**
+ * Slow, emote-only, followers-only and sub-only as muted pills, so a message that
+ * will not go through is explained before it is typed. Nothing when the room is open.
+ */
+@Composable
+private fun RoomModeChips(modes: ChatRoomModes, modifier: Modifier = Modifier) {
+    val labels = remember(modes) { modes.labels() }
+    if (labels.isEmpty()) return
+    val c = PureTvTheme.colors
+    LazyRow(
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(labels, key = { it }) { label ->
+            Text(
+                label,
+                style = PureTvType.dataSmall,
+                color = c.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(PureTvTheme.shapes.pillShape)
+                    .background(c.surfaceHigh)
+                    .padding(horizontal = 10.dp, vertical = 4.dp),
+            )
+        }
     }
 }
 

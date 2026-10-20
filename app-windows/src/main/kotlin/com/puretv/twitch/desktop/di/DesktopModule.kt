@@ -75,7 +75,7 @@ val desktopModule = module {
     // polls it, and whatever just went live becomes a tray notification.
     single { TrayState() }
     single { NavigationRequests() }
-    single { DesktopLiveNotifier(get()) }
+    single { DesktopLiveNotifier() }
     single { LiveNotifyFileStore() }
     single {
         val store = get<DesktopSettingsStore>()

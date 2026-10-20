@@ -140,6 +140,7 @@ fun App(
     onClose: () -> Unit,
     onQuit: () -> Unit,
     awtWindow: AwtWindow,
+    onWatching: (String?) -> Unit = {},
     windowVisible: Boolean = true,
 ) {
     // coil3's setSingletonImageLoaderFactory is itself @Composable and internally
@@ -203,6 +204,11 @@ fun App(
                     shell.exitImmersive()
                     route = Route.Stream(login)
                 }
+            }
+            // Go-live toasts skip the channel that is open on screen.
+            LaunchedEffect(route, windowVisible) {
+                val r = route
+                onWatching(if (windowVisible && r is Route.Stream) r.login else null)
             }
             // Hidden in the tray, nothing should keep playing or keep chat sockets open:
             // leaving the stream (or VOD) route disposes its player and chat.

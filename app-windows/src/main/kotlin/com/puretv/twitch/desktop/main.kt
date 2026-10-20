@@ -99,7 +99,15 @@ fun main(args: Array<String>) {
             on && signedIn && isTraySupported
         }
             .distinctUntilChanged()
-            .collectLatest { active -> if (active) monitor.pollEvery(LIVE_POLL_INTERVAL_MS) }
+            .collectLatest { active ->
+                if (active) {
+                    monitor.pollEvery(LIVE_POLL_INTERVAL_MS)
+                } else {
+                    // Whatever goes live while alerts are off or nobody is signed in is
+                    // old news when they resume: the first poll then seeds silently.
+                    monitor.alertsStopped()
+                }
+            }
     }
     // "Start with Windows" points at the launcher exe; rewrite it on each start so it
     // follows the app if it was reinstalled somewhere else.
@@ -143,11 +151,18 @@ fun main(args: Array<String>) {
         // arrives while already hidden (Windows signing out, an installer), it quits.
         // The updater and the tray's Quit never come through here: they call
         // exitApplication directly, so an update always really exits.
+        // Every real exit stops answering a second launch first: application{} only
+        // returns after Compose has disposed, and a launch arriving in between would
+        // have its show request answered (deleted) by a copy that is about to exit.
+        val quit: () -> Unit = {
+            guard.stopListening()
+            exitApplication()
+        }
         val closeWindow: () -> Unit = {
             if (windowVisible && settings.closeToTray && isTraySupported) {
                 windowVisible = false
             } else {
-                exitApplication()
+                quit()
             }
         }
 
@@ -162,6 +177,9 @@ fun main(args: Array<String>) {
         // Alerts are delivered through the tray icon, so it is there whenever they can
         // arrive, and whenever the window is hidden (the only way back to it).
         if (isTraySupported && ((settings.liveNotifications && signedIn) || settings.closeToTray || !windowVisible)) {
+            // The icon is added to the system tray as Tray enters composition; this runs
+            // right after, so a go-live toast that had nowhere to go yet appears now.
+            LaunchedEffect(Unit) { notifier.flushPending() }
             Tray(
                 icon = appIcon,
                 state = trayState,
@@ -179,7 +197,7 @@ fun main(args: Array<String>) {
                         onCheckedChange = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
                     )
                     Separator()
-                    Item("Quit PureTV", onClick = ::exitApplication)
+                    Item("Quit PureTV", onClick = quit)
                 },
             )
         }
@@ -223,12 +241,17 @@ fun main(args: Array<String>) {
                 koin = koinApp.koin,
                 windowState = windowState,
                 onClose = closeWindow,
-                onQuit = ::exitApplication,
+                onQuit = quit,
+                onWatching = { notifier.watchingLogin = it },
                 awtWindow = window,
                 windowVisible = windowVisible,
             )
         }
     }
+
+    // No more answering a relaunch (a no-op if quit() already stopped it): the slow
+    // teardown below is exactly when a quick relaunch would be lost.
+    guard.stopListening()
 
     // The Compose UI loop has ended (window closed, the tray's Quit, or the updater
     // called exitApplication). Returning from main() is NOT enough to end the process:

@@ -14,6 +14,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdMarkers
@@ -77,6 +78,23 @@ class TwitchPlayer(
         .build()
 
     /**
+     * The same client without [AdBlockInterceptor], for VODs (shares the
+     * connection pool). VOD manifests are ad-free by construction, and the
+     * interceptor's learnFromMaster would record the VOD id as a channel login
+     * and run backup swaps against it.
+     */
+    private val plainHttpClient = okHttpClient.newBuilder().apply { interceptors().clear() }.build()
+    private val vodSourceFactory by lazy { HlsMediaSource.Factory(OkHttpDataSource.Factory(plainHttpClient)) }
+
+    /**
+     * True while a VOD is loaded. A VOD has a fixed timeline, so the live-only
+     * steps below (latency sampling, reloading the master for audio only,
+     * parking at the live edge) skip it: each of them would restart it at 0.
+     */
+    @Volatile var isVod = false
+        private set
+
+    /**
      * What one stream screen's view model hands the player when it starts playing
      * for it: the callbacks to install, and the quality to come back to if another
      * stream used the shared player meanwhile (see [PlayOwnership]).
@@ -87,7 +105,9 @@ class TwitchPlayer(
         val quality: () -> StreamQuality?,
     )
 
-    private val ownership = PlayOwnership<PlayTicket>()
+    // Stream tickets and VOD owners share one claim, so a stream stacked on a VOD
+    // (a go-live alert) and the VOD under it never stop each other by mistake.
+    private val ownership = PlayOwnership<Any>()
 
     /**
      * Stops playback and clears the callbacks, but only if [ticket] is still the one
@@ -250,6 +270,7 @@ class TwitchPlayer(
         override fun onRenderedFirstFrame() {
             onFirstFrame?.invoke()
             mainHandler.removeCallbacks(latencySample)
+            if (isVod) return
             latencySamplesLeft = LATENCY_SAMPLES
             mainHandler.postDelayed(latencySample, LATENCY_SAMPLE_MS)
         }
@@ -277,6 +298,7 @@ class TwitchPlayer(
         }
         errorRetries = 0
         mainHandler.removeCallbacks(retryRunnable)
+        isVod = false
         this.lowLatency = lowLatency
         with(exoPlayer) {
             setMediaItem(
@@ -289,6 +311,47 @@ class TwitchPlayer(
             prepare()
             play()
         }
+    }
+
+    /**
+     * Plays a VOD from [startPositionMs]. VOD manifests are ad-free by
+     * construction, so they skip the live pipeline entirely: no ad interceptor
+     * (see [plainHttpClient]), no live configuration, no latency sampling.
+     * Seeking and resuming go through the player's own seekTo, never a reload.
+     */
+    fun playVod(
+        url: String,
+        metadata: MediaMetadata = MediaMetadata.EMPTY,
+        startPositionMs: Long = 0L,
+        owner: Any? = null,
+    ) {
+        owner?.let(ownership::claim)
+        errorRetries = 0
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
+        isVod = true
+        lowLatency = false
+        val item = MediaItem.Builder().setUri(url).setMediaMetadata(metadata).build()
+        with(exoPlayer) {
+            setMediaSource(vodSourceFactory.createMediaSource(item), startPositionMs.coerceAtLeast(0L))
+            prepare()
+            play()
+        }
+    }
+
+    /** True while [owner] (a VOD view model) is the one the player plays for. */
+    fun ownsVod(owner: Any): Boolean = ownership.isOwner(owner)
+
+    /**
+     * Stops playback, but only if [owner] is still the one the player plays for: a
+     * VOD that was cleared after another video or stream took the player changes
+     * nothing.
+     */
+    fun stopIfVodOwner(owner: Any): Boolean {
+        if (!ownership.release(owner)) return false
+        stop()
+        onGaveUp = null
+        return true
     }
 
     // Audio only, by the viewer's pick or because the app is in the background.
@@ -335,7 +398,9 @@ class TwitchPlayer(
     private inline fun updateAudioOnly(change: () -> Unit) {
         val before = audioOnly
         change()
-        if (audioOnly != before) reloadCurrentStream()
+        // A VOD keeps its picture: reloading it would restart it at 0 through
+        // the live pipeline. The flags still change, and stop() clears them.
+        if (audioOnly != before && !isVod) reloadCurrentStream()
     }
 
     /**
@@ -363,6 +428,7 @@ class TwitchPlayer(
         // only because this one was.
         pickedAudioOnly = false
         backgroundAudioOnly = false
+        isVod = false
         _exoPlayer?.run {
             stop()
             clearMediaItems()
@@ -381,7 +447,8 @@ class TwitchPlayer(
         _exoPlayer?.run {
             pause()
             stop()
-            seekToDefaultPosition()
+            // A VOD's default position is its start: keep it where the viewer was.
+            if (!isVod) seekToDefaultPosition()
         }
     }
 

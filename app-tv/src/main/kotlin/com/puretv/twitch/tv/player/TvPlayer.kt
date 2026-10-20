@@ -13,6 +13,7 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultLivePlaybackSpeedControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.puretv.twitch.core.adblock.AdBlockEngine
 import com.puretv.twitch.core.adblock.AdMarkers
@@ -77,6 +78,22 @@ class TvPlayer(
             ),
         )
         .build()
+
+    /**
+     * The same client without [TvAdBlockInterceptor], for VODs (shares the
+     * connection pool). VOD manifests are ad-free by construction, and the
+     * interceptor's learnFromMaster would record the VOD id as a channel login.
+     */
+    private val plainHttpClient = okHttpClient.newBuilder().apply { interceptors().clear() }.build()
+    private val vodSourceFactory by lazy { HlsMediaSource.Factory(OkHttpDataSource.Factory(plainHttpClient)) }
+
+    /**
+     * True while a VOD is loaded. A VOD has a fixed timeline, so the live-only
+     * steps below (latency sampling, reloading the master for audio only) skip
+     * it: a reload would restart it at 0.
+     */
+    @Volatile var isVod = false
+        private set
 
     /**
      * Called when the first video frame of a stream is on screen. Feeds the local
@@ -219,6 +236,7 @@ class TvPlayer(
         override fun onRenderedFirstFrame() {
             onFirstFrame?.invoke()
             mainHandler.removeCallbacks(latencySample)
+            if (isVod) return
             latencySamplesLeft = LATENCY_SAMPLES
             mainHandler.postDelayed(latencySample, LATENCY_SAMPLE_MS)
         }
@@ -236,9 +254,30 @@ class TvPlayer(
     fun playUrl(url: String, lowLatency: Boolean = false) {
         errorRetries = 0
         mainHandler.removeCallbacks(retryRunnable)
+        isVod = false
         this.lowLatency = lowLatency
         with(exoPlayer) {
             setMediaItem(MediaItem.Builder().setUri(url).setLiveConfiguration(liveConfiguration(lowLatency)).build())
+            prepare()
+            play()
+        }
+    }
+
+    /**
+     * Plays a VOD from [startPositionMs]. VOD manifests are ad-free by
+     * construction, so they skip the live pipeline entirely: no ad interceptor
+     * (see [plainHttpClient]), no live configuration, no latency sampling.
+     * Seeking and resuming go through the player's own seekTo, never a reload.
+     */
+    fun playVod(url: String, startPositionMs: Long = 0L) {
+        errorRetries = 0
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(latencySample)
+        isVod = true
+        lowLatency = false
+        val item = MediaItem.Builder().setUri(url).build()
+        with(exoPlayer) {
+            setMediaSource(vodSourceFactory.createMediaSource(item), startPositionMs.coerceAtLeast(0L))
             prepare()
             play()
         }
@@ -278,7 +317,9 @@ class TvPlayer(
         }
         exoPlayer.trackSelectionParameters = builder.build()
         val wantAudioOnly = quality == StreamQuality.AUDIO_ONLY
-        if (wantAudioOnly != audioOnly) {
+        // A VOD keeps its picture: reloading it would restart it at 0 through
+        // the live pipeline.
+        if (wantAudioOnly != audioOnly && !isVod) {
             audioOnly = wantAudioOnly
             reloadCurrentStream()
         }
@@ -307,6 +348,7 @@ class TvPlayer(
         // The next stream applies its own quality; it must not open as audio
         // only because this one was.
         audioOnly = false
+        isVod = false
         _exoPlayer?.run {
             stop()
             clearMediaItems()

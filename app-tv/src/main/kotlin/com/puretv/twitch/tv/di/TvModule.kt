@@ -14,6 +14,7 @@ import com.puretv.twitch.core.follows.FollowedChannelsSource
 import com.puretv.twitch.tv.data.AppSettingsStore
 import com.puretv.twitch.tv.data.SecureTokenStore
 import com.puretv.twitch.tv.data.TokenRefresher
+import com.puretv.twitch.tv.data.db.MIGRATION_1_2
 import com.puretv.twitch.tv.data.db.PureTvTvDatabase
 import com.puretv.twitch.tv.notify.DataStoreLiveNotifyStore
 import com.puretv.twitch.tv.notify.TvGoLiveMonitor
@@ -28,6 +29,8 @@ import com.puretv.twitch.tv.ui.SearchViewModel
 import com.puretv.twitch.tv.ui.SettingsViewModel
 import com.puretv.twitch.tv.ui.StreamViewModel
 import com.puretv.twitch.tv.ui.TvFollowingViewModel
+import com.puretv.twitch.tv.ui.TvVodViewModel
+import com.puretv.twitch.tv.ui.VodLaunch
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import kotlinx.coroutines.flow.first
@@ -55,9 +58,13 @@ val tvModule = module {
     // --- Persistence -----------------------------------------------------
     single {
         Room.databaseBuilder(get(), PureTvTvDatabase::class.java, PureTvTvDatabase.DB_NAME)
+            // The explicit migration keeps watch history across the update; the
+            // destructive fallback stays only as a last resort for an unknown version.
+            .addMigrations(MIGRATION_1_2)
             .fallbackToDestructiveMigration()
             .build()
     }
+    single { get<PureTvTvDatabase>().vodProgressDao() }
     single { get<PureTvTvDatabase>().cachedStreamDao() }
     single { get<PureTvTvDatabase>().cachedChannelDao() }
     single { get<PureTvTvDatabase>().cachedEmoteDao() }
@@ -128,7 +135,8 @@ val tvModule = module {
     viewModel { (gameId: String) -> CategoryViewModel(gameId, get()) }
     viewModel { SearchViewModel(get()) }
     viewModel { (channelLogin: String) -> StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get()) }
-    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get()) }
+    viewModel { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get(), get()) }
+    viewModel { (launch: VodLaunch) -> TvVodViewModel(launch, get(), get(), get(), get(), get(), get()) }
     viewModel { SettingsViewModel(get()) }
     // Device Code Grant flow: (httpClient, settingsStore, userRepository).
     viewModel { LoginViewModel(get(), get(), get()) }

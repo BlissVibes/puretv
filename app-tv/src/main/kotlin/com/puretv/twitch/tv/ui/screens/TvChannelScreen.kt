@@ -1,6 +1,18 @@
 package com.puretv.twitch.tv.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Color
+import com.puretv.twitch.core.model.VideoInfo
+import com.puretv.twitch.core.vod.VodFormat
+import com.puretv.twitch.tv.ui.VodLaunch
+import com.puretv.twitch.tv.ui.components.tvFocusClickable
+import java.time.Instant
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,6 +76,7 @@ import org.koin.core.parameter.parametersOf
 fun TvChannelScreen(
     channelLogin: String,
     onWatch: () -> Unit,
+    onOpenVod: (VodLaunch) -> Unit,
     onBack: () -> Unit,
     viewModel: ChannelViewModel = koinViewModel(parameters = { parametersOf(channelLogin) }),
 ) {
@@ -124,6 +137,16 @@ fun TvChannelScreen(
                 modifier = Modifier.focusRequester(watchFocusRequester),
             )
 
+            if (state.videos.isNotEmpty()) {
+                PastBroadcastsRow(
+                    videos = state.videos,
+                    hasMore = state.videoCursor != null,
+                    loading = state.videosLoading,
+                    onOpen = onOpenVod,
+                    onMore = viewModel::loadMoreVideos,
+                )
+            }
+
             if (!channel?.description.isNullOrBlank()) {
                 TvPanel {
                     Column {
@@ -136,6 +159,136 @@ fun TvChannelScreen(
 
             Spacer(Modifier.size(40.dp))
         }
+    }
+}
+
+/**
+ * The channel's past broadcasts, twenty at a time: a row of focusable cards
+ * ending in a "More" card that loads the next page (or a quiet "Loading" card
+ * while it does).
+ */
+@Composable
+private fun PastBroadcastsRow(
+    videos: List<VideoInfo>,
+    hasMore: Boolean,
+    loading: Boolean,
+    onOpen: (VodLaunch) -> Unit,
+    onMore: () -> Unit,
+) {
+    val c = PureTvTvTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(text = "Past broadcasts", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+        val now = remember { System.currentTimeMillis() }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(videos, key = { it.id }) { video ->
+                TvVideoCard(
+                    video = video,
+                    now = now,
+                    onClick = {
+                        onOpen(
+                            VodLaunch(
+                                vodId = video.id,
+                                channelLogin = video.userLogin,
+                                title = video.title,
+                                thumbnailUrl = VodFormat.thumbnail(video.thumbnailUrl),
+                            ),
+                        )
+                    },
+                )
+            }
+            if (hasMore || loading) {
+                item(key = "more") {
+                    TvMoreCard(loading = loading, onClick = onMore)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TvVideoCard(video: VideoInfo, now: Long, onClick: () -> Unit) {
+    val c = PureTvTvTheme.colors
+    val shapes = PureTvTvTheme.shapes
+    val interaction = remember { MutableInteractionSource() }
+    Column(
+        modifier = Modifier
+            .padding(6.dp)
+            .width(260.dp)
+            .tvFocusClickable(
+                interaction = interaction,
+                onClick = onClick,
+                restRadius = shapes.card,
+                focusRadius = shapes.cardFocus,
+                color = c.surfaceContainer,
+                focusColor = c.surfaceHigh,
+            )
+            .padding(12.dp),
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shapes.thumbShape).background(c.surfaceHigh)) {
+            AsyncImage(
+                model = VodFormat.thumbnail(video.thumbnailUrl, 440, 248),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+            Text(
+                text = VodFormat.timecode(video.durationSeconds * 1000),
+                style = PureTvTvType.dataSmall,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(8.dp)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(Color.Black.copy(alpha = 0.6f))
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+        }
+        Text(
+            text = video.title.ifBlank { "Untitled" },
+            style = MaterialTheme.typography.titleMedium,
+            color = c.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 10.dp),
+        )
+        val aired = runCatching { Instant.parse(video.createdAt).toEpochMilli() }.getOrNull()
+        Text(
+            text = listOfNotNull(
+                aired?.let { VodFormat.age(it, now) },
+                "${formatTvViewerCount(video.viewCount.toLong())} views",
+            ).joinToString("  ·  "),
+            style = PureTvTvType.data,
+            color = c.onSurfaceVariant,
+            maxLines = 1,
+        )
+    }
+}
+
+@Composable
+private fun TvMoreCard(loading: Boolean, onClick: () -> Unit) {
+    val c = PureTvTvTheme.colors
+    val shapes = PureTvTvTheme.shapes
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .padding(6.dp)
+            .width(160.dp)
+            .aspectRatio(1f)
+            .tvFocusClickable(
+                interaction = interaction,
+                onClick = { if (!loading) onClick() },
+                restRadius = shapes.card,
+                focusRadius = shapes.cardFocus,
+                color = c.surfaceContainer,
+                focusColor = c.surfaceHigh,
+            ),
+    ) {
+        Text(
+            text = if (loading) "Loading" else "More",
+            style = MaterialTheme.typography.titleMedium,
+            color = c.onSurface,
+        )
     }
 }
 

@@ -311,4 +311,10 @@ data class AppSettings(
     // curve in `audio.AudioNormalizerProfile`. Off by default because it changes
     // the broadcaster's mix. Instant on mpv, phone and TV; VLC after a restart.
     val audioNormalizer: Boolean = false,
+
+    // Remote and keyboard control (Wave 4), TV only. With the player controls hidden,
+    // Up and Down change channel; off, they show the controls instead (the Channel
+    // Up/Down keys always change channel). OK shows the controls; on, it pauses.
+    val tvRemoteFlip: Boolean = true,
+    val tvOkPauses: Boolean = false,
 )

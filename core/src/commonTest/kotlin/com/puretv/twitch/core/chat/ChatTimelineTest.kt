@@ -87,6 +87,15 @@ class ChatTimelineTest {
     }
 
     @Test
+    fun clearChatWithoutATargetLeavesExistingRowsUntouched() {
+        val before = ChatTimelineState(messages = listOf(msg("1", "alice"), msg("2", "troll")))
+        val after = before.reduce(ChatEvent.ClearChat(targetUser = null, durationSeconds = null))
+        assertEquals(listOf(false, false, false), after.messages.map { it.deleted })
+        assertEquals(3, after.messages.size)
+        assertTrue(after.messages.last().isSystem)
+    }
+
+    @Test
     fun clearMessageTombstonesById() {
         val before = ChatTimelineState(messages = listOf(msg("1"), msg("2")))
         val after = before.reduce(ChatEvent.ClearMessage("2"))

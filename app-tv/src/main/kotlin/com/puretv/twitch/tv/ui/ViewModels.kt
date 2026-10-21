@@ -34,6 +34,7 @@ import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.GameInfo
+import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.playback.ChannelFlip
 import com.puretv.twitch.core.playback.ContinueItem
@@ -314,18 +315,14 @@ class TvFollowingViewModel(
     // Bumped on every sign-out; a load that started under an older count is stale.
     @Volatile private var signOutCount = 0
 
-    /** Lowercased logins whose go-live banners are muted (press Menu on a channel to change). */
-    val mutedLogins: StateFlow<Set<String>> = settings.flow
-        .map { it.notifyMutedLogins }
+    /** Lowercased logins with their go-live bell on (press Menu on a channel to change). */
+    val alertLogins: StateFlow<Set<String>> = settings.flow
+        .map { it.notifyChannels }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
-    /** Mutes [login]'s go-live banners, or unmutes them if they were muted. */
-    fun toggleMute(login: String) = viewModelScope.launch {
-        val key = login.lowercase()
-        settings.update { s ->
-            val muted = s.notifyMutedLogins
-            s.copy(notifyMutedLogins = if (key in muted) muted - key else muted + key)
-        }
+    /** Turns [login]'s go-live banners on, or off if they were on. */
+    fun toggleAlerts(login: String) = viewModelScope.launch {
+        settings.update { GoLiveAlerts.bellTapped(it, login) }
     }
 
     init {
@@ -1155,9 +1152,9 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(customProxyUrl = url) }
     }
 
-    /** Clears the whole go-live mute list (muting a single channel is done from Following). */
-    fun unmuteAllLiveNotifications() = viewModelScope.launch {
-        settingsStore.update { it.copy(notifyMutedLogins = emptySet()) }
+    /** Clears the whole go-live list (a single channel is turned off from its page or Following). */
+    fun turnOffAllAlertChannels() = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyChannels = emptySet()) }
     }
 
     fun logOut() = settingsStore.clearSession()

@@ -27,6 +27,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Mood
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
@@ -89,6 +90,7 @@ object ExpressiveIcons {
     val Check: ImageVector = Icons.Filled.Check
     val CheckCircle: ImageVector = Icons.Filled.CheckCircle
     val Notify: ImageVector = Icons.Filled.NotificationsNone
+    val NotifyOn: ImageVector = Icons.Filled.NotificationsActive
     val Refresh: ImageVector = Icons.Filled.Refresh
     val Download: ImageVector = Icons.Filled.Download
     val OpenInNew: ImageVector = Icons.Filled.OpenInNew

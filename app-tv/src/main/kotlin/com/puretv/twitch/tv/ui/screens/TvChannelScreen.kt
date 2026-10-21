@@ -56,6 +56,7 @@ import com.puretv.twitch.tv.ui.components.ExpressiveIcons
 import com.puretv.twitch.tv.ui.components.TvButtonSize
 import com.puretv.twitch.tv.ui.components.TvButtonStyle
 import com.puretv.twitch.tv.ui.components.TvExpressiveButton
+import com.puretv.twitch.tv.ui.components.rememberTvAlertBell
 import com.puretv.twitch.tv.ui.components.TvExpressiveIconButton
 import com.puretv.twitch.tv.ui.components.TvLivePill
 import com.puretv.twitch.tv.ui.components.TvPanel
@@ -95,6 +96,7 @@ fun TvChannelScreen(
 
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin
+    val bell = rememberTvAlertBell(channelLogin, displayName)
     val bannerUrl = channel?.offlineImageUrl?.takeIf { it.isNotBlank() }
         ?: channel?.profileImageUrl?.takeIf { it.isNotBlank() }
 
@@ -141,6 +143,15 @@ fun TvChannelScreen(
                 icon = ExpressiveIcons.Play,
                 modifier = Modifier.focusRequester(watchFocusRequester),
             )
+
+            TvExpressiveButton(
+                text = if (bell.on) "Alerts on" else "Notify me when live",
+                onClick = bell.toggle,
+                style = if (bell.on) TvButtonStyle.Tonal else TvButtonStyle.Outlined,
+                size = TvButtonSize.Large,
+                icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
+            )
+            bell.message?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = c.primary) }
 
             if (state.videos.isNotEmpty()) {
                 PastBroadcastsRow(

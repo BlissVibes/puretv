@@ -35,7 +35,7 @@ class GoLiveBannerQueueTest {
         val queue = GoLiveBannerQueue()
         queue.offer(listOf(s("a"), s("b"), s("c"), s("d"), s("e")), null)
         val banner = queue.pending.value.single()
-        assertEquals("5 channels you follow went live", banner.title)
+        assertEquals("5 channels went live", banner.title)
     }
 
     @Test fun overflowDropsOldestWaitingButNeverTheOneOnScreen() {

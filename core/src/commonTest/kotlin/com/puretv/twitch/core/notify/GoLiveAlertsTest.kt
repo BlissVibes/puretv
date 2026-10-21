@@ -14,4 +14,30 @@ class GoLiveAlertsTest {
         assertEquals(streams, GoLiveAlerts.exceptWatching(streams, null))
         assertEquals(streams, GoLiveAlerts.exceptWatching(streams, " "))
     }
+
+    @Test fun theBellTogglesOneChannelIgnoringCase() {
+        val on = GoLiveAlerts.toggled(emptySet(), " Alice ")
+        assertEquals(setOf("alice"), on)
+        assertEquals(true, GoLiveAlerts.isOn(on, "ALICE"))
+        assertEquals(false, GoLiveAlerts.isOn(on, "bob"))
+        assertEquals(setOf("alice", "bob"), GoLiveAlerts.toggled(on, "bob"))
+        assertEquals(emptySet(), GoLiveAlerts.toggled(on, "alice"))
+        assertEquals(on, GoLiveAlerts.toggled(on, " "))
+        assertEquals(false, GoLiveAlerts.isOn(on, ""))
+    }
+
+    @Test fun turningABellOnAlsoTurnsTheGlobalToggleOn() {
+        val off = com.puretv.twitch.core.model.AppSettings(liveNotifications = false)
+        val on = GoLiveAlerts.bellTapped(off, "Alice")
+        assertEquals(setOf("alice"), on.notifyChannels)
+        assertEquals(true, on.liveNotifications)
+        val removed = GoLiveAlerts.bellTapped(on.copy(liveNotifications = false), "alice")
+        assertEquals(emptySet(), removed.notifyChannels)
+        assertEquals(false, removed.liveNotifications, "removing a bell leaves the toggle alone")
+    }
+
+    @Test fun bellConfirmationNamesTheChannel() {
+        assertEquals("You'll be told when Alice goes live", GoLiveText.bellConfirmation("Alice", true))
+        assertEquals("Alerts off for Alice", GoLiveText.bellConfirmation("Alice", false))
+    }
 }

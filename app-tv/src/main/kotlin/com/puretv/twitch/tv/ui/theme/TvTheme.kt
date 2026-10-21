@@ -1,10 +1,5 @@
 package com.puretv.twitch.tv.ui.theme
 
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.SpringSpec
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -206,22 +201,6 @@ data class PureTvTvShapes(
     val mdShape get() = RoundedCornerShape(md)
 }
 
-// ---- Motion ------------------------------------------------------------------
-
-object PureTvTvMotion {
-    const val Fast = 150
-    const val Medium = 250
-
-    /** Overshoots and settles back, which is what makes focus feel physical. */
-    val MorphSpring: SpringSpec<Dp> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
-    val MorphSpringFloat: SpringSpec<Float> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
-
-    val Standard: Easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
-    /** How far a focused card grows. Small enough not to overlap its neighbours. */
-    const val FocusScale = 1.08f
-}
-
 // ---- Typography --------------------------------------------------------------
 
 /**
@@ -311,6 +290,7 @@ fun PureTvTvTheme(
     CompositionLocalProvider(
         LocalPureTvTvColors provides colors,
         LocalPureTvTvShapes provides PureTvTvShapes(),
+        LocalReducedMotion provides rememberReducedMotion(),
     ) {
         MaterialTheme(colorScheme = scheme, typography = PureTvTvTypography, content = content)
     }

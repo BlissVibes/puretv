@@ -77,7 +77,7 @@ fun TvStreamCard(stream: StreamInfo, onClick: () -> Unit, modifier: Modifier = M
                 AsyncImage(
                     model = thumb,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().background(c.surfaceHigh),
                     contentScale = ContentScale.Crop,
                 )
             } else {
@@ -143,7 +143,7 @@ fun TvGameCard(game: GameInfo, onClick: () -> Unit, modifier: Modifier = Modifie
                 AsyncImage(
                     model = art,
                     contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().background(c.surfaceHigh),
                     contentScale = ContentScale.Crop,
                 )
             } else {

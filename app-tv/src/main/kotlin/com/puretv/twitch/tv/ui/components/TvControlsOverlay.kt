@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.components
 
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -69,13 +70,14 @@ fun TvControlsOverlay(
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
 
-    AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+    AnimatedVisibility(visible = visible, enter = PureTvTvMotion.ControlsEnter, exit = PureTvTvMotion.ControlsExit, modifier = modifier) {
         Box(modifier = Modifier.fillMaxSize().padding(32.dp)) {
             // Header: back, title/viewer-count. heightIn (not height) because a long
             // stream title must be free to wrap without pushing the pill out of the bar.
             Row(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
+                    .animateEnterExit(enter = PureTvTvMotion.HeaderEnter, exit = PureTvTvMotion.HeaderExit)
                     .fillMaxWidth()
                     .heightIn(min = 88.dp)
                     .clip(shapes.paneShape)
@@ -117,6 +119,7 @@ fun TvControlsOverlay(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .animateEnterExit(enter = PureTvTvMotion.FooterEnter, exit = PureTvTvMotion.FooterExit)
                     .fillMaxWidth()
                     .clip(shapes.paneShape)
                     .background(c.surfaceContainer)
@@ -133,7 +136,7 @@ fun TvControlsOverlay(
                         iconSize = 34.dp,
                         modifier = if (playPauseFocusRequester != null) Modifier.focusRequester(playPauseFocusRequester) else Modifier,
                     )
-                    TvLivePill()
+                    TvLivePill(pulse = false)
                     Spacer(modifier = Modifier.weight(1f))
                     // Reachable with the D-pad like every other control, so chat and the
                     // sleep timer need no dedicated keys.

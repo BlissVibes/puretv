@@ -1,6 +1,13 @@
 package com.puretv.twitch.tv.ui.components
 
-import androidx.compose.animation.animateContentSize
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.zIndex
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -45,8 +52,8 @@ enum class TvNavDestination(val label: String, val icon: ImageVector, val outlin
  * Per Section 7.3's D-pad rules: pressing LEFT while focus is on the leftmost
  * column of the content area moves focus into this rail (handled by the screen
  * via `focusRequester`, see [TvHomeScreen]) and expands it; the rail collapses
- * back to icon-only once focus leaves it. `animateContentSize` gives the
- * icon↔icon+label transition a smooth feel appropriate for the 10-foot UI.
+ * back to icon-only once focus leaves it. The width animates
+ * on a short tween and the rail opens over the content instead of pushing it.
  *
  * Each row is built on [Modifier.tvFocusClickable] so a focused row morphs,
  * scales and takes a primary ring, exactly like every other focusable object
@@ -66,11 +73,22 @@ fun TvNavDrawer(
     val c = PureTvTvTheme.colors
     val shapes = PureTvTvTheme.shapes
 
+    // The rail always claims its collapsed width in the layout and opens OVER the
+    // content, so expanding never relayouts the screen beside it (which would cost
+    // a full shelf re-measure per frame on a Fire TV stick).
+    val railWidth by animateDpAsState(
+        targetValue = if (expanded) 240.dp else 88.dp,
+        animationSpec = tween(PureTvTvMotion.Medium, easing = PureTvTvMotion.Standard),
+        label = "tvRailWidth",
+    )
     Column(
         modifier = modifier
             .fillMaxHeight()
-            .width(if (expanded) 240.dp else 88.dp)
-            .animateContentSize()
+            .width(88.dp)
+            .zIndex(1f)
+            .wrapContentWidth(Alignment.Start, unbounded = true)
+            .width(railWidth)
+            .fillMaxHeight()
             .clip(shapes.paneShape)
             .background(c.surfaceContainer)
             // hasFocus is true while any child row holds focus, so the rail expands
@@ -88,7 +106,6 @@ fun TvNavDrawer(
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(56.dp)
@@ -108,13 +125,19 @@ fun TvNavDrawer(
                     tint = if (isSelected) c.onSecondaryContainer else c.onSurfaceVariant,
                     modifier = Modifier.size(26.dp),
                 )
-                if (expanded) {
+                AnimatedVisibility(
+                    visible = expanded,
+                    enter = fadeIn(tween(PureTvTvMotion.Medium, delayMillis = PureTvTvMotion.Fast / 2, easing = PureTvTvMotion.Standard)),
+                    exit = fadeOut(tween(PureTvTvMotion.Fast / 2)),
+                ) {
                     Text(
                         text = label,
+                        softWrap = false,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                         color = if (isSelected) c.onSecondaryContainer else c.onSurfaceVariant,
                         maxLines = 1,
+                        modifier = Modifier.padding(start = 16.dp),
                     )
                 }
             }

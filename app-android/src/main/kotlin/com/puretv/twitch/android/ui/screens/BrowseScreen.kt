@@ -25,6 +25,7 @@ import com.puretv.twitch.android.ui.components.ErrorState
 import com.puretv.twitch.android.ui.components.GameTile
 import com.puretv.twitch.android.ui.components.GameTileSkeleton
 import com.puretv.twitch.android.ui.components.PageTitle
+import com.puretv.twitch.android.ui.theme.itemMotion
 import org.koin.androidx.compose.koinViewModel
 
 /**
@@ -62,7 +63,7 @@ fun BrowseScreen(onOpenCategory: (String) -> Unit) {
         when {
             state.isLoading && state.games.isEmpty() -> items(12) { GameTileSkeleton() }
             state.error != null && state.games.isEmpty() -> fullSpan {
-                ErrorState(message = state.error!!, onRetry = viewModel::retry)
+                ErrorState(message = state.error.orEmpty(), onRetry = viewModel::retry)
             }
             state.games.isEmpty() -> fullSpan {
                 EmptyState(
@@ -71,7 +72,7 @@ fun BrowseScreen(onOpenCategory: (String) -> Unit) {
                 )
             }
             else -> items(state.games, key = { it.id }) { game ->
-                GameTile(game = game, onClick = { onOpenCategory(game.id) })
+                GameTile(game = game, onClick = { onOpenCategory(game.id) }, modifier = Modifier.then(itemMotion()))
             }
         }
     }

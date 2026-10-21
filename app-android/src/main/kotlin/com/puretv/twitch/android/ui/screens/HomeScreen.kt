@@ -1,5 +1,7 @@
 package com.puretv.twitch.android.ui.screens
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,7 +59,9 @@ import com.puretv.twitch.android.ui.components.StreamCard
 import com.puretv.twitch.android.ui.components.StreamCardSkeleton
 import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.components.streamThumbUrl
+import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
+import com.puretv.twitch.android.ui.theme.itemFade
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.update.AndroidUpdateState
@@ -133,103 +137,119 @@ fun HomeScreen(
     ) { padding ->
         val isEmpty = state.followedLive.isEmpty() && state.games.isEmpty() &&
             state.topStreams.isEmpty() && state.continueWatching.isEmpty() && state.resumableVods.isEmpty()
-        when {
-            state.isLoading && isEmpty -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                item { SectionHeading(title = "Live now") }
-                items(4) { StreamCardSkeleton(modifier = Modifier.fillMaxWidth()) }
-            }
-            state.error != null && isEmpty -> ErrorState(
-                message = state.error!!,
-                onRetry = viewModel::refresh,
-                modifier = Modifier.padding(padding),
-            )
-            isEmpty -> EmptyState(
-                title = "Nothing to watch yet",
-                subtitle = "We couldn't load any streams. Check your connection and try again.",
-                modifier = Modifier.padding(padding),
-            )
-            else -> LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                // NeedsInstallConsent counts too: that is the state where the
-                // update is furthest along and most easily forgotten, since it
-                // is waiting on the viewer rather than on us.
-                when (val u = updateState) {
-                    is AndroidUpdateState.Available -> u.info.versionName
-                    is AndroidUpdateState.NeedsInstallConsent -> u.info.versionName
-                    else -> null
-                }?.let { versionName ->
-                    item { UpdateAvailableBanner(versionName = versionName, onClick = onOpenSettings) }
+        // Loading, error, empty and content cross-fade into one another, so the
+        // skeleton dissolves into the real cards instead of cutting to them.
+        val phase = when {
+            state.isLoading && isEmpty -> HomePhase.Loading
+            state.error != null && isEmpty -> HomePhase.Error
+            isEmpty -> HomePhase.Empty
+            else -> HomePhase.Content
+        }
+        AnimatedContent(
+            targetState = phase,
+            transitionSpec = { PureTvMotion.SwapEnter togetherWith PureTvMotion.SwapExit },
+            label = "home-phase",
+        ) { shown ->
+            when (shown) {
+                HomePhase.Loading -> LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    item { SectionHeading(title = "Live now") }
+                    items(4) { StreamCardSkeleton(modifier = Modifier.fillMaxWidth()) }
                 }
+                HomePhase.Error -> ErrorState(
+                    message = state.error.orEmpty(),
+                    onRetry = viewModel::refresh,
+                    modifier = Modifier.padding(padding),
+                )
+                HomePhase.Empty -> EmptyState(
+                    title = "Nothing to watch yet",
+                    subtitle = "We couldn't load any streams. Check your connection and try again.",
+                    modifier = Modifier.padding(padding),
+                )
+                HomePhase.Content -> LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(padding),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    // NeedsInstallConsent counts too: that is the state where the
+                    // update is furthest along and most easily forgotten, since it
+                    // is waiting on the viewer rather than on us.
+                    when (val u = updateState) {
+                        is AndroidUpdateState.Available -> u.info.versionName
+                        is AndroidUpdateState.NeedsInstallConsent -> u.info.versionName
+                        else -> null
+                    }?.let { versionName ->
+                        item { UpdateAvailableBanner(versionName = versionName, onClick = onOpenSettings) }
+                    }
 
-                val hero = featuredStream(state.followedLive, state.topStreams)
-                if (hero != null) {
-                    item { HomeHero(hero = hero, onWatch = { onOpenStream(hero.login) }) }
-                }
+                    val hero = featuredStream(state.followedLive, state.topStreams)
+                    if (hero != null) {
+                        item { HomeHero(hero = hero, onWatch = { onOpenStream(hero.login) }) }
+                    }
 
-                if (state.continueWatching.isNotEmpty() || state.resumableVods.isNotEmpty()) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SectionHeading(title = "Continue watching")
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(state.resumableVods, key = { "vod-" + it.vodId }) { progress ->
-                                    ResumeVodCard(
-                                        progress = progress,
-                                        onClick = {
-                                            onOpenVod(VodLaunch(progress.vodId, progress.channelLogin, progress.title, progress.thumbnailUrl))
-                                        },
-                                    )
-                                }
-                                items(state.continueWatching, key = { it.channelLogin }) { entry ->
-                                    ContinueWatchingCard(entry = entry, onClick = { onOpenStream(entry.channelLogin) })
+                    if (state.continueWatching.isNotEmpty() || state.resumableVods.isNotEmpty()) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SectionHeading(title = "Continue watching")
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(state.resumableVods, key = { "vod-" + it.vodId }) { progress ->
+                                        ResumeVodCard(
+                                            progress = progress,
+                                            onClick = {
+                                                onOpenVod(VodLaunch(progress.vodId, progress.channelLogin, progress.title, progress.thumbnailUrl))
+                                            },
+                                        )
+                                    }
+                                    items(state.continueWatching, key = { it.channelLogin }) { entry ->
+                                        ContinueWatchingCard(entry = entry, onClick = { onOpenStream(entry.channelLogin) })
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if (state.followedLive.isNotEmpty()) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SectionHeading(title = "Live now")
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(state.followedLive, key = { it.userLogin }) { s ->
-                                    StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.width(260.dp))
+                    if (state.followedLive.isNotEmpty()) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SectionHeading(title = "Live now")
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(state.followedLive, key = { it.userLogin }) { s ->
+                                        StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.width(260.dp))
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if (state.games.isNotEmpty()) {
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            SectionHeading(title = "Browse categories", actionLabel = "See all", onAction = onOpenBrowse)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                items(state.games, key = { it.id }) { g ->
-                                    GameTile(game = g, onClick = { onOpenCategory(g.id) })
+                    if (state.games.isNotEmpty()) {
+                        item {
+                            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                SectionHeading(title = "Browse categories", actionLabel = "See all", onAction = onOpenBrowse)
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(state.games, key = { it.id }) { g ->
+                                        GameTile(game = g, onClick = { onOpenCategory(g.id) })
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if (state.topStreams.isNotEmpty()) {
-                    item { SectionHeading(title = "Top streams") }
-                    items(state.topStreams, key = { it.userLogin }) { s ->
-                        StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.fillMaxWidth())
+                    if (state.topStreams.isNotEmpty()) {
+                        item { SectionHeading(title = "Top streams") }
+                        items(state.topStreams, key = { it.userLogin }) { s ->
+                            StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.fillMaxWidth().then(itemFade()))
+                        }
                     }
                 }
             }
         }
     }
 }
+
+private enum class HomePhase { Loading, Error, Empty, Content }
 
 /** The single stream to spotlight in the hero, with its display copy resolved. */
 private data class Featured(

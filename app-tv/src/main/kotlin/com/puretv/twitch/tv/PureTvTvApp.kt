@@ -22,6 +22,11 @@ import kotlinx.coroutines.launch
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.SingletonImageLoader
+import coil3.request.transitionFactory
+import com.puretv.twitch.tv.ui.theme.crossfadeFactory
 
 /**
  * SECTION 11 / 12.2, wires the shared `coreModule` (API client, OAuth,
@@ -35,7 +40,7 @@ import org.koin.core.context.startKoin
  * returning viewer's session survives token expiry and the first composition
  * never blocks on Keystore/DataStore disk I/O.
  */
-class PureTvTvApp : Application() {
+class PureTvTvApp : Application(), SingletonImageLoader.Factory {
 
     // Process-lifetime scope for one-shot startup work. SupervisorJob so one
     // failure never tears down the others, and a handler because a SupervisorJob
@@ -48,6 +53,12 @@ class PureTvTvApp : Application() {
         Log.e(TAG, "Startup priming failed, continuing without it", e)
     }
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO + startupFailures)
+
+    /** Artwork fades in from its placeholder; Coil skips the fade for images already in memory. */
+    override fun newImageLoader(context: PlatformContext): ImageLoader =
+        ImageLoader.Builder(context)
+            .transitionFactory(crossfadeFactory(applicationContext))
+            .build()
 
     @OptIn(UnstableApi::class)
     override fun onCreate() {

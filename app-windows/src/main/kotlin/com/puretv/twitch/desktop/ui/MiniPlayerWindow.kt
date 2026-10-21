@@ -124,6 +124,11 @@ fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit
             while (true) {
                 val event = awaitPointerEvent()
                 if (event.changes.none { it.pressed }) break
+                // A control inside the strip (the volume slider) took this gesture: not a window drag.
+                if (!dragging && event.changes.any { it.isConsumed }) {
+                    shell.endMiniDrag()
+                    return@awaitEachGesture
+                }
                 if (!dragging && (event.changes.first().position - down.position).getDistance() > viewConfiguration.touchSlop) {
                     dragging = true
                 }

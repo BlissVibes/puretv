@@ -831,6 +831,9 @@ fun ExpressiveSlider(
                 fun report(x: Float) = currentOnValueChange((x / size.width.toFloat()).coerceIn(0f, 1f))
                 awaitEachGesture {
                     val down = awaitFirstDown()
+                    // Claim the press so a parent that tracks presses (the mini player's strip
+                    // drags the window) does not also treat it as its own.
+                    down.consume()
                     report(down.position.x)
                     drag(down.id) { change ->
                         report(change.position.x)

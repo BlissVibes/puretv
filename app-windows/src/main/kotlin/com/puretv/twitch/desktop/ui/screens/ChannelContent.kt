@@ -223,13 +223,6 @@ private fun IdentityRow(
                 size = ExpressiveButtonSize.Large,
                 icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
             )
-            ExpressiveIconButton(
-                icon = ExpressiveIcons.More,
-                contentDescription = "More options",
-                onClick = {},
-                style = ExpressiveButtonStyle.Outlined,
-                boxSize = 56.dp,
-            )
         }
     }
 }

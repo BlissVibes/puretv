@@ -1,6 +1,12 @@
 package com.puretv.twitch.android.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -37,6 +43,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -46,6 +57,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.puretv.twitch.android.ui.theme.LocalReducedMotion
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
@@ -91,31 +103,50 @@ fun Modifier.expressiveSurface(
 ): Modifier = composed {
     val pressed by interaction.collectIsPressedAsState()
 
-    val radius by animateDpAsState(
+    // The animated values are held as State and read only inside the layer and
+    // draw lambdas below, so a press animates in the draw phase without
+    // recomposing this modifier (or anything under it) on any frame.
+    val radius = animateDpAsState(
         targetValue = if (pressed) pressRadius else restRadius,
         animationSpec = PureTvMotion.MorphSpring,
         label = "morphRadius",
     )
-    val fill by animateColorAsState(
+    val fill = animateColorAsState(
         targetValue = if (selected) selectedColor else color,
         animationSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
         label = "morphFill",
     )
-    val scale by animateFloatAsState(
+    val scale = animateFloatAsState(
         targetValue = if (pressed) pressScale else 1f,
         animationSpec = PureTvMotion.MorphSpringFloat,
         label = "morphScale",
     )
 
-    // Radii can animate below zero on an overshooting spring, and
-    // RoundedCornerShape rejects negatives, so clamp before it reaches the shape.
-    val shape = RoundedCornerShape(radius.coerceAtLeast(0.dp))
-
     this
-        .graphicsLayer { scaleX = scale; scaleY = scale }
-        .clip(shape)
-        .background(fill)
-        .then(if (borderWidth > 0.dp) Modifier.border(borderWidth, borderColor, shape) else Modifier)
+        .graphicsLayer {
+            scaleX = scale.value
+            scaleY = scale.value
+            // Radii can animate below zero on an overshooting spring, and
+            // RoundedCornerShape rejects negatives, so clamp before the shape.
+            shape = RoundedCornerShape(radius.value.coerceAtLeast(0.dp))
+            clip = true
+        }
+        .drawBehind {
+            drawRect(fill.value)
+            if (borderWidth > 0.dp) {
+                // Stroked inside the clip: inset by half the width so the whole
+                // line is visible instead of its outer half being cut off.
+                val w = borderWidth.toPx()
+                val r = (radius.value.toPx() - w / 2f).coerceAtLeast(0f)
+                drawRoundRect(
+                    color = borderColor,
+                    topLeft = Offset(w / 2f, w / 2f),
+                    size = Size(size.width - w, size.height - w),
+                    cornerRadius = CornerRadius(r, r),
+                    style = Stroke(w),
+                )
+            }
+        }
 }
 
 /**
@@ -195,7 +226,6 @@ fun ExpressiveButton(
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
 
     val fg = when (style) {
         ExpressiveButtonStyle.Filled -> c.onPrimary
@@ -209,14 +239,6 @@ fun ExpressiveButton(
         ExpressiveButtonStyle.FilledTertiary -> c.tertiaryContainer
         ExpressiveButtonStyle.Outlined, ExpressiveButtonStyle.Text -> Color.Transparent
     }
-
-    // Pressing squeezes the horizontal padding in. Combined with the corner
-    // morph this reads as the button compressing under the finger.
-    val hPad by animateDpAsState(
-        targetValue = if (pressed) size.hPad - 4.dp else size.hPad,
-        animationSpec = PureTvMotion.MorphSpring,
-        label = "buttonPad",
-    )
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -235,7 +257,7 @@ fun ExpressiveButton(
                 borderColor = c.outline,
                 enabled = enabled,
             )
-            .padding(horizontal = hPad.coerceAtLeast(0.dp)),
+            .padding(horizontal = size.hPad),
     ) {
         icon?.let { Icon(it, contentDescription = null, tint = fg, modifier = Modifier.size(size.iconSize)) }
         Text(
@@ -423,6 +445,7 @@ fun LivePill(
     modifier: Modifier = Modifier,
     trailing: String? = null,
     height: Dp = 24.dp,
+    pulse: Boolean = true,
 ) {
     val c = PureTvTheme.colors
     Row(
@@ -434,13 +457,19 @@ fun LivePill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        LiveDot(size = 6.dp, color = c.onLive)
-        Text(
-            if (trailing != null) "LIVE · $trailing" else "LIVE",
-            style = PureTvType.badge,
-            color = c.onLive,
-            maxLines = 1,
-        )
+        LiveDot(size = 6.dp, color = c.onLive, pulse = pulse)
+        // A viewer count that ticks rolls up or down instead of snapping.
+        AnimatedContent(
+            targetState = if (trailing != null) "LIVE · $trailing" else "LIVE",
+            transitionSpec = {
+                (fadeIn(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) +
+                    slideInVertically(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) { it / 2 }) togetherWith
+                    (fadeOut(tween(PureTvMotion.Fast)) + slideOutVertically(tween(PureTvMotion.Fast)) { -it / 2 })
+            },
+            label = "liveLabel",
+        ) { label ->
+            Text(label, style = PureTvType.badge, color = c.onLive, maxLines = 1)
+        }
     }
 }
 
@@ -637,19 +666,24 @@ fun ExpressiveDivider(modifier: Modifier = Modifier) {
  * meaning on its own.
  */
 @Composable
-fun LiveDot(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color? = null) {
+fun LiveDot(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color? = null, pulse: Boolean = true) {
     val c = PureTvTheme.colors
-    val transition = rememberInfiniteTransition(label = "liveDot")
-    val alpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
-        label = "liveDotAlpha",
-    )
+    // A still dot when motion is off, and on the player where nothing should loop over live video.
+    val alpha = if (pulse && !LocalReducedMotion.current) {
+        val transition = rememberInfiniteTransition(label = "liveDot")
+        transition.animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
+            label = "liveDotAlpha",
+        )
+    } else {
+        null
+    }
     Box(
         modifier
             .size(size)
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer { this.alpha = alpha?.value ?: 1f }
             .clip(CircleShape)
             .background(color ?: c.live),
     )

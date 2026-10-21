@@ -8,8 +8,8 @@ import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -82,6 +82,7 @@ import com.puretv.twitch.android.ui.components.ExpressiveIcons
 import com.puretv.twitch.android.ui.components.LivePill
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.components.formatViewerCount
+import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.core.model.StreamQuality
@@ -391,8 +392,8 @@ private fun PlayerArea(
                 // Playing: the whole chrome group fades in/out with the controls.
                 AnimatedVisibility(
                     visible = controlsVisible,
-                    enter = fadeIn(),
-                    exit = fadeOut(),
+                    enter = PureTvMotion.ControlsEnter,
+                    exit = PureTvMotion.ControlsExit,
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
@@ -419,6 +420,7 @@ private fun PlayerArea(
                         state.streamInfo?.let { info ->
                             LivePill(
                                 trailing = formatViewerCount(info.viewerCount.toLong()),
+                                pulse = false,
                                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                             )
                         }

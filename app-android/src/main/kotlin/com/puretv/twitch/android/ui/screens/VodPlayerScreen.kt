@@ -3,7 +3,15 @@ package com.puretv.twitch.android.ui.screens
 import android.app.Activity
 import android.content.res.Configuration
 import androidx.annotation.OptIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
@@ -74,6 +82,7 @@ import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.android.ui.components.ExpressiveIcons
 import com.puretv.twitch.android.ui.components.StoryboardPreview
 import com.puretv.twitch.android.ui.components.expressiveClickable
+import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.core.model.StreamQuality
@@ -312,19 +321,32 @@ private fun VodPlayerArea(
             )
         }
 
-        if (state.error == null && state.playableUrl != null && buffering) {
-            CircularProgressIndicator(color = PureTvTheme.colors.primary, modifier = Modifier.align(Alignment.Center))
+        AnimatedVisibility(
+            visible = state.error == null && state.playableUrl != null && buffering,
+            enter = fadeIn(tween(PureTvMotion.Medium, delayMillis = PureTvMotion.Fast)),
+            exit = PureTvMotion.SwapExit,
+            modifier = Modifier.align(Alignment.Center),
+        ) {
+            // The short delay keeps a one-frame stall from flashing a spinner.
+            CircularProgressIndicator(color = PureTvTheme.colors.primary)
         }
 
         // The offer stays until answered: it is the only way back to the saved spot.
         val offer = state.resumeOfferMs
-        if (!isInPip && offer != null && state.error == null) {
+        // Held so the label does not change to 0:00 while the offer animates away.
+        val lastOffer = remember { LongArray(1) }
+        if (offer != null) lastOffer[0] = offer
+        AnimatedVisibility(
+            visible = !isInPip && offer != null && state.error == null,
+            enter = PureTvMotion.BannerEnter,
+            exit = PureTvMotion.BannerExit,
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 56.dp),
+        ) {
             Row(
-                modifier = Modifier.align(Alignment.BottomStart).padding(start = 12.dp, bottom = 56.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 ExpressiveButton(
-                    text = "Resume from ${VodFormat.timecode(offer)}",
+                    text = "Resume from ${VodFormat.timecode(lastOffer[0])}",
                     onClick = onResume,
                     style = ExpressiveButtonStyle.Filled,
                     size = ExpressiveButtonSize.Small,
@@ -347,7 +369,12 @@ private fun VodPlayerArea(
                 modifier = Modifier.align(Alignment.TopStart).then(topInset).padding(6.dp),
             )
         } else if (!isInPip) {
-            AnimatedVisibility(visible = controlsVisible, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.fillMaxSize()) {
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = PureTvMotion.ControlsEnter,
+                exit = PureTvMotion.ControlsExit,
+                modifier = Modifier.fillMaxSize(),
+            ) {
                 Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f))) {
                     VodScrimButton(
                         icon = ExpressiveIcons.Back,
@@ -381,6 +408,7 @@ private fun VodPlayerArea(
                         VodScrimButton(
                             icon = if (isPlaying) ExpressiveIcons.Pause else ExpressiveIcons.Play,
                             contentDescription = if (isPlaying) "Pause" else "Play",
+                            morphIcon = true,
                             onClick = {
                                 if (player.isPlaying) {
                                     player.pause()
@@ -408,6 +436,7 @@ private fun VodPlayerArea(
                     }
                     VodSeekBar(
                         positionMs = scrubMs ?: positionMs,
+                        scrubbing = scrubMs != null,
                         durationMs = durationMs,
                         onScrub = { scrubMs = it },
                         onScrubDone = {
@@ -430,16 +459,25 @@ private fun VodPlayerArea(
 @Composable
 private fun VodSeekBar(
     positionMs: Long,
+    scrubbing: Boolean,
     durationMs: Long,
     onScrub: (Long) -> Unit,
     onScrubDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
+    // Position arrives every half second; gliding between samples at the same rate
+    // makes the bar travel continuously. A drag follows the finger exactly.
+    val target = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() else 0f
+    val shown by animateFloatAsState(
+        targetValue = target,
+        animationSpec = if (scrubbing) snap() else tween(POSITION_POLL_MS.toInt(), easing = LinearEasing),
+        label = "vodSeek",
+    )
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(VodFormat.timecode(positionMs), style = PureTvType.dataSmall, color = Color.White)
         Slider(
-            value = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
+            value = shown,
             onValueChange = { onScrub(it.toLong()) },
             onValueChangeFinished = onScrubDone,
             valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),
@@ -522,6 +560,7 @@ private fun VodScrimButton(
     modifier: Modifier = Modifier,
     boxSize: Int = 44,
     tint: Color = Color.White,
+    morphIcon: Boolean = false,
 ) {
     val interaction = remember { MutableInteractionSource() }
     Box(
@@ -536,7 +575,22 @@ private fun VodScrimButton(
                 color = Color.Black.copy(alpha = 0.45f),
             ),
     ) {
-        Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size((boxSize / 2).dp))
+        if (morphIcon) {
+            // Play and pause swap with a quick scale pop rather than a hard cut.
+            AnimatedContent(
+                targetState = icon,
+                transitionSpec = {
+                    (fadeIn(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) +
+                        scaleIn(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard), initialScale = 0.7f)) togetherWith
+                        (fadeOut(tween(PureTvMotion.Fast)) + scaleOut(tween(PureTvMotion.Fast), targetScale = 0.7f))
+                },
+                label = "vodScrimIcon",
+            ) { glyph ->
+                Icon(glyph, contentDescription = contentDescription, tint = tint, modifier = Modifier.size((boxSize / 2).dp))
+            }
+        } else {
+            Icon(icon, contentDescription = contentDescription, tint = tint, modifier = Modifier.size((boxSize / 2).dp))
+        }
     }
 }
 

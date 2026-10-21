@@ -1,11 +1,11 @@
 package com.puretv.twitch.android.ui
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -61,6 +61,8 @@ import com.puretv.twitch.android.ui.screens.LoginScreen
 import com.puretv.twitch.android.ui.screens.SearchScreen
 import com.puretv.twitch.android.ui.screens.SettingsScreen
 import com.puretv.twitch.android.ui.screens.StreamScreen
+import com.puretv.twitch.android.ui.theme.LocalReducedMotion
+import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 
 /**
@@ -137,7 +139,7 @@ fun RootScreen(
     val loggedIn = session is SessionState.LoggedIn
     AnimatedContent(
         targetState = loggedIn,
-        transitionSpec = { fadeIn(tween(420)) togetherWith fadeOut(tween(420)) },
+        transitionSpec = { fadeIn(tween(PureTvMotion.Slow, easing = PureTvMotion.Standard)) togetherWith fadeOut(tween(PureTvMotion.Medium)) },
         label = "root-gate",
     ) { isLoggedIn ->
         if (isLoggedIn) MainScaffold(navController = navController, pendingOpen = pendingOpen) else WelcomeScreen()
@@ -230,7 +232,6 @@ private fun ExpressiveBottomBar(currentRoute: String?, onSelect: (String) -> Uni
             val interaction = remember(tab.route) { MutableInteractionSource() }
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier
                     .heightIn(min = 48.dp)
                     .expressiveClickable(
@@ -243,18 +244,27 @@ private fun ExpressiveBottomBar(currentRoute: String?, onSelect: (String) -> Uni
                     )
                     .padding(horizontal = 16.dp, vertical = 10.dp),
             ) {
+                val tint by animateColorAsState(
+                    if (selected) c.onSecondaryContainer else c.onSurfaceVariant,
+                    tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+                    label = "tabTint",
+                )
                 Icon(
                     imageVector = if (selected) tab.filledIcon else tab.outlinedIcon,
                     contentDescription = tab.label,
-                    tint = if (selected) c.onSecondaryContainer else c.onSurfaceVariant,
+                    tint = tint,
                     modifier = Modifier.size(24.dp),
                 )
-                if (selected) {
+                // The label grows out of the icon rather than appearing, so the pill's
+                // width change reads as the selection moving.
+                AnimatedVisibility(visible = selected, enter = PureTvMotion.LabelEnter, exit = PureTvMotion.LabelExit) {
                     Text(
                         tab.label,
                         style = MaterialTheme.typography.labelLarge,
                         color = c.onSecondaryContainer,
                         maxLines = 1,
+                        softWrap = false,
+                        modifier = Modifier.padding(start = 8.dp),
                     )
                 }
             }
@@ -262,25 +272,42 @@ private fun ExpressiveBottomBar(currentRoute: String?, onSelect: (String) -> Uni
     }
 }
 
+/** Routes that host the video surface: they fade only, so the surface is never moved, scaled or recreated. */
+private fun String?.hostsPlayer() = this == Routes.STREAM || this == Routes.VOD
+
 @Composable
 fun PureTvNavHost(navController: NavHostController, modifier: Modifier = Modifier) {
+    val reduced = LocalReducedMotion.current
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
         modifier = modifier,
+        // Tabs swap with a fade-through; a detail screen pushes in from the right and
+        // pops back out to it. Any move to or from a player route is a plain fade.
         enterTransition = {
-            val bothTabs = initialState.destination.route in TOP_TAB_ROUTES &&
-                targetState.destination.route in TOP_TAB_ROUTES
-            if (bothTabs) fadeIn(tween(180))
-            else fadeIn(tween(220)) + scaleIn(initialScale = 0.96f, animationSpec = tween(220))
+            val from = initialState.destination.route
+            val to = targetState.destination.route
+            when {
+                to.hostsPlayer() -> PureTvMotion.playerEnter(reduced)
+                from in TOP_TAB_ROUTES && to in TOP_TAB_ROUTES -> PureTvMotion.tabEnter(reduced)
+                else -> PureTvMotion.pushEnter(reduced)
+            }
         },
         exitTransition = {
-            val bothTabs = initialState.destination.route in TOP_TAB_ROUTES &&
-                targetState.destination.route in TOP_TAB_ROUTES
-            if (bothTabs) fadeOut(tween(180)) else fadeOut(tween(160))
+            val from = initialState.destination.route
+            val to = targetState.destination.route
+            when {
+                from.hostsPlayer() || to.hostsPlayer() -> PureTvMotion.tabExit(reduced)
+                from in TOP_TAB_ROUTES && to in TOP_TAB_ROUTES -> PureTvMotion.tabExit(reduced)
+                else -> PureTvMotion.pushExit(reduced)
+            }
         },
-        popEnterTransition = { fadeIn(tween(180)) },
-        popExitTransition = { fadeOut(tween(160)) + scaleOut(targetScale = 0.96f, animationSpec = tween(160)) },
+        popEnterTransition = {
+            if (initialState.destination.route.hostsPlayer()) PureTvMotion.tabEnter(reduced) else PureTvMotion.popEnter(reduced)
+        },
+        popExitTransition = {
+            if (initialState.destination.route.hostsPlayer()) PureTvMotion.playerExit() else PureTvMotion.popExit(reduced)
+        },
     ) {
         composable(Routes.HOME) {
             HomeScreen(

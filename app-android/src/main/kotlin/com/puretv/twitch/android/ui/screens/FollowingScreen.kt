@@ -1,5 +1,6 @@
 package com.puretv.twitch.android.ui.screens
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -55,7 +56,9 @@ import com.puretv.twitch.android.ui.components.StreamCardSkeleton
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.components.streamThumbUrl
+import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
+import com.puretv.twitch.android.ui.theme.itemMotion
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.core.follows.FollowRow
 import org.koin.androidx.compose.koinViewModel
@@ -97,72 +100,84 @@ fun FollowingScreen(
             modifier = Modifier.fillMaxSize().padding(padding),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp),
         ) {
-            item { FollowingHeader() }
+            item(key = "header") { FollowingHeader() }
 
             when {
-                !state.isLoggedIn -> item {
-                    Spacer(Modifier.height(24.dp))
-                    SignedOutPanel(onSignIn = onOpenLogin)
+                !state.isLoggedIn -> item(key = "signed-out") {
+                    Column(Modifier.then(itemMotion())) {
+                        Spacer(Modifier.height(24.dp))
+                        SignedOutPanel(onSignIn = onOpenLogin)
+                    }
                 }
 
                 // isLoading is only ever true while there's no data yet, so this
                 // never flashes on a background refresh.
-                state.isLoading && noData -> item {
-                    Spacer(Modifier.height(24.dp))
-                    LoadingList()
+                state.isLoading && noData -> item(key = "loading") {
+                    Column(Modifier.then(itemMotion())) {
+                        Spacer(Modifier.height(24.dp))
+                        LoadingList()
+                    }
                 }
 
-                state.errored && noData -> item {
-                    Spacer(Modifier.height(24.dp))
-                    MessagePanel(
-                        title = "Couldn't load your follows",
-                        message = state.errorReason ?: "The last request failed. Check your connection and try again.",
-                        actionLabel = "Try again",
-                        onAction = { viewModel.refresh() },
-                    )
+                state.errored && noData -> item(key = "error") {
+                    Column(Modifier.then(itemMotion())) {
+                        Spacer(Modifier.height(24.dp))
+                        MessagePanel(
+                            title = "Couldn't load your follows",
+                            message = state.errorReason ?: "The last request failed. Check your connection and try again.",
+                            actionLabel = "Try again",
+                            onAction = { viewModel.refresh() },
+                        )
+                    }
                 }
 
-                noData -> item {
-                    Spacer(Modifier.height(24.dp))
-                    MessagePanel(
-                        title = "No follows yet",
-                        message = "Channels you follow on Twitch will show up here, live ones first.",
-                    )
+                noData -> item(key = "empty") {
+                    Column(Modifier.then(itemMotion())) {
+                        Spacer(Modifier.height(24.dp))
+                        MessagePanel(
+                            title = "No follows yet",
+                            message = "Channels you follow on Twitch will show up here, live ones first.",
+                        )
+                    }
                 }
 
                 else -> {
-                    item {
-                        Spacer(Modifier.height(24.dp))
-                        LiveSectionHeader(count = state.live.size, layout = layout, onLayoutChange = { layout = it })
-                        Spacer(Modifier.height(14.dp))
-                        when {
-                            state.live.isEmpty() -> Text(
-                                "None of your follows are live right now.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = c.onSurfaceVariant,
-                            )
-                            layout == FollowingLayout.GRID -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, muted, viewModel::toggleMute) }
-                            }
-                            else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                state.live.forEach { row ->
-                                    LiveListRow(
-                                        row,
-                                        onClick = { onOpenStream(row.login) },
-                                        muted = row.login.lowercase() in muted,
-                                        onToggleMute = { viewModel.toggleMute(row.login) },
-                                    )
+                    item(key = "live") {
+                        Column(Modifier.then(itemMotion()).animateContentSize(PureTvMotion.ContentSizeSpring)) {
+                            Spacer(Modifier.height(24.dp))
+                            LiveSectionHeader(count = state.live.size, layout = layout, onLayoutChange = { layout = it })
+                            Spacer(Modifier.height(14.dp))
+                            when {
+                                state.live.isEmpty() -> Text(
+                                    "None of your follows are live right now.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = c.onSurfaceVariant,
+                                )
+                                layout == FollowingLayout.GRID -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                                    state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, muted, viewModel::toggleMute) }
                                 }
-                            }
+                                else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    state.live.forEach { row ->
+                                        LiveListRow(
+                                            row,
+                                            onClick = { onOpenStream(row.login) },
+                                            muted = row.login.lowercase() in muted,
+                                            onToggleMute = { viewModel.toggleMute(row.login) },
+                                        )
+                                    }
+                                }
+                        }
                         }
                     }
 
                     if (state.offline.isNotEmpty()) {
-                        item {
-                            Spacer(Modifier.height(28.dp))
-                            Text("Offline · ${state.offline.size}", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
-                            Spacer(Modifier.height(12.dp))
-                            OfflineList(state.offline, onOpenStream, muted, viewModel::toggleMute)
+                        item(key = "offline") {
+                            Column(Modifier.then(itemMotion()).animateContentSize(PureTvMotion.ContentSizeSpring)) {
+                                Spacer(Modifier.height(28.dp))
+                                Text("Offline · ${state.offline.size}", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
+                                Spacer(Modifier.height(12.dp))
+                                OfflineList(state.offline, onOpenStream, muted, viewModel::toggleMute)
+                            }
                         }
                     }
                 }

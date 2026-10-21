@@ -1,10 +1,5 @@
 package com.puretv.twitch.android.ui.theme
 
-import androidx.compose.animation.core.CubicBezierEasing
-import androidx.compose.animation.core.Easing
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.SpringSpec
-import androidx.compose.animation.core.spring
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -245,21 +240,6 @@ val shapeScale: Map<ShapeIntensity, PureTvShapeScale> = mapOf(
     ShapeIntensity.MAXIMAL to PureTvShapeScale(card = 28.dp, cardMorph = 48.dp, hero = 48.dp, heroMorph = 64.dp),
 )
 
-// ---- Motion ------------------------------------------------------------------
-
-object PureTvMotion {
-    const val Fast = 150
-    const val Medium = 250
-    const val Slow = 400
-
-    /** Overshoots and settles back, which is what makes a corner change elastic. */
-    val MorphSpring: SpringSpec<Dp> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
-    val MorphSpringFloat: SpringSpec<Float> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
-
-    /** Non-springy easing for colour and opacity, which should not bounce. */
-    val Standard: Easing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-}
-
 // ---- Typography --------------------------------------------------------------
 
 /**
@@ -380,6 +360,7 @@ fun PureTvTheme(
     CompositionLocalProvider(
         LocalPureTvColors provides colors,
         LocalPureTvShapes provides shapes,
+        LocalReducedMotion provides rememberReducedMotion(),
     ) {
         MaterialTheme(
             colorScheme = scheme,

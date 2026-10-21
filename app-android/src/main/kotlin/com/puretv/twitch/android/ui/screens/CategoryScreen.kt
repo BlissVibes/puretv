@@ -43,6 +43,7 @@ import com.puretv.twitch.android.ui.components.StreamCard
 import com.puretv.twitch.android.ui.components.StreamCardSkeleton
 import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.theme.PureTvTheme
+import com.puretv.twitch.android.ui.theme.itemMotion
 import com.puretv.twitch.android.ui.theme.PureTvType
 import org.koin.androidx.compose.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -84,7 +85,7 @@ fun CategoryScreen(gameId: String, onOpenStream: (String) -> Unit, onBack: () ->
         when {
             state.isLoading && state.streams.isEmpty() -> items(6) { StreamCardSkeleton() }
             state.error != null && state.streams.isEmpty() -> fullSpan {
-                ErrorState(message = state.error!!, onRetry = viewModel::retry)
+                ErrorState(message = state.error.orEmpty(), onRetry = viewModel::retry)
             }
             state.streams.isEmpty() -> fullSpan {
                 EmptyState(
@@ -93,7 +94,7 @@ fun CategoryScreen(gameId: String, onOpenStream: (String) -> Unit, onBack: () ->
                 )
             }
             else -> items(state.streams, key = { it.userLogin }) { stream ->
-                StreamCard(stream = stream, onClick = { onOpenStream(stream.userLogin) })
+                StreamCard(stream = stream, onClick = { onOpenStream(stream.userLogin) }, modifier = Modifier.then(itemMotion()))
             }
         }
     }

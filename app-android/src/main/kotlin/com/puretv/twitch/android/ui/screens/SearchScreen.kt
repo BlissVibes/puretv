@@ -57,6 +57,7 @@ import com.puretv.twitch.android.ui.components.LivePill
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
+import com.puretv.twitch.android.ui.theme.itemMotion
 import com.puretv.twitch.core.api.ChannelSearchResult
 import org.koin.androidx.compose.koinViewModel
 
@@ -211,19 +212,19 @@ private fun SearchResults(results: List<ChannelSearchResult>, onOpenChannel: (St
     ) {
         LazyColumn(modifier = Modifier.fillMaxSize()) {
             items(results, key = { it.id }) { result ->
-                SearchResultRow(result, onClick = { onOpenChannel(result.broadcaster_login) })
+                SearchResultRow(result, onClick = { onOpenChannel(result.broadcaster_login) }, modifier = Modifier.then(itemMotion()))
             }
         }
     }
 }
 
 @Composable
-private fun SearchResultRow(result: ChannelSearchResult, onClick: () -> Unit) {
+private fun SearchResultRow(result: ChannelSearchResult, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .expressiveClickable(
                 interaction = interaction,

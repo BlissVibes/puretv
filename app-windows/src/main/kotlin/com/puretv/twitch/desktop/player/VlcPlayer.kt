@@ -72,8 +72,9 @@ class VlcPlayer(
                 _status.update { it.copy(isPlaying = true, isBuffering = false, error = null) }
                 // Assert our volume on playback start so libVLC stops adopting its
                 // own default (~30-50% perceived) until the user first drags the slider.
-                val s = _status.value
-                runCatching { mediaPlayer.audio().setVolume(if (s.isMuted) 0 else s.volume) }
+                // The audio output usually does not exist yet at this moment, so this
+                // can be dropped; timeChanged below repeats it until it sticks.
+                syncAudio(mediaPlayer)
             }
 
             override fun paused(mediaPlayer: MediaPlayer) {
@@ -98,6 +99,11 @@ class VlcPlayer(
 
             override fun timeChanged(mediaPlayer: MediaPlayer, newTime: Long) {
                 _status.update { it.copy(positionMs = newTime) }
+                // libVLC forgets a volume set before its audio output exists, and starts
+                // that output muted: measured on a live tile, VLC read back volume 0 and
+                // muted while this player held 60 and unmuted, so the tile was silent.
+                // Every new media gets a new output, so this also covers each reload.
+                syncAudio(mediaPlayer)
             }
 
             override fun lengthChanged(mediaPlayer: MediaPlayer, newLength: Long) {
@@ -248,7 +254,7 @@ class VlcPlayer(
         // updates are safe from any thread (see class header). Publishing the UI
         // state first keeps the slider glued to the cursor.
         _status.update { it.copy(volume = next.volume, isMuted = next.isMuted) }
-        runCatching { mp.audio().setVolume(next.volume) }
+        syncAudio(mp)
     }
 
     /** Toggles mute, remembering the pre-mute level so unmute restores it. */
@@ -257,7 +263,7 @@ class VlcPlayer(
         val next = applyMuteToggle(VolumeState(_status.value.volume, _status.value.isMuted, preMuteVolume))
         preMuteVolume = next.preMute
         _status.update { it.copy(volume = next.volume, isMuted = next.isMuted) }
-        runCatching { mp.audio().setVolume(next.volume) }
+        syncAudio(mp)
     }
 
     override fun release() {
@@ -276,6 +282,21 @@ class VlcPlayer(
      */
     fun setMuted(muted: Boolean) {
         if (_status.value.isMuted != muted) toggleMute()
+    }
+
+    /**
+     * Makes libVLC's volume and mute agree with [status]: a muted player plays at
+     * volume 0, an unmuted one at its volume with libVLC's own mute flag off. Reads
+     * first, so the common case (already in agreement) changes nothing.
+     */
+    private fun syncAudio(mp: MediaPlayer) {
+        val s = _status.value
+        val want = if (s.isMuted) 0 else s.volume
+        runCatching {
+            val audio = mp.audio()
+            if (audio.volume() != want) audio.setVolume(want)
+            if (!s.isMuted && audio.isMute) audio.setMute(false)
+        }
     }
 
     private fun MutableStateFlow<PlayerStatus>.update(transform: (PlayerStatus) -> PlayerStatus) {

@@ -102,7 +102,7 @@ private val TILE_FRAME = 3.dp
 private val TILE_STRIP_HEIGHT = 48.dp
 
 /**
- * Watch two to four live channels at once. All of them play; only the active one is
+ * Watch two to four live channels at once. All of them play, each with its own volume; by default only the selected one is
  * audible and outlined, and clicking another tile moves the sound to it.
  *
  * AWT heavyweight components (each tile's VLC canvas) always paint above Compose, so
@@ -184,7 +184,7 @@ fun MultiViewContent(
             when (action) {
                 MultiShortcutAction.VolumeUp -> viewModel.nudgeVolume(up = true)
                 MultiShortcutAction.VolumeDown -> viewModel.nudgeVolume(up = false)
-                MultiShortcutAction.ToggleMute -> viewModel.toggleMute()
+                MultiShortcutAction.ToggleMute -> viewModel.toggleActiveMute()
                 MultiShortcutAction.CycleSleepTimer -> sleep.cycle()
                 MultiShortcutAction.MoveEarlier -> activeId?.let { viewModel.move(it, -1) }
                 MultiShortcutAction.MoveLater -> activeId?.let { viewModel.move(it, 1) }
@@ -242,8 +242,7 @@ fun MultiViewContent(
                 onToggleChat = { shell.toggleChat() },
                 onBack = onBack,
                 onTogglePicker = { pickerOpen = !pickerOpen },
-                onVolume = viewModel::setVolume,
-                onToggleMute = viewModel::toggleMute,
+                onListenAll = viewModel::setListenAll,
                 sleepLabel = sleep.ui.label,
                 sleepRunning = sleep.ui.running,
                 onCycleSleep = sleep::cycle,
@@ -289,7 +288,10 @@ fun MultiViewContent(
                                     tile = tile,
                                     info = info,
                                     isActive = tile.id == layout.activeId,
+                                    audible = layout.isAudible(tile.id),
                                     onActivate = { viewModel.setActive(tile.id) },
+                                    onVolume = { viewModel.setVolume(tile.id, it) },
+                                    onToggleMute = { viewModel.toggleMute(tile.id) },
                                     onClose = { closeTile(tile.id) },
                                     canMoveEarlier = tile.id != layout.tiles.first().id,
                                     canMoveLater = tile.id != layout.tiles.last().id,
@@ -443,7 +445,10 @@ private fun Tile(
     tile: MultiTile,
     info: TileInfo,
     isActive: Boolean,
+    audible: Boolean,
     onActivate: () -> Unit,
+    onVolume: (Int) -> Unit,
+    onToggleMute: () -> Unit,
     onClose: () -> Unit,
     canMoveEarlier: Boolean,
     canMoveLater: Boolean,
@@ -502,19 +507,35 @@ private fun Tile(
                 )
                 val sub = when {
                     info.message != null -> info.message
-                    isActive -> "You are listening"
+                    audible -> "You are listening"
+                    tile.silent -> if (isActive) "Selected, sound off" else "Sound off"
                     info.isBuffering -> "Loading..."
-                    else -> "Click to listen"
+                    isActive -> "Selected"
+                    else -> "Click to select"
                 }
                 Text(
                     sub,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (info.message == null && isActive) c.primary else c.onSurfaceVariant,
+                    color = if (info.message == null && (audible || isActive)) c.primary else c.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
             if (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null) AdBlockPill(info.adBlockStatus)
+            // This tile's own sound. It sits in the strip, below the video, because a click on
+            // the native video surface never reaches Compose.
+            ExpressiveIconButton(
+                icon = if (tile.silent) ExpressiveIcons.VolumeOff else ExpressiveIcons.VolumeUp,
+                contentDescription = if (tile.silent) "Unmute ${info.displayName}" else "Mute ${info.displayName}",
+                onClick = onToggleMute,
+                boxSize = 36.dp,
+                iconSize = 18.dp,
+            )
+            ExpressiveSlider(
+                value = if (tile.silent) 0f else tile.volume / 100f,
+                onValueChange = { onVolume((it * 100f).roundToInt()) },
+                modifier = Modifier.width(72.dp),
+            )
             if (canMoveEarlier || canMoveLater) {
                 ExpressiveIconButton(
                     icon = ExpressiveIcons.ArrowLeft,
@@ -552,8 +573,7 @@ private fun MultiTopBar(
     onToggleChat: () -> Unit,
     onBack: () -> Unit,
     onTogglePicker: () -> Unit,
-    onVolume: (Int) -> Unit,
-    onToggleMute: () -> Unit,
+    onListenAll: (Boolean) -> Unit,
     sleepLabel: String,
     sleepRunning: Boolean,
     onCycleSleep: () -> Unit,
@@ -586,17 +606,12 @@ private fun MultiTopBar(
                 maxLines = 1,
             )
         }
-        ExpressiveIconButton(
-            icon = if (state.soundOff || state.volume == 0) ExpressiveIcons.VolumeOff else ExpressiveIcons.VolumeUp,
-            contentDescription = if (state.soundOff) "Unmute" else "Mute",
-            onClick = onToggleMute,
-            boxSize = 44.dp,
-            iconSize = 22.dp,
-        )
-        ExpressiveSlider(
-            value = if (state.soundOff) 0f else state.volume / 100f,
-            onValueChange = { onVolume((it * 100f).roundToInt()) },
-            modifier = Modifier.width(150.dp),
+        ExpressiveButton(
+            text = if (layout.listenAll) "Listen to: all streams" else "Listen to: selected stream",
+            onClick = { onListenAll(!layout.listenAll) },
+            style = if (layout.listenAll) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
+            size = ExpressiveButtonSize.Medium,
+            icon = ExpressiveIcons.VolumeUp,
         )
         ExpressiveButton(
             text = sleepLabel,

@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.2.0",
+  "versionCode": 9,
+  "versionName": "1.3.0",
   "apkUrl": "https://github.com/dhawal-ss/puretv/releases/download/android-latest/PureTV-for-Twitch-Android.apk",
-  "notes": "Background play is here. Streams keep playing when you switch apps or turn the screen off, with controls in the notification and on the lock screen (you can turn it off in Settings). Picture-in-picture on Home is now optional, so you can keep just the audio going. Chat shows your own messages, the emote picker is a searchable grid instead of a single row, and emotes and @names autocomplete as you type."
+  "notes": "Pick the channels you want to hear about: open a channel and tap the bell to get a notification when it goes live. Past broadcasts and highlights are on every channel page, with scrubbing, resume and chat replay. Chat now shows real badges, deleted messages, raids and the room's slow and followers-only modes, and 7TV emote changes appear live. Your quality choice sticks, Audio only really downloads just the sound, streams start sooner and play closer to live, and everything animates more smoothly."
 }

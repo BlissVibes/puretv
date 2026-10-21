@@ -11,7 +11,7 @@ release notes automatically.
 
 ---
 
-## Unreleased
+## 1.13.0 - 2026-10-21
 
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
@@ -162,6 +162,9 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **Smoother motion everywhere.** Screens slide and fade into place, lists ease in as they load, placeholders shimmer while content arrives, and buttons and cards react to presses and hover on Windows, phone and TV. It follows your system's reduce-motion setting and stays still if you turn animations off.
 - **Move the mini player anywhere (Windows).** Drag it by the video or the control strip, across all your monitors.
   It stays where you drop it and remembers its place the next time. Double-click to bring PureTV back.
+- **Close quits, minimize keeps PureTV in the tray (Windows).** The X button always quits PureTV.
+  Minimizing it puts PureTV in the system tray instead, and anything playing stops while it is tucked away.
+  Click the tray icon, or open PureTV again, to bring it back. The first time it tucks itself away it tells you where it went.
 
 ### Fixed
 - **Fullscreen controls come back.** In fullscreen the bottom bar hid after a few seconds and

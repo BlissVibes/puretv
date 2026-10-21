@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.2.4",
+  "versionCode": 9,
+  "versionName": "1.3.0",
   "apkUrl": "https://github.com/dhawal-ss/puretv/releases/download/tv-latest/PureTV-FireTV-AndroidTV.apk",
-  "notes": "Updating is fixed. The app used to start downloading an update and only then ask Android for permission to install it, which interrupted the update part-way through and could leave the app unable to open afterwards. Permission is now asked for first, before anything is downloaded, and once you allow it the update carries on by itself. Unfinished update attempts are also cleared away instead of piling up."
+  "notes": "Press Up or Down while you watch to flip channels, with a sleep timer and a Continue watching row on Home. Past broadcasts are on every channel page, with scrubbing and resume. Chat shows emotes and can sit over or beside the video. Turn on the bell for a channel to get a banner when it goes live. Quality sticks, streams start sooner and play closer to live, and focus and screens move more smoothly."
 }

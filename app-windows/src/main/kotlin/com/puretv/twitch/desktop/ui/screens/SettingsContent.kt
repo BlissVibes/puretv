@@ -232,6 +232,7 @@ private fun ColourSwatch(variant: ThemeVariant, selected: Boolean, onClick: () -
                 restRadius = 24.dp,
                 hoverRadius = 32.dp,
                 color = if (selected) c.primary else Color.Transparent,
+                pressScale = 1f,
             )
             .padding(4.dp),
     ) {

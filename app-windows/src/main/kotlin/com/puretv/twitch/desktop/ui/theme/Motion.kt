@@ -19,7 +19,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
@@ -75,9 +80,12 @@ object PureTvMotion {
     /** Pixels of travel for a route change. Small on purpose: it hints direction, it is not a swipe. */
     val RouteTravel: Dp = 28.dp
 
-    /** True when the user turned Windows animation effects off. Read at the moment a spec is built. */
-    @Volatile
-    var reduced: Boolean = false
+    /**
+     * True when the user turned Windows animation effects off. Snapshot state: a spec reads it
+     * when it is built, and anything that decorates continuously (shimmer, LIVE pulse) reads it
+     * in composition, so flipping it takes effect on screen at once.
+     */
+    var reduced: Boolean by mutableStateOf(false)
 
     // ── Curves ─────────────────────────────────────────────────────────────────
 
@@ -215,33 +223,60 @@ fun routeDirection(from: RouteDepth, to: RouteDepth): Int = to.ordinal.compareTo
  */
 @Composable
 fun RouteTransition(key: Any, direction: Int, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
-    val progress = remember { Animatable(0f) }
+    // Keyed, so a new screen gets a fresh progress at 0 in the very composition that shows it;
+    // resetting from an effect would draw one frame at full opacity first.
+    val progress = remember(key) { Animatable(0f) }
+    val enter = remember(key) { RouteEnterState(entering = true) }
     LaunchedEffect(key) {
-        progress.snapTo(0f)
         progress.animateTo(1f, PureTvMotion.move(PureTvMotion.Medium, PureTvMotion.Decelerate))
+        enter.entering = false
     }
-    Box(
-        modifier.graphicsLayer {
-            val p = progress.value
-            alpha = p
-            val travel = PureTvMotion.RouteTravel.toPx()
-            val offset = (1f - p) * travel
-            if (direction == 0) translationY = offset * 0.35f else translationX = offset * direction
-            // The layer is only translucent for ~220 ms; modulating alpha per draw call is
-            // cheaper than an offscreen buffer the size of the whole content pane.
-            compositingStrategy = CompositingStrategy.ModulateAlpha
-        },
-    ) { content() }
+    CompositionLocalProvider(LocalRouteEnter provides enter) {
+        Box(
+            modifier.graphicsLayer {
+                val p = progress.value
+                alpha = p
+                val travel = PureTvMotion.RouteTravel.toPx()
+                val offset = (1f - p) * travel
+                if (direction == 0) translationY = offset * 0.35f else translationX = offset * direction
+                // The layer is only translucent for ~220 ms; modulating alpha per draw call is
+                // cheaper than an offscreen buffer the size of the whole content pane.
+                compositingStrategy = CompositingStrategy.ModulateAlpha
+            },
+        ) { content() }
+    }
+}
+
+/** True while the enclosing [RouteTransition] is still fading in; children skip their own entrance then. */
+class RouteEnterState(@Volatile var entering: Boolean)
+
+val LocalRouteEnter = compositionLocalOf { RouteEnterState(entering = false) }
+
+/**
+ * Remembers which items of a screen have already played [staggerIn], by key, so an item
+ * that scrolls out of a lazy grid and back does not animate again. Keep one per screen.
+ */
+class StaggerLedger {
+    private val played = HashSet<Any>()
+
+    /** True the first time [key] is seen. */
+    fun firstTime(key: Any): Boolean = played.add(key)
 }
 
 /**
  * One-shot fade and rise for the item at [index] of a freshly loaded group (a shelf of
- * cards replacing its skeletons). Items past [PureTvMotion.StaggerMaxItems] get no
- * animation at all, so scrolling a long grid never plays it. Runs in `graphicsLayer`.
+ * cards replacing its skeletons). It plays once per [key] ([ledger]), only for the first
+ * [PureTvMotion.StaggerMaxItems] items, and not at all while the screen itself is still
+ * fading in ([RouteTransition]), which would stack two fades. Runs in `graphicsLayer`.
  */
-fun Modifier.staggerIn(index: Int): Modifier = composed(
+fun Modifier.staggerIn(index: Int, key: Any, ledger: StaggerLedger): Modifier = composed(
     factory = {
-        if (index >= PureTvMotion.StaggerMaxItems) {
+        val routeEnter = LocalRouteEnter.current
+        val animate = remember {
+            val first = ledger.firstTime(key)
+            first && index < PureTvMotion.StaggerMaxItems && !routeEnter.entering
+        }
+        if (!animate) {
             Modifier
         } else {
             val progress = remember { Animatable(0f) }

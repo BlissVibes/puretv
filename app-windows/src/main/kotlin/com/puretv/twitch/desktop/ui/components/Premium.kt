@@ -52,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.desktop.ui.theme.LocalQuietMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -152,7 +153,8 @@ fun SectionHeader(title: String, onSeeAll: (() -> Unit)? = null, modifier: Modif
 fun Skeleton(modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
     val highlight by rememberUpdatedState(c.surfaceHighest)
-    val reduced = PureTvMotion.reduced
+    // Still while animations are off, and while a video is playing (the rail skeleton).
+    val reduced = PureTvMotion.reduced || LocalQuietMotion.current
     var phase by remember { mutableFloatStateOf(0f) }
     if (!reduced) {
         LaunchedEffect(Unit) {

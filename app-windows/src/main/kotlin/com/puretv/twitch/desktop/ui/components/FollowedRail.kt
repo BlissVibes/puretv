@@ -173,6 +173,7 @@ private fun FollowRowItem(row: FollowRow, onClick: () -> Unit) {
                 restRadius = shapes.pill,
                 hoverRadius = shapes.pillMorph,
                 hoverColor = c.surfaceHigh,
+                pressScale = PureTvMotion.CardPressScale,
             )
             .padding(horizontal = 14.dp)
             .height(48.dp),

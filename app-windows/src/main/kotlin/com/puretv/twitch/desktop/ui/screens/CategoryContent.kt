@@ -52,6 +52,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.desktop.ui.theme.StaggerLedger
 import com.puretv.twitch.desktop.ui.theme.staggerIn
 import org.koin.core.Koin
 import org.koin.core.parameter.parametersOf
@@ -87,6 +88,7 @@ fun CategoryContent(
     val flipOrigin = remember { koin.get<FlipOrigin>() }
     val displayName = state.gameName.ifBlank { gameName }
 
+    val stagger = remember { StaggerLedger() }
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         modifier = Modifier.fillMaxSize(),
@@ -128,7 +130,7 @@ fun CategoryContent(
             else -> itemsIndexed(state.streams, key = { _, it -> it.id }) { index, stream ->
                 CategoryStreamCard(
                     stream = stream,
-                    modifier = Modifier.animateItem().staggerIn(index),
+                    modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger),
                     onClick = {
                         // PageUp/PageDown in the player flip through this category.
                         flipOrigin.record(state.streams.map { it.userLogin })

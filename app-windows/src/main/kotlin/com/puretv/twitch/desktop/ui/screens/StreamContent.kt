@@ -875,17 +875,15 @@ private fun PlaybackControls(
     }
 }
 
-/** Filled primary pill; morphs 28→14dp radius on hover and narrows 64→56dp while pressed. */
+/** Filled primary pill; morphs 28→14dp radius on hover and compresses on press. */
 @Composable
 private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val width by animateDpAsState(if (pressed) 56.dp else 64.dp, PureTvMotion.MorphSpring, label = "playPauseWidth")
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
-            .width(width)
+            .width(64.dp)
             .height(56.dp)
             .expressiveClickable(
                 interaction = interaction,

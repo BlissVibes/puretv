@@ -54,6 +54,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.EmoteLayer
@@ -547,8 +550,12 @@ private fun ChatBadge(text: String, bg: Color, fg: Color) {
 
 @Composable
 internal fun EmoteImage(url: String, name: String, modifier: Modifier = Modifier.size(20.dp)) {
+    // Chat emotes appear by the hundred; a fade per image is wasted work and reads as lag,
+    // so they opt out of the loader's crossfade.
+    val context = LocalPlatformContext.current
+    val request = remember(url, context) { ImageRequest.Builder(context).data(url).crossfade(false).build() }
     AsyncImage(
-        model = url,
+        model = request,
         contentDescription = name,
         modifier = modifier,
     )

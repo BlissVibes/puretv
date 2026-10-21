@@ -193,10 +193,8 @@ fun App(
     val showTrayHint = isTraySupported && signedIn && settings.liveNotifications &&
         !settings.closeToTray && !settings.trayHintShown
 
-    // The Windows animation-effects switch decides whether things move. Read once up front so
-    // the first frame already honours it, then again whenever the window regains focus, which
-    // is when someone who just flipped it in Settings comes back.
-    remember { PureTvMotion.reduced = !SystemAnimations.enabled() }
+    // The Windows animation-effects switch decides whether things move. Read at start and again
+    // whenever the window regains focus, which is when someone who just flipped it comes back.
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     LaunchedEffect(windowFocused) { if (windowFocused) PureTvMotion.reduced = !SystemAnimations.enabled() }
 
@@ -294,12 +292,12 @@ fun App(
                     // Modifier.padding and Arrangement.spacedBy both reject at layout time.
                     val gutter by animateDpAsState(
                         targetValue = if (shell.isImmersive) 0.dp else 8.dp,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Slow),
+                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
                         label = "shellGutter",
                     )
                     val paneCorner by animateDpAsState(
                         targetValue = if (shell.isImmersive) 0.dp else shapes.pane,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Slow),
+                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
                         label = "paneCorner",
                     )
 
@@ -313,7 +311,7 @@ fun App(
                         AnimatedVisibility(
                             visible = !shell.isImmersive,
                             enter = if (PureTvMotion.reduced) fadeIn(tween(PureTvMotion.Fast)) else
-                                slideInHorizontally(tween(PureTvMotion.Slow, easing = PureTvMotion.Decelerate)) { -it },
+                                slideInHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Decelerate)) { -it },
                             exit = if (PureTvMotion.reduced) fadeOut(tween(PureTvMotion.Fast)) else
                                 slideOutHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Accelerate)) { -it },
                         ) {

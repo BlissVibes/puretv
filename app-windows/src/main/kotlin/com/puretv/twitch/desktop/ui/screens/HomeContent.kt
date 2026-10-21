@@ -72,6 +72,7 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
+import com.puretv.twitch.desktop.ui.theme.StaggerLedger
 import com.puretv.twitch.desktop.ui.theme.staggerIn
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import org.koin.core.Koin
@@ -123,6 +124,7 @@ fun HomeContent(
     val followStore = remember { koin.get<FollowStore>() }
     val followedChannels by followStore.followed.collectAsState()
 
+    val stagger = remember { StaggerLedger() }
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         modifier = Modifier.fillMaxSize(),
@@ -263,7 +265,7 @@ fun HomeContent(
                                 flipOrigin.record(state.topStreams.map { it.userLogin })
                                 onOpenChannel(stream.userLogin)
                             },
-                            modifier = Modifier.animateItem().staggerIn(index).prewarmStreamOnHover(stream.userLogin),
+                            modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin),
                         )
                     }
                 } else if (state.following.isEmpty()) {

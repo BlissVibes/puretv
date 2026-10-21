@@ -32,6 +32,7 @@ import com.puretv.twitch.desktop.ui.components.EditorialEmptyState
 import com.puretv.twitch.desktop.ui.components.PageTitle
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import org.koin.core.Koin
 
@@ -114,6 +115,7 @@ internal fun GameTile(name: String, boxArtUrl: String, onClick: () -> Unit, modi
             restRadius = 0.dp,
             hoverRadius = 0.dp,
             lift = 6.dp,
+            pressScale = PureTvMotion.CardPressScale,
         ),
     ) {
         val art = boxArtUrl

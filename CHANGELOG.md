@@ -131,6 +131,8 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **7TV names stay readable.** Very dark or very light name colours are nudged so they can be read on the chat background.
 - **Volume for each multi-stream tile (Windows).** Every tile has its own volume slider and a listen-to button, and adjusting a tile's sound also makes it the one you hear.
 - **Smoother motion everywhere.** Screens slide and fade into place, lists ease in as they load, placeholders shimmer while content arrives, and buttons and cards react to presses and hover on Windows, phone and TV. It follows your system's reduce-motion setting and stays still if you turn animations off.
+- **Move the mini player anywhere (Windows).** Drag it by the video or the control strip, across all your monitors.
+  It stays where you drop it and remembers its place the next time. Double-click to bring PureTV back.
 
 ### Fixed
 - **Multi-stream sound could end up on the wrong tile (Windows).** Quick clicks between tiles could leave the wrong one audible or two playing at once. Audio changes are now applied one at a time, so only the tile you picked is heard.

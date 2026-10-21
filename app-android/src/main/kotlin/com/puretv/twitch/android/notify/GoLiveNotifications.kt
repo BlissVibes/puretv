@@ -45,7 +45,7 @@ class GoLiveNotifications(private val context: Context) {
     fun ensureChannel() {
         val channel = NotificationChannelCompat.Builder(CHANNEL_ID, NotificationManagerCompat.IMPORTANCE_DEFAULT)
             .setName("Channels going live")
-            .setDescription("A channel you follow on Twitch just started streaming.")
+            .setDescription("A channel you turned the bell on for just started streaming.")
             .build()
         NotificationManagerCompat.from(context).createNotificationChannel(channel)
     }

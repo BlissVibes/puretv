@@ -75,6 +75,9 @@ class AppSettingsStore(
 
         // Audio normalizer (Wave 4).
         val AUDIO_NORMALIZER = booleanPreferencesKey("audio_normalizer")
+
+        // Per-channel go-live alerts: the channels the viewer turned the bell on for.
+        val NOTIFY_CHANNELS = stringSetPreferencesKey("notify_channels")
     }
 
     /** Mirrors [SecureTokenStore]; updated explicitly by [setSession]/[clearSession]. */
@@ -135,6 +138,8 @@ class AppSettingsStore(
             userId = token.userId,
             // Audio normalizer (Wave 4).
             audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
+            // Per-channel go-live alerts.
+            notifyChannels = prefs[Keys.NOTIFY_CHANNELS] ?: emptySet(),
         )
     }
         // The corruption handler on the delegate covers a file DataStore can
@@ -184,6 +189,8 @@ class AppSettingsStore(
             prefs[Keys.NOTIFY_MUTED_LOGINS] = next.notifyMutedLogins.mapTo(HashSet()) { it.lowercase() }
             // Audio normalizer (Wave 4).
             prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
+            // Per-channel go-live alerts.
+            prefs[Keys.NOTIFY_CHANNELS] = next.notifyChannels.mapTo(HashSet()) { it.lowercase() }
         }
     }
 

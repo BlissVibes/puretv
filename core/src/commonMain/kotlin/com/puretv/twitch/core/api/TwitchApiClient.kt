@@ -278,7 +278,7 @@ class TwitchApiClient(
         return VideoPage(resp.data.map { it.toDomain() }, resp.pagination.cursor)
     }
 
-    /** GET /videos?id= — one past video by its id, or null when Helix has no such video. */
+    /** GET /videos?id=: one past video by its id, or null when Helix has no such video. */
     suspend fun getVideoById(videoId: String): VideoInfo? {
         val resp: HelixPagedEnvelope<HelixVideo> = withRateLimitRetry {
             authedClient().get("${TwitchConfig.API_BASE}/videos") {

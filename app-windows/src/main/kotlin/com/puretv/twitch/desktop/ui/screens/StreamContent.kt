@@ -227,12 +227,12 @@ fun StreamContent(
     // chrome goes fully edge-to-edge when immersive, and springs back into the
     // "separate rounded cards" look the moment the user returns to DEFAULT.
     val immersive = mode != PlayerMode.DEFAULT
-    val groundPad by animateDpAsState(if (immersive) 0.dp else 8.dp, tween(PureTvMotion.Medium), label = "groundPad")
-    val panelRadius by animateDpAsState(if (immersive) 0.dp else 24.dp, tween(PureTvMotion.Medium), label = "panelRadius")
+    val groundPad by animateDpAsState(if (immersive) 0.dp else 8.dp, PureTvMotion.move(), label = "groundPad")
+    val panelRadius by animateDpAsState(if (immersive) 0.dp else 24.dp, PureTvMotion.move(), label = "panelRadius")
 
     val chatWidth by animateDpAsState(
         targetValue = if (isChatOpen) CHAT_WIDTH else 0.dp,
-        animationSpec = tween(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.move(),
         label = "chatWidth",
     )
     // The breathing room between the player column and the chat card. Tied to
@@ -240,7 +240,7 @@ fun StreamContent(
     // when the player chrome has gone edge-to-edge.
     val chatGap by animateDpAsState(
         targetValue = if (isChatOpen) 8.dp else 0.dp,
-        animationSpec = tween(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.move(),
         label = "chatGap",
     )
 
@@ -489,8 +489,8 @@ fun StreamContent(
                 // Top bar: always in DEFAULT, slides up when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
                     visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
-                    enter = slideInVertically { -it } + fadeIn(),
-                    exit = slideOutVertically { -it } + fadeOut(),
+                    enter = PureTvMotion.barEnter(fromTop = true),
+                    exit = PureTvMotion.barExit(fromTop = true, instant = mini),
                 ) {
                     TopBar(
                         mode = mode,
@@ -572,8 +572,8 @@ fun StreamContent(
                     // Opening it pushes the video up, the same way the controls bar does.
                     AnimatedVisibility(
                         visible = settingsMenuOpen,
-                        enter = expandVertically() + fadeIn(),
-                        exit = shrinkVertically() + fadeOut(),
+                        enter = PureTvMotion.panelEnter(),
+                        exit = PureTvMotion.panelExit(),
                     ) {
                         PlayerSettingsMenu(
                             currentQuality = state.currentQuality,
@@ -599,8 +599,8 @@ fun StreamContent(
                 // Controls bar: always in DEFAULT, slides down when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
                     visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = PureTvMotion.barEnter(fromTop = false),
+                    exit = PureTvMotion.barExit(fromTop = false, instant = mini),
                 ) {
                     PlaybackControls(
                         isPlaying = playerStatus.isPlaying,

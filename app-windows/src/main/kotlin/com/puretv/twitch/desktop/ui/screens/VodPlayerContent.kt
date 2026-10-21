@@ -204,8 +204,8 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
             Column(modifier = Modifier.weight(1f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 AnimatedVisibility(
                     visible = controlsVisible || mode == PlayerMode.DEFAULT,
-                    enter = slideInVertically { -it } + fadeIn(),
-                    exit = slideOutVertically { -it } + fadeOut(),
+                    enter = PureTvMotion.barEnter(fromTop = true),
+                    exit = PureTvMotion.barExit(fromTop = true),
                 ) {
                     VodTopBar(
                         mode = mode,
@@ -248,8 +248,8 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
                 // Playback menu in the Column (not over the video Canvas), above controls.
                 AnimatedVisibility(
                     visible = settingsMenuOpen,
-                    enter = expandVertically() + fadeIn(),
-                    exit = shrinkVertically() + fadeOut(),
+                    enter = PureTvMotion.panelEnter(),
+                    exit = PureTvMotion.panelExit(),
                 ) {
                     PlayerSettingsMenu(
                         currentQuality = state.quality,
@@ -264,8 +264,8 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
 
                 AnimatedVisibility(
                     visible = controlsVisible || mode == PlayerMode.DEFAULT,
-                    enter = slideInVertically { it } + fadeIn(),
-                    exit = slideOutVertically { it } + fadeOut(),
+                    enter = PureTvMotion.barEnter(fromTop = false),
+                    exit = PureTvMotion.barExit(fromTop = false),
                 ) {
                     VodControls(
                         koin = koin,

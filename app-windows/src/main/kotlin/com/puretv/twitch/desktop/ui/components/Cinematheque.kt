@@ -36,6 +36,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.State
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -61,6 +63,7 @@ import com.puretv.twitch.desktop.ui.emotes.AnimatedEmote
 import com.puretv.twitch.core.chat.BadgeIndex
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
 import androidx.compose.runtime.staticCompositionLocalOf
+import com.puretv.twitch.desktop.ui.theme.LocalQuietMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -109,20 +112,29 @@ fun Kicker(
 
 // ── Live dot (pulsing) ───────────────────────────────────────────────────────────
 
+/**
+ * The pulsing dot of a LIVE badge. The pulse runs in the layer, not in composition, so a
+ * grid of badges costs layer updates only. It stands still on a screen that is playing
+ * video ([LocalQuietMotion]) and when animation effects are off.
+ */
 @Composable
 fun LiveDot(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color? = null) {
     val c = PureTvTheme.colors
-    val transition = rememberInfiniteTransition(label = "liveDot")
-    val alpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
-        label = "liveDotAlpha",
-    )
+    val pulse = !LocalQuietMotion.current && !PureTvMotion.reduced
+    val alpha: State<Float> = if (pulse) {
+        rememberInfiniteTransition(label = "liveDot").animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(tween(1400, easing = PureTvMotion.Standard), RepeatMode.Reverse),
+            label = "liveDotAlpha",
+        )
+    } else {
+        remember { mutableFloatStateOf(1f) }
+    }
     Box(
         modifier
             .size(size)
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer { this.alpha = alpha.value }
             .clip(CircleShape)
             .background(color ?: c.live),
     )

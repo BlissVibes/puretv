@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
@@ -814,15 +815,20 @@ fun ExpressiveSlider(
     val fraction = value.coerceIn(0f, 1f)
     val thumbWidth = 6.dp
     val gapWidth = 14.dp
+    // Callers pass a new lambda on every recomposition, and each value change recomposes. Keying
+    // the gesture on the lambdas would restart it after the first step and cancel the drag, so
+    // the gesture keeps running and reads the newest lambdas through these.
+    val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnValueChangeFinished by rememberUpdatedState(onValueChangeFinished)
 
     BoxWithConstraints(
         modifier = modifier
             .height(28.dp)
             .graphicsLayer { alpha = if (enabled) 1f else 0.38f }
             .handCursor()
-            .pointerInput(enabled, onValueChange, onValueChangeFinished) {
+            .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
-                fun report(x: Float) = onValueChange((x / size.width.toFloat()).coerceIn(0f, 1f))
+                fun report(x: Float) = currentOnValueChange((x / size.width.toFloat()).coerceIn(0f, 1f))
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     report(down.position.x)
@@ -830,7 +836,7 @@ fun ExpressiveSlider(
                         report(change.position.x)
                         change.consume()
                     }
-                    onValueChangeFinished?.invoke()
+                    currentOnValueChangeFinished?.invoke()
                 }
             },
         contentAlignment = Alignment.CenterStart,

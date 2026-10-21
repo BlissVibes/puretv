@@ -115,6 +115,7 @@ import com.puretv.twitch.desktop.ui.AppWindows
 import com.puretv.twitch.desktop.ui.WindowDestination
 import com.puretv.twitch.desktop.ui.openInNewWindow
 import com.puretv.twitch.desktop.ui.LocalAwtWindow
+import com.puretv.twitch.desktop.ui.NativePointerActivity
 import com.puretv.twitch.desktop.ui.LocalWindowPlayback
 import com.puretv.twitch.desktop.player.WindowPlayback
 import com.puretv.twitch.desktop.ui.ShortcutAction
@@ -399,8 +400,11 @@ fun StreamContent(
                 heldKey = 0
                 return@KeyEventDispatcher false
             }
-            // Any key press is the viewer being there (sleep timer), typing in chat included.
-            if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
+            // Any key press is the viewer being there (sleep timer), typing in chat included,
+            // and it brings hidden controls back (resetControls also counts as activity).
+            if (e.id == KeyEvent.KEY_PRESSED) {
+                if (latestMode.value != PlayerMode.DEFAULT) resetControls() else sleep.onActivity()
+            }
             if (latestChatFocused.value) {
                 heldKey = 0
                 return@KeyEventDispatcher false
@@ -483,6 +487,9 @@ fun StreamContent(
             delay(1000)
         }
     }
+
+    // Compose never hears the mouse over the native video, which in fullscreen is everywhere.
+    NativePointerActivity(enabled = mode != PlayerMode.DEFAULT && !mini) { resetControls() }
 
     Box(
         modifier = Modifier

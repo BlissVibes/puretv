@@ -164,6 +164,9 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
   It stays where you drop it and remembers its place the next time. Double-click to bring PureTV back.
 
 ### Fixed
+- **Fullscreen controls come back.** In fullscreen the bottom bar hid after a few seconds and
+  moving the mouse or pressing a key did not bring it back. Moving the mouse over the video or pressing any key now shows it again,
+  on live streams and past broadcasts.
 - **Multi-stream sound could end up on the wrong tile (Windows).** Quick clicks between tiles could leave the wrong one audible or two playing at once. Audio changes are now applied one at a time, so only the tile you picked is heard.
 - **The phone app stays signed in.** It only renewed your sign-in when it
   started, so with background play, follows and chat stopped working after a

@@ -64,6 +64,7 @@ import com.puretv.twitch.desktop.ui.toTileSource
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.AppWindows
 import com.puretv.twitch.desktop.ui.LocalAwtWindow
+import com.puretv.twitch.desktop.ui.NativePointerActivity
 import com.puretv.twitch.desktop.ui.LocalWindowPlayback
 import com.puretv.twitch.desktop.player.WindowPlayback
 import com.puretv.twitch.desktop.ui.VodChatViewModel
@@ -174,6 +175,8 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
             if (!AppWindows.handlesKeys(myWindow)) return@KeyEventDispatcher false
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             val m = latestMode.value
+            // Any key brings hidden controls back; the key itself still does its own job below.
+            if (m != PlayerMode.DEFAULT) resetControls()
             when (e.keyCode) {
                 KeyEvent.VK_F -> { shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN); true }
                 KeyEvent.VK_T -> { shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER); true }
@@ -199,6 +202,9 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
         kfm.addKeyEventDispatcher(dispatcher)
         onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
     }
+
+    // Compose never hears the mouse over the native video, which in fullscreen is everywhere.
+    NativePointerActivity(enabled = mode != PlayerMode.DEFAULT) { resetControls() }
 
     Box(
         modifier = Modifier

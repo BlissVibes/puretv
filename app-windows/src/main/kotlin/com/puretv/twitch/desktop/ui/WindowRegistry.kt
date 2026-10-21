@@ -177,12 +177,14 @@ class WindowRegistry(
 
     /**
      * What minimizing window [id] does. Minimizing the main window sends PureTV to the tray
-     * (everything hides) when there is a tray and it is [visible]; every other case is the
-     * ordinary taskbar minimize.
+     * (everything hides) when the tray icon is really there ([trayAvailable]) and it is
+     * [visible]; every other case is the ordinary taskbar minimize, including while an update
+     * is downloading ([updating]), which must keep a window in the taskbar.
      */
-    fun minimizeAction(id: Int, visible: Boolean, trayAvailable: Boolean): MinimizeAction {
+    fun minimizeAction(id: Int, visible: Boolean, trayAvailable: Boolean, updating: Boolean = false): MinimizeAction {
         val entry = _windows.value.firstOrNull { it.id == id } ?: return MinimizeAction.MINIMIZE_ONLY
-        return if (entry.kind == WindowKind.PRIMARY && visible && trayAvailable) MinimizeAction.HIDE_ALL else MinimizeAction.MINIMIZE_ONLY
+        val toTray = entry.kind == WindowKind.PRIMARY && visible && trayAvailable && !updating
+        return if (toTray) MinimizeAction.HIDE_ALL else MinimizeAction.MINIMIZE_ONLY
     }
 
     // ---- Focus ------------------------------------------------------------------

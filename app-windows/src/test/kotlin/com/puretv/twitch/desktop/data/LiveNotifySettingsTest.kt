@@ -39,6 +39,19 @@ class LiveNotifySettingsTest {
         assertEquals(true, reopened.trayHintShown)
     }
 
+    @Test fun oldFileWithCloseToTrayStillLoadsAndIsIgnored() {
+        File(tmp, "settings.json").writeText("""{"closeToTray":true,"trayHintShown":true}""")
+
+        val loaded = DesktopSettingsStore(TokenHolder(), tmp).settings.value
+        assertEquals(true, loaded.closeToTray)
+        assertEquals(false, loaded.trayNoticeShown)
+        // The old switch changes nothing: the main window's X quits regardless.
+        assertEquals(
+            com.puretv.twitch.desktop.ui.CloseAction.QUIT,
+            com.puretv.twitch.desktop.ui.WindowRegistry().closeAction(com.puretv.twitch.desktop.ui.WindowRegistry.PRIMARY_ID),
+        )
+    }
+
     @Test fun settingsFromBeforeThisVersionLoadWithDefaults() {
         File(tmp, "settings.json").writeText("""{"preferredQuality":"720p","theme":"ember"}""")
 

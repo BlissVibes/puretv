@@ -151,10 +151,11 @@ private val RAIL_COLLAPSED = 88.dp
 /**
  * The window's content.
  *
- * [onClose] is the window's own close (the title bar X), which may hide PureTV to
- * the tray. [onQuit] always exits for real; the updater uses it, because an update
- * that only hid the window would leave PureTV running while the installer replaces
- * its files.
+ * [onClose] is the window's own close (the title bar X): it quits PureTV from the main
+ * window and closes just this window from any other. Minimizing the main window is what
+ * sends PureTV to the tray (see main.kt). [onQuit] always exits for real; the updater
+ * uses it, because an update that only hid the window would leave PureTV running while
+ * the installer replaces its files.
  */
 @Composable
 fun App(

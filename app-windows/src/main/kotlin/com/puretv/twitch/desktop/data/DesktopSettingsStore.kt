@@ -175,6 +175,7 @@ class DesktopSettingsStore(
         val closeToTray: Boolean = false,
         val startWithWindows: Boolean = false,
         val trayHintShown: Boolean = false,
+        val trayNoticeShown: Boolean = false,
         val showSevenTvPaints: Boolean = true,
         // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
         val audioNormalizer: Boolean = false,
@@ -207,6 +208,7 @@ class DesktopSettingsStore(
         closeToTray = closeToTray,
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
+        trayNoticeShown = trayNoticeShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
         notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
@@ -239,6 +241,7 @@ class DesktopSettingsStore(
         closeToTray = closeToTray,
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
+        trayNoticeShown = trayNoticeShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
         notifyChannels = notifyChannels.sorted(),

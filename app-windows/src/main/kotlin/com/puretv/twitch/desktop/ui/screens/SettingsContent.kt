@@ -419,8 +419,8 @@ private fun ChatPanel(
 
 /**
  * Go-live alerts and the tray. Alerts arrive as Windows notifications from the tray
- * icon while PureTV is running; keeping it in the tray when the window closes is what
- * lets them keep coming. Without a system tray (rare on Windows) neither works, so
+ * icon while PureTV is running; minimizing PureTV keeps it in the tray, which is what
+ * lets them keep coming (closing the window quits). Without a system tray (rare on Windows) neither works, so
  * the panel says so instead of offering switches that would do nothing.
  */
 @Composable

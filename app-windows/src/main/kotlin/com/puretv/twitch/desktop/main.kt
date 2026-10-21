@@ -11,7 +11,14 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Tray
 import androidx.compose.ui.window.WindowPosition
+import androidx.compose.ui.window.Notification
+import com.puretv.twitch.desktop.ui.MiniPlayerGeometry
+import com.puretv.twitch.desktop.ui.MiniRect
 import com.puretv.twitch.desktop.ui.MinimizeAction
+import com.puretv.twitch.desktop.ui.PopoutLayout
+import com.puretv.twitch.desktop.update.UpdateManager
+import com.puretv.twitch.desktop.update.UpdateState
+import java.awt.SystemTray
 import com.puretv.twitch.desktop.ui.WindowBoundsGate
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
@@ -193,17 +200,24 @@ fun main(args: Array<String>) {
         // same way as any hide: each window stops what it plays and leaves mini/fullscreen.
         // Our own restore flips isMinimized back to false, which this ignores, so there is
         // no loop; the show path also clears it. Without a tray it stays a taskbar minimize.
+        // Fullscreen, mini and theater leave through App, which exits them as soon as the
+        // window is hidden (so the saved normal bounds are replayed while it is out of sight).
+        // Hiding needs a tray icon that is really there and no update downloading: otherwise
+        // it stays a taskbar minimize, so the app never hides with no way back.
+        val updateManager = koinApp.koin.get<UpdateManager>()
         LaunchedEffect(Unit) {
             snapshotFlow { windowState.isMinimized }.collect { minimized ->
                 if (!minimized) return@collect
-                if (registry.minimizeAction(WindowRegistry.PRIMARY_ID, windowVisible, isTraySupported) != MinimizeAction.HIDE_ALL) return@collect
+                val updating = updateManager.state.value is UpdateState.Downloading
+                if (registry.minimizeAction(WindowRegistry.PRIMARY_ID, windowVisible, trayIconPresent(), updating) != MinimizeAction.HIDE_ALL) return@collect
                 windowState.isMinimized = false
-                lastNormalPosition[0]?.let { p ->
-                    if (windowState.position.isSpecified && windowState.position.x.value <= -30_000f) {
-                        windowState.position = WindowPosition(p.x.dp, p.y.dp)
-                    }
-                }
+                rescuePosition(windowState, lastNormalPosition[0])
                 windowVisible = false
+                // Windows 11 may keep the icon in the tray's overflow flyout, so say once where PureTV went.
+                if (!settings.trayNoticeShown) {
+                    settingsStore.updateSettings { it.copy(trayNoticeShown = true) }
+                    trayState.sendNotification(Notification(WINDOW_TITLE, "PureTV is still running in the tray."))
+                }
             }
         }
         val windows by registry.windows.collectAsState()
@@ -278,12 +292,15 @@ fun main(args: Array<String>) {
                 onDispose { AppWindows.remove(window) }
             }
             DisposableEffect(window) {
-                val track = object : ComponentAdapter() {
-                    override fun componentMoved(e: ComponentEvent) {
-                        if (WindowBoundsGate.shouldSave(window.extendedState, window.x, window.y)) {
-                            lastNormalPosition[0] = java.awt.Point(window.x, window.y)
-                        }
+                // Parked (-32000) or iconified positions are ignored, so this is always a real spot.
+                fun note() {
+                    if (WindowBoundsGate.shouldSave(window.extendedState, window.x, window.y)) {
+                        lastNormalPosition[0] = java.awt.Point(window.x, window.y)
                     }
+                }
+                note()
+                val track = object : ComponentAdapter() {
+                    override fun componentMoved(e: ComponentEvent) = note()
                 }
                 window.addComponentListener(track)
                 onDispose { window.removeComponentListener(track) }
@@ -309,6 +326,7 @@ fun main(args: Array<String>) {
             LaunchedEffect(frontRequests) {
                 if (frontRequests == 0) return@LaunchedEffect
                 if (window.extendedState and Frame.ICONIFIED != 0) window.extendedState = window.extendedState and Frame.ICONIFIED.inv()
+                rescuePosition(windowState, lastNormalPosition[0], window)
                 window.toFront()
                 window.requestFocus()
             }
@@ -367,6 +385,33 @@ fun main(args: Array<String>) {
 }
 
 private const val WINDOW_TITLE = PRIMARY_WINDOW_TITLE
+
+/** Windows reports a minimized window at about -32000; anything at or below this is parked, not a place. */
+private const val PARKED_BELOW = -30_000
+
+/**
+ * True when our tray icon is really in the system tray. Only PureTV adds icons to its
+ * own tray, so any icon there is ours; if the tray could not be added (or Windows
+ * dropped it) minimizing must not hide the app, as there would be no way back.
+ */
+private fun trayIconPresent(): Boolean =
+    isTraySupported && runCatching { SystemTray.getSystemTray().trayIcons.isNotEmpty() }.getOrDefault(false)
+
+/**
+ * Keeps the main window where the viewer can reach it: a parked position (left behind by
+ * a minimize) goes back to [lastNormal], and a window that ended up off every monitor
+ * (unplugged screen) is moved onto the nearest one. Never resizes.
+ */
+private fun rescuePosition(state: WindowState, lastNormal: java.awt.Point?, window: Frame? = null) {
+    val parked = state.position.isSpecified && state.position.x.value <= PARKED_BELOW
+    if (parked && lastNormal != null) state.position = WindowPosition(lastNormal.x.dp, lastNormal.y.dp)
+    if (window == null || window.extendedState and Frame.ICONIFIED != 0) return
+    val x = if (window.x > PARKED_BELOW) window.x else lastNormal?.x ?: return
+    val y = if (window.y > PARKED_BELOW) window.y else lastNormal?.y ?: return
+    val bounds = MiniRect(x, y, window.width, window.height)
+    val rescued = MiniPlayerGeometry.rescueIfOffscreen(bounds, PopoutLayout.screenWorkAreas())
+    if (rescued != bounds) state.position = WindowPosition(rescued.x.dp, rescued.y.dp)
+}
 
 /**
  * Held for the life of the process. The lock lives in a file channel, and an

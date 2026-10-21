@@ -272,6 +272,9 @@ data class AppSettings(
     // Windows only: PureTV can start hidden in the tray when Windows starts.
     val startWithWindows: Boolean = false,
     val trayHintShown: Boolean = false,
+    // Windows only: the one-time "PureTV is still running in the tray" notice was shown
+    // the first time minimizing hid the app (Windows may tuck the icon in the overflow flyout).
+    val trayNoticeShown: Boolean = false,
 
     // Ad Block
     val adBlockEnabled: Boolean = true,

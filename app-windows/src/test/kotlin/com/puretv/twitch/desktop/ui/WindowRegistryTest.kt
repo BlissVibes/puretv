@@ -81,6 +81,8 @@ class WindowRegistryTest {
         val s = opened(r.open(WindowDestination.Home))
         assertEquals(MinimizeAction.HIDE_ALL, r.minimizeAction(0, visible = true, trayAvailable = true))
         assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(0, visible = true, trayAvailable = false))
+        // An update is downloading: stay in the taskbar.
+        assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(0, visible = true, trayAvailable = true, updating = true))
         // Already hidden in the tray: nothing more to hide.
         assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(0, visible = false, trayAvailable = true))
         // Other windows minimize on their own.

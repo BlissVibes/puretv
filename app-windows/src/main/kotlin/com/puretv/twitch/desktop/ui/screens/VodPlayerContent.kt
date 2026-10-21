@@ -58,7 +58,10 @@ import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.player.formatTimecode
 import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.PlayerMode
-import com.puretv.twitch.desktop.ui.PoppedWindows
+import com.puretv.twitch.desktop.ui.AppWindows
+import com.puretv.twitch.desktop.ui.LocalAwtWindow
+import com.puretv.twitch.desktop.ui.LocalWindowPlayback
+import com.puretv.twitch.desktop.player.WindowPlayback
 import com.puretv.twitch.desktop.ui.VodChatViewModel
 import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.VodPlayerViewModel
@@ -111,7 +114,8 @@ private const val SeekStepLargeMs = 30_000L
  */
 @Composable
 fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
-    val viewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodPlayerViewModel> { parametersOf(launch) } }
+    val windowPlayback = LocalWindowPlayback.current ?: remember { koin.get<WindowPlayback>() }
+    val viewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodPlayerViewModel> { parametersOf(launch, windowPlayback) } }
     val state by viewModel.state.collectAsState()
     // Only the error branch below reads `status` at this level; the position slider
     // lives in VodControls, which collects the full status itself. Project away the
@@ -123,7 +127,7 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
             .map { it.copy(positionMs = 0L, durationMs = 0L) }
             .distinctUntilChanged()
     }.collectAsState(initial = viewModel.status.value.copy(positionMs = 0L, durationMs = 0L))
-    val chatViewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodChatViewModel> { parametersOf(launch.vodId, launch.channelLogin) } }
+    val chatViewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodChatViewModel> { parametersOf(launch.vodId, launch.channelLogin, windowPlayback) } }
     val chatMessages by chatViewModel.messages.collectAsState()
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
     val appSettings by settingsStore.settings.collectAsState()
@@ -150,10 +154,11 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     LaunchedEffect(mode) { resetControls() }
 
     val latestMode = rememberUpdatedState(mode)
+    val myWindow = LocalAwtWindow.current
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
-            // A key pressed in a popped-out multi-stream window is that window's.
-            if (PoppedWindows.isActive()) return@KeyEventDispatcher false
+            // A key pressed in another PureTV window (a popped-out tile, a second window) is that window's.
+            if (!AppWindows.handlesKeys(myWindow)) return@KeyEventDispatcher false
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             val m = latestMode.value
             when (e.keyCode) {

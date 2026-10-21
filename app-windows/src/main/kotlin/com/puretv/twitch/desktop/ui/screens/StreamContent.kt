@@ -111,7 +111,10 @@ import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.MiniControlStrip
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
-import com.puretv.twitch.desktop.ui.PoppedWindows
+import com.puretv.twitch.desktop.ui.AppWindows
+import com.puretv.twitch.desktop.ui.LocalAwtWindow
+import com.puretv.twitch.desktop.ui.LocalWindowPlayback
+import com.puretv.twitch.desktop.player.WindowPlayback
 import com.puretv.twitch.desktop.ui.ShortcutAction
 import com.puretv.twitch.desktop.ui.SleepSession
 import com.puretv.twitch.desktop.ui.StreamViewModel
@@ -197,12 +200,13 @@ fun StreamContent(
     // Owned by App, so the timer carries on into multi-stream.
     sleep: SleepSession = remember { SleepSession() },
 ) {
+    val windowPlayback = LocalWindowPlayback.current ?: remember { koin.get<WindowPlayback>() }
     val viewModel = rememberDesktopViewModel(channelLogin) {
-        koin.get<StreamViewModel> { parametersOf(channelLogin) }
+        koin.get<StreamViewModel> { parametersOf(channelLogin, windowPlayback) }
     }
     val state by viewModel.state.collectAsState()
     val isFollowed by viewModel.isFollowed.collectAsState()
-    val vlcPlayer = remember { koin.get<DesktopPlayer>() }
+    val vlcPlayer = remember(windowPlayback) { windowPlayback.player }
     // Once a stream has had a video surface, a flip to the next channel keeps it mounted.
     var keepSurface by remember { mutableStateOf(false) }
     if (state.playableUrl != null && !keepSurface) keepSurface = true
@@ -385,10 +389,11 @@ fun StreamContent(
     val latestMenuOpen = rememberUpdatedState(settingsMenuOpen)
     var heldKey = 0
     val latestViewModel = rememberUpdatedState(viewModel)
+    val myWindow = LocalAwtWindow.current
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
-            // A key pressed in a popped-out multi-stream window is that window's.
-            if (PoppedWindows.isActive()) {
+            // A key pressed in another PureTV window (a popped-out tile, a second window) is that window's.
+            if (!AppWindows.handlesKeys(myWindow)) {
                 heldKey = 0
                 return@KeyEventDispatcher false
             }

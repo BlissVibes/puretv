@@ -11,7 +11,9 @@ import com.puretv.twitch.core.api.retryOnceIfUnauthorized
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.playback.FlipOrigin
+import com.puretv.twitch.desktop.player.ChannelClaims
 import com.puretv.twitch.desktop.player.PlayTicket
+import com.puretv.twitch.desktop.player.WindowPlayback
 import androidx.compose.ui.window.TrayState
 import com.puretv.twitch.desktop.data.ViewerHistoryStore
 import com.puretv.twitch.desktop.data.WatchProgressStore
@@ -185,8 +187,17 @@ val desktopModule = module {
     single { PlayTicket() }
     // The row a stream was opened from (Home, a category), so the keyboard can flip through it.
     single { FlipOrigin() }
-    factory { (channelLogin: String) ->
-        StreamViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    // Which windows watch which channel (see ChannelClaims), and the main window's player
+    // and ticket: the app-wide ones. Other windows pass their own WindowPlayback as a second
+    // parameter of the player view models below.
+    single { ChannelClaims() }
+    single { WindowPlayback(get(), { get<DesktopPlayerProvider>().player }, isolated = false, claims = get()) }
+    factory { params ->
+        val playback = params.getOrNull<WindowPlayback>() ?: get<WindowPlayback>()
+        StreamViewModel(
+            params.get<String>(), get(), get(), get(), get(), get(), get(), playback.player, get(), get(), get(), get(), get(), get(),
+            playback.playTicket, playback.isolated, playback.claims,
+        )
     }
     factory { (channelLogin: String) ->
         MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
@@ -208,8 +219,14 @@ val desktopModule = module {
     // resolving the broadcaster's own userId/login via GET /users).
     factory { LoginViewModel(get(), get(), get(), get(), get()) }
     factory { (userId: String) -> VodListViewModel(userId, get()) }
-    factory { (launch: VodLaunch) -> VodPlayerViewModel(launch, get(), get(), get(), get(), get()) }
-    factory { (vodId: String, channelLogin: String) -> VodChatViewModel(vodId, channelLogin, get(), get(), get(), get()) }
+    factory { params ->
+        val playback = params.getOrNull<WindowPlayback>() ?: get<WindowPlayback>()
+        VodPlayerViewModel(params.get<VodLaunch>(), playback.player, get(), get(), get(), playback.playTicket)
+    }
+    factory { params ->
+        val playback = params.getOrNull<WindowPlayback>() ?: get<WindowPlayback>()
+        VodChatViewModel(params.get<String>(0), params.get<String>(1), playback.player, get(), get(), get())
+    }
 }
 
 /** Convenience for screens: `koin.get<StreamViewModel> { parametersOf(channelLogin) }`. */

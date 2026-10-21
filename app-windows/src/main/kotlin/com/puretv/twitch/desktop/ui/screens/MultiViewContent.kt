@@ -71,7 +71,8 @@ import com.puretv.twitch.desktop.ui.AddOutcome
 import com.puretv.twitch.desktop.ui.HeldKey
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiShortcutAction
-import com.puretv.twitch.desktop.ui.PoppedWindows
+import com.puretv.twitch.desktop.ui.AppWindows
+import com.puretv.twitch.desktop.ui.LocalAwtWindow
 import com.puretv.twitch.desktop.ui.MultiShortcuts
 import com.puretv.twitch.desktop.ui.MultiTile
 import com.puretv.twitch.desktop.ui.MultiViewLayout
@@ -187,11 +188,12 @@ fun MultiViewContent(
     LaunchedEffect(chatOpen) { if (!chatOpen) chatFocused = false }
     val latestTyping = rememberUpdatedState(chatFocused || pickerFocused)
     val latestState = rememberUpdatedState(state)
+    val myWindow = LocalAwtWindow.current
     DisposableEffect(Unit) {
         val held = HeldKey()
         val dispatcher = KeyEventDispatcher { e ->
-            // A key pressed in a popped-out window is that window's (see PoppedStreamWindow).
-            if (PoppedWindows.isActive()) {
+            // A key pressed in another PureTV window (a popped-out tile, a second window) is that window's.
+            if (!AppWindows.handlesKeys(myWindow)) {
                 held.clear()
                 return@KeyEventDispatcher false
             }

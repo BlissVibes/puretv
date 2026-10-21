@@ -58,6 +58,7 @@ import com.puretv.twitch.desktop.data.FollowStore
 import com.puretv.twitch.desktop.data.FollowedChannel
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.PlaybackStallWatchdog
+import com.puretv.twitch.desktop.player.ChannelClaims
 import com.puretv.twitch.desktop.player.PlayTicket
 import com.puretv.twitch.desktop.player.ProxyUnavailableException
 import com.puretv.twitch.desktop.player.DesktopPlayer
@@ -414,6 +415,9 @@ class StreamViewModel(
     private val badgeRepository: BadgeRepository,
     private val playableStreamCache: PlayableStreamCache,
     private val playTicket: PlayTicket,
+    // A window other than the main one: ad blocking is reported per channel, not app-wide.
+    private val isolated: Boolean = false,
+    private val claims: ChannelClaims = ChannelClaims(),
 ) : DesktopViewModel() {
     private val _state = MutableStateFlow(StreamUiState())
     val state: StateFlow<StreamUiState> = _state.asStateFlow()
@@ -468,7 +472,8 @@ class StreamViewModel(
         .stateIn(scope, SharingStarted.Eagerly, followStore.isFollowed(channelLogin))
 
     init {
-        adBlockEngine.resetForNewStream()
+        claims.acquire(channelLogin)
+        if (isolated) adBlockEngine.resetForNewStream(channelLogin) else adBlockEngine.resetForNewStream()
         scope.launch {
             // SECTION 08.3 — VLC talks to our local proxy (port 7979), never
             // straight to Twitch's CDN: that's the choke point where every
@@ -563,7 +568,8 @@ class StreamViewModel(
                 .collect { rebuildEmoteIndicesAndPublish() }
         }
         scope.launch {
-            adBlockEngine.status.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
+            val statuses = if (isolated) adBlockEngine.statusFor(channelLogin) else adBlockEngine.status
+            statuses.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         scope.launch {
             vlcPlayer.status.first { it.isPlaying }
@@ -803,6 +809,8 @@ class StreamViewModel(
         // Only when no newer screen has taken the player (a flip or a rail click builds
         // the next stream's view model first), or the new stream would be stopped.
         playTicket.stopIfCurrent(ticket) { vlcPlayer.stop() }
+        // Another window may still watch this channel; only the last one to leave forgets it.
+        if (claims.release(channelLogin) && isolated) adBlockEngine.forgetChannel(channelLogin)
     }
 }
 

@@ -8,6 +8,7 @@ import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import com.puretv.twitch.core.api.TwitchApiClient
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
+import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.player.PlayTicket
 import androidx.compose.ui.window.TrayState
@@ -75,9 +76,10 @@ val desktopModule = module {
     single { DesktopSettingsStore(get()) }
     // Local "Following" list (the in-app library) - see FollowStore.
     single { FollowStore() }
-    // Go-live alerts. The monitor is the app's one asker of "which follows are live"
-    // (see LiveFollowsMonitor): the rail reads through it, the alert timer in main.kt
-    // polls it, and whatever just went live becomes a tray notification.
+    // Go-live alerts. The monitor is the app's one asker of live status (see
+    // LiveFollowsMonitor): the rail reads the followed feed through it, the alert timer
+    // in main.kt polls the channels the viewer turned the bell on for, and whatever
+    // just went live becomes a tray notification.
     single { TrayState() }
     single { NavigationRequests() }
     single { DesktopLiveNotifier() }
@@ -86,11 +88,13 @@ val desktopModule = module {
         val store = get<DesktopSettingsStore>()
         val api = get<TwitchApiClient>()
         val notifier = get<DesktopLiveNotifier>()
+        val streams = get<StreamRepository>()
         LiveFollowsMonitor(
             fetchLive = { userId -> api.getFollowedStreams(userId) },
+            // By login, so it covers channels the viewer does not follow and works signed out.
+            fetchWatched = { logins -> streams.streamsForChannels(logins) },
             store = get<LiveNotifyFileStore>(),
             settings = { store.settings.value },
-            userId = { if (store.isLoggedIn) store.sessionUserId else null },
             clock = System::currentTimeMillis,
             onGoLive = { streams -> notifier.show(streams) },
         )

@@ -178,6 +178,8 @@ class DesktopSettingsStore(
         val showSevenTvPaints: Boolean = true,
         // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
         val audioNormalizer: Boolean = false,
+        // Per-channel go-live alerts. Missing from older files, which then load with none.
+        val notifyChannels: List<String> = emptyList(),
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -206,6 +208,7 @@ class DesktopSettingsStore(
         trayHintShown = trayHintShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -236,6 +239,7 @@ class DesktopSettingsStore(
         trayHintShown = trayHintShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        notifyChannels = notifyChannels.sorted(),
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

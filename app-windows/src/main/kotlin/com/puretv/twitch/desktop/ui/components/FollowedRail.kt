@@ -55,8 +55,8 @@ import com.puretv.twitch.desktop.ui.theme.PureTvType
  * surfaceContainer ground this sits on, so every row here only owns its own
  * horizontal padding and hover fill.
  *
- * Right-clicking a row offers to mute or unmute that channel's go-live alerts
- * ([mutedLogins] holds lowercased logins).
+ * Right-clicking a row turns that channel's go-live alerts on or off
+ * ([alertLogins] holds the lowercased logins with the bell on, shown as a small bell).
  */
 @Composable
 fun FollowedRail(
@@ -65,22 +65,22 @@ fun FollowedRail(
     onOpenChannel: (String) -> Unit,
     onSignIn: () -> Unit,
     modifier: Modifier = Modifier,
-    mutedLogins: Set<String> = emptySet(),
-    onToggleMute: ((String) -> Unit)? = null,
+    alertLogins: Set<String> = emptySet(),
+    onToggleAlerts: ((String) -> Unit)? = null,
 ) {
     @Composable
     fun RailEntry(row: FollowRow) {
-        if (onToggleMute == null) {
-            FollowRowItem(row, onClick = { onOpenChannel(row.login) })
+        val alerts = row.login.lowercase() in alertLogins
+        if (onToggleAlerts == null) {
+            FollowRowItem(row, alerts, onClick = { onOpenChannel(row.login) })
             return
         }
-        val muted = row.login.lowercase() in mutedLogins
         ContextMenuArea(
             items = {
-                listOf(ContextMenuItem(if (muted) "Unmute go-live alerts" else "Mute go-live alerts") { onToggleMute(row.login) })
+                listOf(ContextMenuItem(if (alerts) "Turn off go-live alerts" else "Tell me when they go live") { onToggleAlerts(row.login) })
             },
         ) {
-            FollowRowItem(row, onClick = { onOpenChannel(row.login) })
+            FollowRowItem(row, alerts, onClick = { onOpenChannel(row.login) })
         }
     }
     val c = PureTvTheme.colors
@@ -159,7 +159,7 @@ private fun SignInPrompt(onSignIn: () -> Unit) {
 
 /** One live/offline row: a pill that squares off to [PureTvTheme.shapes.pillMorph] on hover. */
 @Composable
-private fun FollowRowItem(row: FollowRow, onClick: () -> Unit) {
+private fun FollowRowItem(row: FollowRow, alerts: Boolean, onClick: () -> Unit) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
@@ -209,6 +209,9 @@ private fun FollowRowItem(row: FollowRow, onClick: () -> Unit) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
+        if (alerts) {
+            Icon(ExpressiveIcons.NotifyOn, contentDescription = "Go-live alerts on", tint = c.primary, modifier = Modifier.size(14.dp))
+        }
 
         if (row.isLive) {
             Text(formatViewerCount(row.viewerCount), style = PureTvType.dataSmall, color = c.onSurfaceVariant)

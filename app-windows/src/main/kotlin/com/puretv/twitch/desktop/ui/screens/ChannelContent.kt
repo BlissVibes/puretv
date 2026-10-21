@@ -41,6 +41,8 @@ import com.puretv.twitch.desktop.player.formatTimecode
 import com.puretv.twitch.desktop.ui.ChannelViewModel
 import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.VodListViewModel
+import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.ui.components.AlertBell
 import com.puretv.twitch.desktop.ui.components.CoverImage
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
@@ -54,6 +56,7 @@ import com.puretv.twitch.desktop.ui.components.LivePill
 import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
+import com.puretv.twitch.desktop.ui.components.rememberAlertBell
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -90,6 +93,7 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
 
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin
+    val bell = rememberAlertBell(remember { koin.get<DesktopSettingsStore>() }, channelLogin, displayName)
     val seed = channel?.login ?: channelLogin
     // Prefer the channel's offline banner; fall back to the profile portrait so
     // the duotone seed is never the only thing carrying the header.
@@ -122,6 +126,7 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
                 channel = channel,
                 isLive = state.isLive,
                 isFollowed = isFollowed,
+                bell = bell,
                 onWatch = onWatch,
                 onToggleFollow = viewModel::toggleFollow,
             )
@@ -152,6 +157,7 @@ private fun IdentityRow(
     channel: ChannelInfo?,
     isLive: Boolean,
     isFollowed: Boolean,
+    bell: AlertBell,
     onWatch: () -> Unit,
     onToggleFollow: () -> Unit,
 ) {
@@ -188,6 +194,10 @@ private fun IdentityRow(
                 Spacer(Modifier.height(8.dp))
                 Text(meta.joinToString("  ·  "), style = MaterialTheme.typography.bodyLarge, color = c.onSurfaceVariant)
             }
+            bell.message?.let { message ->
+                Spacer(Modifier.height(8.dp))
+                Text(message, style = MaterialTheme.typography.bodyMedium, color = c.primary)
+            }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             ExpressiveButton(
@@ -205,6 +215,13 @@ private fun IdentityRow(
                 size = ExpressiveButtonSize.Large,
                 icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
                 enabled = channel != null,
+            )
+            ExpressiveButton(
+                text = if (bell.on) "Alerts on" else "Notify me",
+                onClick = bell.toggle,
+                style = if (bell.on) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Outlined,
+                size = ExpressiveButtonSize.Large,
+                icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
             )
             ExpressiveIconButton(
                 icon = ExpressiveIcons.More,

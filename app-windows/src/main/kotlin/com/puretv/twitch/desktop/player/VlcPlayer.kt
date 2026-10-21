@@ -4,6 +4,7 @@ import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.base.MediaPlayerEventAdapter
 import uk.co.caprica.vlcj.player.base.State
@@ -65,6 +66,11 @@ class VlcPlayer(
     // Remembers the pre-mute level so unmuting restores it. Touched from the
     // EDT (slider) and VLC callback threads, hence @Volatile.
     @Volatile private var preMuteVolume: Int = DEFAULT_VOLUME
+
+    // Volume and mute are read-modify-write on both the status and libVLC, and arrive from
+    // the UI thread, tile coroutines and VLC's event thread: one at a time, so a stale
+    // write (a late timeChanged) can never undo a newer change.
+    private val audioLock = Any()
 
     init {
         mediaPlayer?.events()?.addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
@@ -241,8 +247,8 @@ class VlcPlayer(
     }
 
     /** [volume] is 0–100, matching VLC's native scale (Section 8.4 volume slider). */
-    override fun setVolume(volume: Int) {
-        val mp = mediaPlayer ?: return
+    override fun setVolume(volume: Int) = synchronized(audioLock) {
+        val mp = mediaPlayer ?: return@synchronized
         val next = applyVolumeChange(VolumeState(_status.value.volume, _status.value.isMuted, preMuteVolume), volume)
         preMuteVolume = next.preMute
         // INSTANT volume — do NOT marshal through SwingUtilities.invokeLater.
@@ -258,8 +264,8 @@ class VlcPlayer(
     }
 
     /** Toggles mute, remembering the pre-mute level so unmute restores it. */
-    override fun toggleMute() {
-        val mp = mediaPlayer ?: return
+    override fun toggleMute() = synchronized(audioLock) {
+        val mp = mediaPlayer ?: return@synchronized
         val next = applyMuteToggle(VolumeState(_status.value.volume, _status.value.isMuted, preMuteVolume))
         preMuteVolume = next.preMute
         _status.update { it.copy(volume = next.volume, isMuted = next.isMuted) }
@@ -280,7 +286,7 @@ class VlcPlayer(
      * every tile playing and only the active one audible, so switching which tile
      * you hear never reloads a stream.
      */
-    fun setMuted(muted: Boolean) {
+    fun setMuted(muted: Boolean) = synchronized(audioLock) {
         if (_status.value.isMuted != muted) toggleMute()
     }
 
@@ -289,7 +295,7 @@ class VlcPlayer(
      * volume 0, an unmuted one at its volume with libVLC's own mute flag off. Reads
      * first, so the common case (already in agreement) changes nothing.
      */
-    private fun syncAudio(mp: MediaPlayer) {
+    private fun syncAudio(mp: MediaPlayer) = synchronized(audioLock) {
         val s = _status.value
         val want = if (s.isMuted) 0 else s.volume
         runCatching {
@@ -299,7 +305,4 @@ class VlcPlayer(
         }
     }
 
-    private fun MutableStateFlow<PlayerStatus>.update(transform: (PlayerStatus) -> PlayerStatus) {
-        value = transform(value)
-    }
 }

@@ -75,6 +75,13 @@ data class MultiViewState(
     fun setActive(id: Int): MultiViewState =
         if (tiles.any { it.id == id } && id != activeId) copy(activeId = id) else this
 
+    /**
+     * The state with tile [id] selected, for a tile whose sound is being adjusted: in
+     * "selected only" mode what you adjust should be what you hear. Listening to all
+     * keeps the selection where it is.
+     */
+    fun selecting(id: Int): MultiViewState = if (listenAll) this else setActive(id)
+
     /** True when tile [id] should make sound right now: selected (or listening to all) and not silent. */
     fun isAudible(id: Int): Boolean {
         val tile = tiles.firstOrNull { it.id == id } ?: return false

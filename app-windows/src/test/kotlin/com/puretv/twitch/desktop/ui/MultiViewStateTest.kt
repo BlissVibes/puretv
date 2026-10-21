@@ -242,4 +242,13 @@ class MultiViewStateTest {
         assertSame(s, s.toggleMute(9))
         assertSame(s, s.withListenAll(false))
     }
+
+    @Test fun adjustingAnotherTileSelectsItOnlyWhenListeningToSelected() {
+        val s = stateOf("a", "b")
+        val picked = s.selecting(2)
+        assertEquals(2, picked.activeId)
+        assertEquals(true, picked.isAudible(2))
+        val all = s.withListenAll(true)
+        assertSame(all, all.selecting(2))
+    }
 }

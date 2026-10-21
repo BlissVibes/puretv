@@ -131,6 +131,7 @@ class MultiViewViewModel(
     }
 
     private val lock = Any()
+    private val audioLock = Any()
     // Guards the go-live skip list so a late update cannot land after the screen closed.
     private val watchLock = Any()
     private var cleared = false
@@ -225,10 +226,10 @@ class MultiViewViewModel(
     fun nudgeVolume(up: Boolean) = changeLayout { l -> l.activeId?.let { l.nudge(it, up) } ?: l }
 
     /** The volume bar of tile [id]. */
-    fun setVolume(id: Int, volume: Int) = changeLayout { it.withVolume(id, volume) }
+    fun setVolume(id: Int, volume: Int) = changeLayout { it.selecting(id).withVolume(id, volume) }
 
     /** The speaker button of tile [id]. */
-    fun toggleMute(id: Int) = changeLayout { it.toggleMute(id) }
+    fun toggleMute(id: Int) = changeLayout { it.selecting(id).toggleMute(id) }
 
     /** M on the keyboard: mutes or unmutes the selected tile. */
     fun toggleActiveMute() = changeLayout { l -> l.activeId?.let { l.toggleMute(it) } ?: l }
@@ -370,15 +371,22 @@ class MultiViewViewModel(
      * across reloads and re-asserts it once its audio output exists (see VlcPlayer).
      */
     private fun applyAudio() {
-        val layout = _state.value.layout
-        val players = synchronized(lock) { runtimes.values.mapNotNull { rt -> rt.player?.let { rt.id to it } } }
-        for ((id, player) in players) {
-            val tile = layout.tiles.firstOrNull { it.id == id } ?: continue
-            if (layout.isAudible(id)) {
-                player.setMuted(false)
-                player.setVolume(tile.volume)
-            } else {
-                player.setMuted(true)
+        // One pass at a time, reading the layout inside it, so overlapping calls from the
+        // UI and the tile coroutines always end on the newest layout.
+        synchronized(audioLock) {
+            val layout = _state.value.layout
+            val players = synchronized(lock) {
+                runtimes.values.filterNot { it.closed }.mapNotNull { rt -> rt.player?.let { rt.id to it } }
+            }
+            for ((id, player) in players) {
+                val tile = layout.tiles.firstOrNull { it.id == id } ?: continue
+                if (layout.isAudible(id)) {
+                    // Volume first: it also lifts the mute, so there is no blip at the old level.
+                    player.setVolume(tile.volume)
+                    player.setMuted(false)
+                } else {
+                    player.setMuted(true)
+                }
             }
         }
     }

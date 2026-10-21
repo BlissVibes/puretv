@@ -1,15 +1,24 @@
 package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.desktop.data.AtomicFile
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.Frame
 import java.awt.GraphicsConfiguration
+import java.awt.Graphics
 import java.awt.GraphicsEnvironment
+import java.awt.MouseInfo
 import java.awt.Toolkit
 import java.awt.Window
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
+import javax.swing.JPanel
+import javax.swing.JWindow
+import javax.swing.SwingUtilities
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** A rectangle in AWT screen units (the same units as window bounds and screen insets). */
@@ -17,6 +26,15 @@ data class MiniRect(val x: Int, val y: Int, val width: Int, val height: Int) {
     val centerX: Int get() = x + width / 2
     val centerY: Int get() = y + height / 2
     fun contains(px: Int, py: Int): Boolean = px >= x && px < x + width && py >= y && py < y + height
+
+    /** The part of this rectangle that lies inside [other], or null when they do not touch. */
+    fun intersect(other: MiniRect): MiniRect? {
+        val left = maxOf(x, other.x)
+        val top = maxOf(y, other.y)
+        val right = minOf(x + width, other.x + other.width)
+        val bottom = minOf(y + height, other.y + other.height)
+        return if (right > left && bottom > top) MiniRect(left, top, right - left, bottom - top) else null
+    }
 }
 
 /**
@@ -35,6 +53,9 @@ object MiniPlayerGeometry {
 
     /** Gap kept to the screen edge when the window is first placed in the corner. */
     const val MARGIN = 16
+
+    /** How much of the window must stay on some screen, each way, for it to be reachable. */
+    const val MIN_VISIBLE = 64
 
     /** The window height that gives a 16:9 video above the strip. */
     fun heightFor(width: Int): Int = (width * 9 / 16.0).roundToInt() + STRIP_HEIGHT
@@ -68,15 +89,41 @@ object MiniPlayerGeometry {
     }
 
     /**
-     * Where the window opens: the remembered [saved] spot when its centre is still on a
-     * screen in [works] (kept inside that screen), otherwise the corner of [current].
+     * True when enough of [bounds] shows on some screen in [works] (the work areas of every
+     * monitor, in virtual desktop coordinates) for the viewer to grab it and drag it back.
+     */
+    fun isReachable(bounds: MiniRect, works: List<MiniRect>): Boolean =
+        works.any { work ->
+            val visible = bounds.intersect(work)
+            visible != null && visible.width >= MIN_VISIBLE && visible.height >= MIN_VISIBLE
+        }
+
+    /**
+     * Leaves [bounds] alone wherever it sits across the monitors, and only when it has been
+     * lost (not [isReachable]) moves it fully onto the nearest screen. Never resizes.
+     */
+    fun rescueIfOffscreen(bounds: MiniRect, works: List<MiniRect>): MiniRect {
+        if (works.isEmpty() || isReachable(bounds, works)) return bounds
+        val nearest = works.minBy { work ->
+            val dx = (work.centerX - bounds.centerX).toLong()
+            val dy = (work.centerY - bounds.centerY).toLong()
+            dx * dx + dy * dy
+        }
+        return clampToWork(bounds, nearest)
+    }
+
+    /**
+     * Where the window opens: the remembered [saved] spot when it still shows on a screen in
+     * [works] (on whichever monitor it was left, and rescued if that monitor shrank away),
+     * otherwise the corner of [current].
      */
     fun initialBounds(saved: MiniRect?, works: List<MiniRect>, current: MiniRect): MiniRect {
         if (saved != null) {
-            val work = works.firstOrNull { it.contains(saved.centerX, saved.centerY) }
-            if (work != null) {
-                val w = clampWidth(saved.width, work)
-                return clampToWork(MiniRect(saved.x, saved.y, w, heightFor(w)), work)
+            val host = works.firstOrNull { it.contains(saved.centerX, saved.centerY) }
+                ?: works.firstOrNull { saved.intersect(it) != null }
+            if (host != null) {
+                val w = clampWidth(saved.width, host)
+                return rescueIfOffscreen(MiniRect(saved.x, saved.y, w, heightFor(w)), works)
             }
         }
         return defaultBounds(current)
@@ -95,15 +142,16 @@ object MiniPlayerGeometry {
 
     /**
      * The window to settle on after the viewer dragged an edge, from [prev] to [now]. Sized
-     * by [fitSize]; an edge that did not move stays where it was, so dragging the left or top
-     * edge keeps the right or bottom edge still instead of the window creeping away. The
-     * result is kept on [work].
+     * by [fitSize] against [work], the screen it is on; an edge that did not move stays where
+     * it was, so dragging the left or top edge keeps the right or bottom edge still instead
+     * of the window creeping away. The result is only rescued onto a screen in [works] if
+     * it was lost, so a window left across two monitors stays there.
      */
-    fun resizeAnchored(prev: MiniRect, now: MiniRect, work: MiniRect): MiniRect {
+    fun resizeAnchored(prev: MiniRect, now: MiniRect, work: MiniRect, works: List<MiniRect> = listOf(work)): MiniRect {
         val (w, h) = fitSize(now.width, now.height, prev.width, prev.height, work)
         val x = if (now.x != prev.x) prev.x + prev.width - w else now.x
         val y = if (now.y != prev.y) prev.y + prev.height - h else now.y
-        return clampToWork(MiniRect(x, y, w, h), work)
+        return rescueIfOffscreen(MiniRect(x, y, w, h), works)
     }
 }
 
@@ -127,7 +175,11 @@ class MiniBoundsStore(
     private val file: File = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/mini-player.txt"),
 ) {
     fun load(): MiniRect? = runCatching {
-        val (x, y, w) = file.readText().trim().split(' ').map { it.toInt() }
+        val parts = file.readText().trim().split(' ').map { it.toInt() }
+        require(parts.size == 3)
+        val (x, y, w) = parts
+        // A hand-edited or damaged file must not place a window absurdly.
+        require(w in 1..MAX_SANE && x in -MAX_SANE..MAX_SANE && y in -MAX_SANE..MAX_SANE)
         MiniRect(x, y, w, MiniPlayerGeometry.heightFor(w))
     }.getOrNull()
 
@@ -136,6 +188,11 @@ class MiniBoundsStore(
             file.parentFile?.mkdirs()
             AtomicFile.writeTextAtomically(file, "${bounds.x} ${bounds.y} ${bounds.width}")
         }
+    }
+
+    private companion object {
+        /** No real desktop, or mini window, is bigger than this in either direction. */
+        const val MAX_SANE = 100_000
     }
 }
 
@@ -150,21 +207,40 @@ class MiniPlayerController(
     private val store: MiniBoundsStore = MiniBoundsStore(),
     /** Called when the window gets maximized or snapped full while in the mini player. */
     private val onMaximized: () -> Unit = {},
+    /** Called when the video is double clicked. */
+    private val onVideoDoubleClick: () -> Unit = {},
+    /** Called when the pointer moves over the video, as the viewer being there. */
+    private val onVideoActivity: () -> Unit = {},
 ) {
     private var active = false
     private var wasAlwaysOnTop = false
     private var previousMinimum: Dimension? = null
     private var last = MiniRect(0, 0, 0, 0)
     private var settling = false
+    private var glass: VideoGlass? = null
+    private var dragWindowX = 0
+    private var dragWindowY = 0
+    private var dragPointerX = 0
+    private var dragPointerY = 0
+
+    // While the window is being dragged across monitors it can be resized by the OS (a
+    // different scale), which must not be mistaken for the viewer resizing it; it is
+    // fitted once when the drag ends.
+    private var dragging = false
+
+    // The width the viewer left after resizing, remembered a moment after the last resize event.
+    private val rememberSize = javax.swing.Timer(RESIZE_SAVE_DELAY_MS) {
+        if (active && (window as? Frame)?.extendedState?.and(Frame.MAXIMIZED_BOTH) == 0) store.save(bounds())
+    }.apply { isRepeats = false }
 
     private fun bounds() = MiniRect(window.x, window.y, window.width, window.height)
 
     // Keeps 16:9 while the viewer drags an edge of the window, holding the opposite edge still.
     private val keepAspect = object : ComponentAdapter() {
         override fun componentResized(e: ComponentEvent) {
-            if (settling) return
+            if (settling || dragging) return
             val work = workAreaOf(window) ?: return
-            val fixed = MiniPlayerGeometry.resizeAnchored(last, bounds(), work)
+            val fixed = MiniPlayerGeometry.resizeAnchored(last, bounds(), work, allWorkAreas())
             settling = true
             try {
                 if (fixed != bounds()) window.setBounds(fixed.x, fixed.y, fixed.width, fixed.height)
@@ -172,12 +248,13 @@ class MiniPlayerController(
             } finally {
                 settling = false
             }
+            rememberSize.restart()
         }
 
         // A plain move (the size did not change) is the new resting place; a move that comes
         // with a resize is an edge being dragged and is read by componentResized instead.
         override fun componentMoved(e: ComponentEvent) {
-            if (settling) return
+            if (settling || dragging) return
             val now = bounds()
             if (now.width == last.width && now.height == last.height) last = now
         }
@@ -207,12 +284,19 @@ class MiniPlayerController(
         last = target
         window.addComponentListener(keepAspect)
         (window as? Frame)?.addWindowStateListener(watchMaximize)
+        // Only the glass over the video can fail (a desktop without per-pixel translucency,
+        // such as some remote sessions); the strip still moves the window without it.
+        glass = runCatching { VideoGlass(window, this, onVideoDoubleClick, onVideoActivity).also { it.show() } }.getOrNull()
     }
 
     /** Leaves the mini window where it is on screen; the shell restores the old geometry. */
     fun exit() {
         if (!active) return
         active = false
+        rememberSize.stop()
+        dragging = false
+        glass?.dispose()
+        glass = null
         window.removeComponentListener(keepAspect)
         (window as? Frame)?.removeWindowStateListener(watchMaximize)
         if ((window as? Frame)?.extendedState?.and(Frame.MAXIMIZED_BOTH) == 0) store.save(bounds())
@@ -220,12 +304,55 @@ class MiniPlayerController(
         window.minimumSize = previousMinimum
     }
 
-    /** After a drag: keeps the whole window on a screen so it can never be lost off the edge. */
+    private fun pointer() = MouseInfo.getPointerInfo().location
+
+    /** A press that may become a drag: notes where the window and the pointer are. */
+    fun startDrag() {
+        val p = pointer()
+        dragWindowX = window.x
+        dragWindowY = window.y
+        dragPointerX = p.x
+        dragPointerY = p.y
+    }
+
+    /**
+     * The window follows the pointer. Both the strip and the glass read the pointer from
+     * the same place, in screen units: those are the same on every monitor, and unlike
+     * deltas inside the window they do not drift while the window moves under the pointer.
+     */
+    fun dragTo() {
+        dragging = true
+        val p = pointer()
+        window.setLocation(dragWindowX + p.x - dragPointerX, dragWindowY + p.y - dragPointerY)
+    }
+
+    /**
+     * After a drag: the window stays wherever it was dropped, on any monitor, and is only
+     * moved when it was dropped where it can no longer be reached. The spot is remembered.
+     */
     fun settle() {
-        val work = workAreaOf(window) ?: return
-        val fixed = MiniPlayerGeometry.clampToWork(bounds(), work)
-        if (fixed != bounds()) window.setLocation(fixed.x, fixed.y)
+        dragging = false
+        val works = allWorkAreas()
+        val now = bounds()
+        // Whatever the OS did to the size on the way (another monitor's scale) is fitted once, here.
+        val work = workAreaOf(window) ?: works.firstOrNull() ?: now
+        val width = MiniPlayerGeometry.clampWidth(now.width, work)
+        val fitted = MiniRect(now.x, now.y, width, MiniPlayerGeometry.heightFor(width))
+        val fixed = MiniPlayerGeometry.rescueIfOffscreen(fitted, works)
+        if (fixed != now) {
+            settling = true
+            try {
+                window.setBounds(fixed.x, fixed.y, fixed.width, fixed.height)
+            } finally {
+                settling = false
+            }
+        }
         last = bounds()
+        if (active) store.save(last)
+    }
+
+    private companion object {
+        const val RESIZE_SAVE_DELAY_MS = 500
     }
 
     private fun allWorkAreas(): List<MiniRect> =
@@ -242,5 +369,111 @@ class MiniPlayerController(
         val b = gc.bounds
         val i = Toolkit.getDefaultToolkit().getScreenInsets(gc)
         return MiniRect(b.x + i.left, b.y + i.top, b.width - i.left - i.right, b.height - i.top - i.bottom)
+    }
+}
+
+/**
+ * A see-through window laid over the mini player's video. The video is a native window
+ * (the player draws into its own child window) that takes the mouse before anything else
+ * sees it, so the video itself can neither be dragged nor clicked. This sits above it,
+ * nearly invisible but still hit by the mouse, and turns a press-drag into moving the mini
+ * window and a double click into [onDoubleClick]. A margin is left clear so the edges keep
+ * resizing, and the control strip is not covered.
+ */
+private class VideoGlass(
+    private val mini: Window,
+    private val controller: MiniPlayerController,
+    private val onDoubleClick: () -> Unit,
+    private val onActivity: () -> Unit,
+) {
+    private val glass = JWindow(mini).apply {
+        focusableWindowState = false
+        background = Color(0, 0, 0, 1)
+        contentPane = object : JPanel() {
+            override fun paintComponent(g: Graphics) {
+                g.color = Color(0, 0, 0, 1)
+                g.fillRect(0, 0, width, height)
+            }
+        }.apply { isOpaque = false }
+        isAlwaysOnTop = true
+    }
+    private val doubleClick = DoubleClickDetector()
+    private var pressX = 0
+    private var pressY = 0
+    private var dragging = false
+    private var pressed = false
+    private var lastMoveX = Int.MIN_VALUE
+    private var lastMoveY = Int.MIN_VALUE
+
+    private val follow = object : ComponentAdapter() {
+        override fun componentMoved(e: ComponentEvent) = place()
+        override fun componentResized(e: ComponentEvent) = place()
+    }
+
+    private val mouse = object : MouseAdapter() {
+        override fun mousePressed(e: MouseEvent) {
+            if (!SwingUtilities.isLeftMouseButton(e)) return
+            pressed = true
+            dragging = false
+            pressX = e.xOnScreen
+            pressY = e.yOnScreen
+            controller.startDrag()
+        }
+
+        override fun mouseDragged(e: MouseEvent) {
+            if (!pressed) return
+            if (!dragging && abs(e.xOnScreen - pressX) + abs(e.yOnScreen - pressY) <= DRAG_SLOP) return
+            dragging = true
+            controller.dragTo()
+        }
+
+        override fun mouseReleased(e: MouseEvent) {
+            if (!pressed || !SwingUtilities.isLeftMouseButton(e)) return
+            pressed = false
+            if (dragging) controller.settle() else if (doubleClick.click(System.currentTimeMillis())) onDoubleClick()
+            dragging = false
+        }
+
+        // Moving over the video counts as being there (the sleep timer, the controls).
+        override fun mouseMoved(e: MouseEvent) {
+            if (e.xOnScreen == lastMoveX && e.yOnScreen == lastMoveY) return
+            lastMoveX = e.xOnScreen
+            lastMoveY = e.yOnScreen
+            onActivity()
+        }
+    }
+
+    init {
+        glass.addMouseListener(mouse)
+        glass.addMouseMotionListener(mouse)
+    }
+
+    /** Covers the video, minus the resize margin, and follows the mini window from here on. */
+    fun show() {
+        place()
+        glass.isVisible = true
+        mini.addComponentListener(follow)
+    }
+
+    fun dispose() {
+        mini.removeComponentListener(follow)
+        glass.dispose()
+    }
+
+    private fun place() {
+        glass.setBounds(
+            mini.x + EDGE,
+            mini.y + EDGE,
+            (mini.width - 2 * EDGE).coerceAtLeast(1),
+            (mini.height - MiniPlayerGeometry.STRIP_HEIGHT - EDGE).coerceAtLeast(1),
+        )
+    }
+
+    private companion object {
+        /** Margin left to the window edges, so they still resize. */
+        const val EDGE = 8
+
+        /** Pointer travel, in screen units, before a press counts as a drag. */
+        const val DRAG_SLOP = 4
     }
 }

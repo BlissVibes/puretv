@@ -62,7 +62,12 @@ class AppShellController(
     private var fullscreenRestore: FullscreenRestore? = null
 
     // Snapping or maximizing the mini window (Win+Up) ends mini mode rather than fight it.
-    private val miniPlayer = MiniPlayerController(window, onMaximized = { SwingUtilities.invokeLater { exitMini() } })
+    private val miniPlayer = MiniPlayerController(
+        window,
+        onMaximized = { SwingUtilities.invokeLater { exitMini() } },
+        onVideoDoubleClick = { exitMini() },
+        onVideoActivity = { miniActivity() },
+    )
 
     /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
     private var miniRestore: FullscreenRestore? = null
@@ -119,13 +124,13 @@ class AppShellController(
         if (playerModeState == PlayerMode.MINI) setPlayerMode(PlayerMode.DEFAULT)
     }
 
-    /** The mini strip moves the window by hand: where it is now, and a place to put it. */
-    val windowX: Int get() = window.x
-    val windowY: Int get() = window.y
-    fun moveWindowTo(x: Int, y: Int) = window.setLocation(x, y)
+    /** The mini strip moves the window by hand; the controller does the moving. */
+    fun startMiniDrag() = miniPlayer.startDrag()
+    fun dragMiniTo() = miniPlayer.dragTo()
+    fun endMiniDrag() = miniPlayer.settle()
 
-    /** A drag of the mini player ended: keep it on screen. */
-    fun settleMini() = miniPlayer.settle()
+    /** Set by the stream screen: the viewer moved the pointer over the mini player's video. */
+    var miniActivity: () -> Unit = {}
 
     private fun enterFullscreen() {
         // Capture geometry through WindowState (it holds the *floating* size even

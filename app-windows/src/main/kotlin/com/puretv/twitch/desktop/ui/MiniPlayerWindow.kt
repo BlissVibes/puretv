@@ -27,7 +27,6 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
-import java.awt.MouseInfo
 import kotlin.math.roundToInt
 
 /**
@@ -110,10 +109,9 @@ fun MiniControlStrip(
 
 /**
  * Drags the whole window while the pointer is held on this element, and a double click on
- * it calls [onDoubleClick]. The window follows the screen position of the pointer (read
- * from the OS, because the window moving under the pointer would make Compose's own deltas
- * drift) once it travels past the touch slop, so a plain click never moves it. Presses a
- * button already took are left alone.
+ * it calls [onDoubleClick]. The window follows the pointer once it travels past the touch
+ * slop, so a plain click never moves it, and a press that was a drag never counts as a
+ * click. Presses a button already took are left alone.
  */
 fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit): Modifier = composed {
     val doubleClick = remember { DoubleClickDetector() }
@@ -121,9 +119,7 @@ fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit
     pointerInput(shell) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = true)
-            if (doubleClick.click(System.currentTimeMillis())) latestDoubleClick()
-            val start = MouseInfo.getPointerInfo().location
-            shell.startMiniDrag(start.x, start.y)
+            shell.startMiniDrag()
             var dragging = false
             while (true) {
                 val event = awaitPointerEvent()
@@ -132,12 +128,11 @@ fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit
                     dragging = true
                 }
                 if (dragging) {
-                    val now = MouseInfo.getPointerInfo().location
-                    shell.dragMiniTo(now.x, now.y)
+                    shell.dragMiniTo()
                     event.changes.forEach { it.consume() }
                 }
             }
-            if (dragging) shell.endMiniDrag()
+            if (dragging) shell.endMiniDrag() else if (doubleClick.click(System.currentTimeMillis())) latestDoubleClick()
         }
     }
 }

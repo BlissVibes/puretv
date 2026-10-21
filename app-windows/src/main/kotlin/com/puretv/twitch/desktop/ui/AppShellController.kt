@@ -66,6 +66,7 @@ class AppShellController(
         window,
         onMaximized = { SwingUtilities.invokeLater { exitMini() } },
         onVideoDoubleClick = { exitMini() },
+        onVideoActivity = { miniActivity() },
     )
 
     /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
@@ -124,9 +125,12 @@ class AppShellController(
     }
 
     /** The mini strip moves the window by hand; the controller does the moving. */
-    fun startMiniDrag(pointerX: Int, pointerY: Int) = miniPlayer.startDrag(pointerX, pointerY)
-    fun dragMiniTo(pointerX: Int, pointerY: Int) = miniPlayer.dragTo(pointerX, pointerY)
+    fun startMiniDrag() = miniPlayer.startDrag()
+    fun dragMiniTo() = miniPlayer.dragTo()
     fun endMiniDrag() = miniPlayer.settle()
+
+    /** Set by the stream screen: the viewer moved the pointer over the mini player's video. */
+    var miniActivity: () -> Unit = {}
 
     private fun enterFullscreen() {
         // Capture geometry through WindowState (it holds the *floating* size even

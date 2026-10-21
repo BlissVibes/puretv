@@ -193,6 +193,29 @@ class MiniPlayerGeometryTest {
         assertTrue(d.click(1_600))
     }
 
+    @Test fun aCorruptOrAbsurdFileIsForgotten() {
+        val dir = kotlin.io.path.createTempDirectory("mini").toFile()
+        try {
+            val file = File(dir, "mini-player.txt")
+            val store = MiniBoundsStore(file)
+            for (bad in listOf("", "1 2", "1 2 3 4", "a b c", "10 20 0", "10 20 -480", "10 20 99999999999", "99999999 20 480", "10 -99999999 480", "10 20 480000000")) {
+                file.writeText(bad)
+                assertNull(store.load(), "should forget \"$bad\"")
+            }
+            file.writeBytes(byteArrayOf(0, -1, -2, 7))
+            assertNull(store.load())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test fun aSavedWidthFromAnotherEraIsClampedOnEntry() {
+        val saved = MiniRect(100, 100, 5000, MiniPlayerGeometry.heightFor(5000))
+        val b = MiniPlayerGeometry.initialBounds(saved, listOf(work), work)
+        assertEquals(MiniPlayerGeometry.MAX_WIDTH, b.width)
+        assertEquals(MiniPlayerGeometry.heightFor(MiniPlayerGeometry.MAX_WIDTH), b.height)
+    }
+
     @Test fun theSpotIsRememberedAcrossRuns() {
         val dir = kotlin.io.path.createTempDirectory("mini").toFile()
         try {

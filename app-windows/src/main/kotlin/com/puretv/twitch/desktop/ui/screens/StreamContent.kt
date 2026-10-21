@@ -266,6 +266,11 @@ fun StreamContent(
         sleep.onActivity()
     }
     LaunchedEffect(mode) { resetControls() }
+    // The mini player's video is covered by a window of its own, so it reports the pointer here.
+    DisposableEffect(shell) {
+        shell.miniActivity = { resetControls() }
+        onDispose { shell.miniActivity = {} }
+    }
 
     LaunchedEffect(sleep.ui.running) {
         while (sleep.ui.running) {

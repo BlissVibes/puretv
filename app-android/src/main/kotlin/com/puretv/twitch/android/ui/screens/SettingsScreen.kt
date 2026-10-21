@@ -47,6 +47,7 @@ import com.puretv.twitch.android.data.AppSettingsStore
 import com.puretv.twitch.android.notify.GoLiveNotifications
 import com.puretv.twitch.android.ui.SettingsViewModel
 import com.puretv.twitch.android.ui.components.ExpressiveButton
+import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.android.ui.components.ExpressiveDivider
 import com.puretv.twitch.android.ui.components.ExpressiveFilterChip
@@ -150,9 +151,10 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         NotificationsPanel(
             enabled = state.settings.liveNotifications,
-            mutedCount = state.settings.notifyMutedLogins.size,
+            alertChannels = state.settings.notifyChannels,
             onEnabledChange = viewModel::setLiveNotifications,
-            onUnmuteAll = viewModel::unmuteAllLiveNotifications,
+            onRemoveChannel = viewModel::removeAlertChannel,
+            onTurnOffAll = viewModel::turnOffAllAlertChannels,
         )
         Spacer(Modifier.height(16.dp))
 
@@ -470,9 +472,10 @@ private fun PlaybackPanel(
 @Composable
 private fun NotificationsPanel(
     enabled: Boolean,
-    mutedCount: Int,
+    alertChannels: Set<String>,
     onEnabledChange: (Boolean) -> Unit,
-    onUnmuteAll: () -> Unit,
+    onRemoveChannel: (String) -> Unit,
+    onTurnOffAll: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     val context = LocalContext.current
@@ -492,11 +495,11 @@ private fun NotificationsPanel(
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("Tell me when channels I follow go live", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
+                    Text("Tell me when channels with a bell go live", style = MaterialTheme.typography.titleMedium, color = c.onSurface)
                     Text(
                         "PureTV asks Twitch itself, every couple of minutes while it's open and about every " +
                             "15 minutes in the background. In the background an alert may arrive a few minutes " +
-                            "late while the phone is idle. Long-press a channel on Following to mute it.",
+                            "late while the phone is idle. Alerts are per channel: open a channel and tap the bell.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = c.onSurfaceVariant,
                     )
@@ -520,20 +523,42 @@ private fun NotificationsPanel(
                 )
             }
 
-            if (mutedCount > 0) {
-                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            if (alertChannels.isEmpty()) {
+                Text(
+                    "No channels yet. Open a channel and tap the bell to get an alert when it goes live.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                )
+            } else {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Text(
-                        if (mutedCount == 1) "1 channel muted" else "$mutedCount channels muted",
+                        if (alertChannels.size == 1) "Alerts for 1 channel" else "Alerts for ${alertChannels.size} channels",
                         style = MaterialTheme.typography.titleMedium,
                         color = c.onSurface,
                         modifier = Modifier.weight(1f),
                     )
-                    ExpressiveButton(text = "Unmute all", onClick = onUnmuteAll, style = ExpressiveButtonStyle.Outlined)
+                    ExpressiveButton(text = "Turn off all", onClick = onTurnOffAll, style = ExpressiveButtonStyle.Outlined)
+                }
+                alertChannels.sorted().forEach { login ->
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(20.dp),
+                    ) {
+                        Text(login, style = MaterialTheme.typography.bodyLarge, color = c.onSurface, modifier = Modifier.weight(1f))
+                        ExpressiveButton(
+                            text = "Remove",
+                            onClick = { onRemoveChannel(login) },
+                            style = ExpressiveButtonStyle.Outlined,
+                            size = ExpressiveButtonSize.Small,
+                        )
+                    }
                 }
             }
 

@@ -56,6 +56,7 @@ import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.StreamInfo
 import com.puretv.twitch.core.model.VideoInfo
 import com.puretv.twitch.core.model.VideoType
+import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.ChannelRepository
 import com.puretv.twitch.core.repository.StreamRepository
@@ -876,8 +877,12 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(liveNotifications = enabled) }
     }
 
-    fun unmuteAllLiveNotifications() = viewModelScope.launch {
-        settingsStore.update { it.copy(notifyMutedLogins = emptySet()) }
+    fun removeAlertChannel(login: String) = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyChannels = GoLiveAlerts.toggled(it.notifyChannels, login)) }
+    }
+
+    fun turnOffAllAlertChannels() = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyChannels = emptySet()) }
     }
 
     fun logOut() = settingsStore.clearSession()
@@ -998,18 +1003,14 @@ class FollowingViewModel(
     private val _state = MutableStateFlow(FollowingUiState(isLoggedIn = sessionManager.state.value is SessionState.LoggedIn))
     val state: StateFlow<FollowingUiState> = _state.asStateFlow()
 
-    /** Lowercased logins whose go-live alerts are muted (long-press a row to change). */
-    val mutedLogins: StateFlow<Set<String>> = settingsStore.flow
-        .map { it.notifyMutedLogins }
+    /** Lowercased logins with their go-live bell on (long-press a row to change). */
+    val alertLogins: StateFlow<Set<String>> = settingsStore.flow
+        .map { it.notifyChannels }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
 
-    /** Mutes [login]'s go-live alerts, or unmutes them if they were muted. */
-    fun toggleMute(login: String) = viewModelScope.launch {
-        val key = login.lowercase()
-        settingsStore.update { s ->
-            val muted = s.notifyMutedLogins
-            s.copy(notifyMutedLogins = if (key in muted) muted - key else muted + key)
-        }
+    /** Turns [login]'s go-live alerts on, or off if they were on. */
+    fun toggleAlerts(login: String) = viewModelScope.launch {
+        settingsStore.update { GoLiveAlerts.bellTapped(it, login) }
     }
 
     // A single in-flight load. Cancel-and-replace on refresh() so a double-tapped

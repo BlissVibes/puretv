@@ -69,8 +69,8 @@ import org.koin.androidx.compose.koinViewModel
  * `FollowedChannelsSource` directly, so both sections agree with the data
  * desktop's followed rail shows.
  *
- * Long-pressing any follow offers to mute or unmute that channel's go-live
- * notifications; a muted follow says so under its name.
+ * Long-pressing any follow turns that channel's go-live alerts on or off;
+ * a channel with alerts on says so under its name.
  */
 private enum class FollowingLayout(val label: String) { GRID("Grid"), LIST("List") }
 
@@ -81,7 +81,7 @@ fun FollowingScreen(
     viewModel: FollowingViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val muted by viewModel.mutedLogins.collectAsState()
+    val alertSet by viewModel.alertLogins.collectAsState()
     val c = PureTvTheme.colors
     var layout by remember { mutableStateOf(FollowingLayout.GRID) }
     val noData = state.live.isEmpty() && state.offline.isEmpty()
@@ -142,15 +142,15 @@ fun FollowingScreen(
                                 color = c.onSurfaceVariant,
                             )
                             layout == FollowingLayout.GRID -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, muted, viewModel::toggleMute) }
+                                state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, alertSet, viewModel::toggleAlerts) }
                             }
                             else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 state.live.forEach { row ->
                                     LiveListRow(
                                         row,
                                         onClick = { onOpenStream(row.login) },
-                                        muted = row.login.lowercase() in muted,
-                                        onToggleMute = { viewModel.toggleMute(row.login) },
+                                        alerts = row.login.lowercase() in alertSet,
+                                        onToggleAlerts = { viewModel.toggleAlerts(row.login) },
                                     )
                                 }
                             }
@@ -162,7 +162,7 @@ fun FollowingScreen(
                             Spacer(Modifier.height(28.dp))
                             Text("Offline · ${state.offline.size}", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
                             Spacer(Modifier.height(12.dp))
-                            OfflineList(state.offline, onOpenStream, muted, viewModel::toggleMute)
+                            OfflineList(state.offline, onOpenStream, alertSet, viewModel::toggleAlerts)
                         }
                     }
                 }
@@ -261,16 +261,16 @@ private fun LiveSectionHeader(count: Int, layout: FollowingLayout, onLayoutChang
 private fun LiveGridRow(
     rowItems: List<FollowRow>,
     onOpenChannel: (String) -> Unit,
-    mutedLogins: Set<String>,
-    onToggleMute: (String) -> Unit,
+    alertLogins: Set<String>,
+    onToggleAlerts: (String) -> Unit,
 ) {
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         rowItems.forEach { row ->
             LiveFollowCard(
                 row,
                 onClick = { onOpenChannel(row.login) },
-                muted = row.login.lowercase() in mutedLogins,
-                onToggleMute = { onToggleMute(row.login) },
+                alerts = row.login.lowercase() in alertLogins,
+                onToggleAlerts = { onToggleAlerts(row.login) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -282,8 +282,8 @@ private fun LiveGridRow(
 private fun LiveFollowCard(
     row: FollowRow,
     onClick: () -> Unit,
-    muted: Boolean,
-    onToggleMute: () -> Unit,
+    alerts: Boolean,
+    onToggleAlerts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
@@ -312,16 +312,16 @@ private fun LiveFollowCard(
                 if (row.gameName.isNotBlank()) {
                     Text(row.gameName, style = MaterialTheme.typography.bodySmall, color = c.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                if (muted) MutedLabel()
+                if (alerts) AlertsLabel()
             }
-            AlertsMenu(open = menuOpen, muted = muted, onDismiss = { menuOpen = false }, onToggle = onToggleMute)
+            AlertsMenu(open = menuOpen, alerts = alerts, onDismiss = { menuOpen = false }, onToggle = onToggleAlerts)
         }
     }
 }
 
 /** The List-mode alternative to [LiveFollowCard]: a full-width row, same facts, denser. */
 @Composable
-private fun LiveListRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onToggleMute: () -> Unit) {
+private fun LiveListRow(row: FollowRow, onClick: () -> Unit, alerts: Boolean, onToggleAlerts: () -> Unit) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
@@ -357,8 +357,8 @@ private fun LiveListRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onT
                 Text(row.gameName, style = MaterialTheme.typography.bodySmall, color = c.primary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Text("${formatViewerCount(row.viewerCount.toLong())} watching", style = PureTvType.dataSmall, color = c.onSurfaceVariant)
-            if (muted) MutedLabel()
-            AlertsMenu(open = menuOpen, muted = muted, onDismiss = { menuOpen = false }, onToggle = onToggleMute)
+            if (alerts) AlertsLabel()
+            AlertsMenu(open = menuOpen, alerts = alerts, onDismiss = { menuOpen = false }, onToggle = onToggleAlerts)
         }
     }
 }
@@ -368,8 +368,8 @@ private fun LiveListRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onT
 private fun OfflineList(
     rows: List<FollowRow>,
     onOpenChannel: (String) -> Unit,
-    mutedLogins: Set<String>,
-    onToggleMute: (String) -> Unit,
+    alertLogins: Set<String>,
+    onToggleAlerts: (String) -> Unit,
 ) {
     val c = PureTvTheme.colors
     Column(
@@ -382,8 +382,8 @@ private fun OfflineList(
             OfflineRow(
                 row,
                 onClick = { onOpenChannel(row.login) },
-                muted = row.login.lowercase() in mutedLogins,
-                onToggleMute = { onToggleMute(row.login) },
+                alerts = row.login.lowercase() in alertLogins,
+                onToggleAlerts = { onToggleAlerts(row.login) },
             )
         }
     }
@@ -392,12 +392,11 @@ private fun OfflineList(
 /**
  * FollowRow has no last-seen or last-played field for an offline channel
  * (gameName is only ever populated from a live stream), so this row carries
- * just the name, not an invented secondary line. Go-live alerts are on for
- * every follow by default, so there is no "Notify me" button to add; a
- * long-press mutes or unmutes this channel instead, like every other row.
+ * just the name, not an invented secondary line. A long-press turns this channel's
+ * go-live alerts on or off, like every other row.
  */
 @Composable
-private fun OfflineRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onToggleMute: () -> Unit) {
+private fun OfflineRow(row: FollowRow, onClick: () -> Unit, alerts: Boolean, onToggleAlerts: () -> Unit) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
     var menuOpen by remember { mutableStateOf(false) }
@@ -424,8 +423,8 @@ private fun OfflineRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onTo
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (muted) MutedLabel()
-            AlertsMenu(open = menuOpen, muted = muted, onDismiss = { menuOpen = false }, onToggle = onToggleMute)
+            if (alerts) AlertsLabel()
+            AlertsMenu(open = menuOpen, alerts = alerts, onDismiss = { menuOpen = false }, onToggle = onToggleAlerts)
         }
         ExpressiveButton(
             text = "View channel",
@@ -436,15 +435,15 @@ private fun OfflineRow(row: FollowRow, onClick: () -> Unit, muted: Boolean, onTo
     }
 }
 
-/** The long-press menu on a follow: mute or unmute that channel's go-live notifications. */
+/** The long-press menu on a follow: turn that channel's go-live alerts on or off. */
 @Composable
-private fun AlertsMenu(open: Boolean, muted: Boolean, onDismiss: () -> Unit, onToggle: () -> Unit) {
+private fun AlertsMenu(open: Boolean, alerts: Boolean, onDismiss: () -> Unit, onToggle: () -> Unit) {
     val c = PureTvTheme.colors
     DropdownMenu(expanded = open, onDismissRequest = onDismiss, containerColor = c.surfaceHigh) {
         DropdownMenuItem(
             text = {
                 Text(
-                    if (muted) "Unmute go-live alerts" else "Mute go-live alerts",
+                    if (alerts) "Turn off go-live alerts" else "Tell me when they go live",
                     style = MaterialTheme.typography.bodyLarge,
                     color = c.onSurface,
                 )
@@ -458,8 +457,8 @@ private fun AlertsMenu(open: Boolean, muted: Boolean, onDismiss: () -> Unit, onT
 }
 
 @Composable
-private fun MutedLabel() {
-    Text("Go-live alerts muted", style = MaterialTheme.typography.bodySmall, color = PureTvTheme.colors.onSurfaceVariant, maxLines = 1)
+private fun AlertsLabel() {
+    Text("Go-live alerts on", style = MaterialTheme.typography.bodySmall, color = PureTvTheme.colors.onSurfaceVariant, maxLines = 1)
 }
 
 /** Circular avatar with an initial-letter fallback for a blank/unresolved [imageUrl]. */

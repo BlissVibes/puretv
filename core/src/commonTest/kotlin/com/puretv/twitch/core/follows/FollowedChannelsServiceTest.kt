@@ -327,15 +327,15 @@ class FollowedChannelsServiceTest {
         val api = TwitchApiClient(followedStreamsClient(counts)) { "token" }
         val monitor = com.puretv.twitch.core.notify.LiveFollowsMonitor(
             fetchLive = { api.getFollowedStreams(it) },
+            fetchWatched = { emptyList() },
             store = com.puretv.twitch.core.notify.InMemoryLiveNotifyStateStore(),
             settings = { com.puretv.twitch.core.model.AppSettings() },
-            userId = { "user123" },
             clock = { testScheduler.currentTime },
             onGoLive = {},
         )
         val service = FollowedChannelsService(api, followedLive = { monitor.followedLive(it) })
 
-        monitor.pollNow()
+        monitor.followedLive("user123")
         val result = service.load("user123", localPins = emptyList()) {}
 
         assertEquals(setOf("c0", "c1", "c2"), result.live.map { it.login }.toSet())

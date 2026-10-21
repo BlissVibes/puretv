@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.core.model.PlaybackBackend
+import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
@@ -140,8 +141,13 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onStartWithWindows = { on ->
                 if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
             },
-            mutedChannels = state.settings.notifyMutedLogins,
-            onUnmuteAll = { settingsStore.updateSettings { it.copy(notifyMutedLogins = emptySet()) } },
+            showNote = GoLiveAlerts.showPerChannelNote(state.settings),
+            onDismissNote = { settingsStore.updateSettings { it.copy(perChannelNoteDismissed = true) } },
+            alertChannels = state.settings.notifyChannels,
+            onRemoveChannel = { login ->
+                settingsStore.updateSettings { it.copy(notifyChannels = GoLiveAlerts.toggled(it.notifyChannels, login)) }
+            },
+            onTurnOffAll = { settingsStore.updateSettings { it.copy(notifyChannels = emptySet()) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -427,8 +433,11 @@ private fun NotificationsPanel(
     onCloseToTray: (Boolean) -> Unit,
     startWithWindows: Boolean,
     onStartWithWindows: (Boolean) -> Unit,
-    mutedChannels: Set<String>,
-    onUnmuteAll: () -> Unit,
+    showNote: Boolean,
+    onDismissNote: () -> Unit,
+    alertChannels: Set<String>,
+    onRemoveChannel: (String) -> Unit,
+    onTurnOffAll: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     val trayAvailable = remember { isTraySupported }
@@ -437,6 +446,17 @@ private fun NotificationsPanel(
         Column {
             Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
             Spacer(Modifier.height(20.dp))
+            if (showNote) {
+                SettingsRow(label = "Alerts are now per channel", description = "Open a channel and tap the bell.") {
+                    ExpressiveButton(
+                        text = "Got it",
+                        onClick = onDismissNote,
+                        style = ExpressiveButtonStyle.Outlined,
+                        size = ExpressiveButtonSize.Small,
+                    )
+                }
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            }
             if (!trayAvailable) {
                 Text(
                     "Go-live alerts need the Windows system tray, which is not available here.",
@@ -447,7 +467,7 @@ private fun NotificationsPanel(
             }
             SettingsRow(
                 label = "Go-live alerts",
-                description = "Tell me when channels I follow go live. Checks about every 90 seconds while PureTV is running.",
+                description = "Tell me when the channels I picked go live. Open a channel and tap the bell to pick it. Checks about every 90 seconds while PureTV is running.",
             ) {
                 ExpressiveSwitch(checked = liveAlerts, onCheckedChange = onLiveAlerts)
             }
@@ -469,18 +489,34 @@ private fun NotificationsPanel(
             ) {
                 if (startupAvailable) ExpressiveSwitch(checked = startWithWindows, onCheckedChange = onStartWithWindows)
             }
-            if (mutedChannels.isNotEmpty()) {
-                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            if (alertChannels.isEmpty()) {
                 SettingsRow(
-                    label = "Muted channels",
-                    description = "No alerts for ${mutedChannels.sorted().joinToString(", ")}.",
+                    label = "Channels with alerts",
+                    description = "None yet. Alerts are per channel: open a channel and tap the bell.",
+                ) {}
+            } else {
+                SettingsRow(
+                    label = "Channels with alerts",
+                    description = "You are told when these go live.",
                 ) {
                     ExpressiveButton(
-                        text = "Unmute all",
-                        onClick = onUnmuteAll,
+                        text = "Turn off all",
+                        onClick = onTurnOffAll,
                         style = ExpressiveButtonStyle.Outlined,
                         size = ExpressiveButtonSize.Small,
                     )
+                }
+                alertChannels.sorted().forEach { login ->
+                    Spacer(Modifier.height(12.dp))
+                    SettingsRow(label = login, description = "Alerts on") {
+                        ExpressiveButton(
+                            text = "Remove",
+                            onClick = { onRemoveChannel(login) },
+                            style = ExpressiveButtonStyle.Outlined,
+                            size = ExpressiveButtonSize.Small,
+                        )
+                    }
                 }
             }
         }

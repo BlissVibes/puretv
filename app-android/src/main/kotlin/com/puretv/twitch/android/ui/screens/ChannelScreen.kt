@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.puretv.twitch.android.ui.ChannelUiState
 import com.puretv.twitch.android.ui.ChannelViewModel
+import com.puretv.twitch.android.ui.components.AlertBell
 import com.puretv.twitch.android.ui.components.ErrorState
 import com.puretv.twitch.android.ui.components.ExpressiveButton
 import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
@@ -57,6 +58,7 @@ import com.puretv.twitch.android.ui.components.ExpressivePanel
 import com.puretv.twitch.android.ui.components.FullScreenLoading
 import com.puretv.twitch.android.ui.components.LivePill
 import com.puretv.twitch.android.ui.components.formatViewerCount
+import com.puretv.twitch.android.ui.components.rememberAlertBell
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import org.koin.androidx.compose.koinViewModel
@@ -132,6 +134,7 @@ private fun ChannelBody(
     val c = PureTvTheme.colors
     val channel = state.channel
     val displayName = channel?.displayName ?: channelLogin
+    val bell = rememberAlertBell(channelLogin, displayName)
     // Prefer the channel's offline banner; fall back to the profile portrait so
     // the header is never a flat placeholder square.
     val bannerUrl = channel?.offlineImageUrl?.takeIf { it.isNotBlank() }
@@ -166,7 +169,7 @@ private fun ChannelBody(
         }
 
         Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-            IdentityBlock(displayName = displayName, state = state, onWatch = onWatch)
+            IdentityBlock(displayName = displayName, state = state, bell = bell, onWatch = onWatch)
             Spacer(Modifier.height(24.dp))
             AboutPanel(channel?.description)
             Spacer(Modifier.height(24.dp))
@@ -181,7 +184,7 @@ private fun ChannelBody(
  * shifted up as one block so the avatar straddles the banner's bottom edge.
  */
 @Composable
-private fun IdentityBlock(displayName: String, state: ChannelUiState, onWatch: () -> Unit) {
+private fun IdentityBlock(displayName: String, state: ChannelUiState, bell: AlertBell, onWatch: () -> Unit) {
     val c = PureTvTheme.colors
     val channel = state.channel
     val liveStream = state.liveStream
@@ -240,6 +243,19 @@ private fun IdentityBlock(displayName: String, state: ChannelUiState, onWatch: (
             enabled = state.isLive,
             modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(Modifier.height(10.dp))
+        ExpressiveButton(
+            text = if (bell.on) "Alerts on" else "Notify me when live",
+            onClick = bell.toggle,
+            style = if (bell.on) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Outlined,
+            size = ExpressiveButtonSize.Large,
+            icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        bell.message?.let { message ->
+            Spacer(Modifier.height(8.dp))
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = c.primary)
+        }
     }
 }
 

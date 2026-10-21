@@ -16,14 +16,19 @@ release notes automatically.
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
 ### New
-- **Know when your channels go live.** PureTV tells you when a channel you
-  follow starts streaming: a Windows notification from the tray, a phone
-  notification you can tap to start watching, or a banner in the corner on
-  TV while PureTV is open (it never moves your selection). PureTV asks Twitch
-  itself; nothing goes through a push service or anyone else's server. On the
-  phone, alerts while PureTV is in the background may arrive a few minutes
-  late when the phone is idle. Long-press a channel on Following
-  (right-click on Windows) to mute it, or turn alerts off in Settings.
+- **Know when the channels you pick go live.** Open any channel, followed or
+  not, and tap the bell. PureTV then tells you when that channel starts
+  streaming: a Windows notification from the tray, a phone notification you
+  can tap to start watching, or a banner in the corner on TV while PureTV is
+  open (it never moves your selection). Alerts are per channel, so nothing
+  fires for channels you did not pick. The bell is also on the watch screen,
+  and on Following you can long-press a channel (right-click on Windows, Menu
+  on TV) to switch its bell. Settings lists your channels with a way to
+  remove them or turn them all off. PureTV asks Twitch itself; nothing goes
+  through a push service or anyone else's server. On the phone, alerts while
+  PureTV is in the background may arrive a few minutes late when the phone is
+  idle. If you tried the earlier version that alerted for everyone you follow,
+  alerts are now silent until you pick channels.
 - **Low latency.** Streams now play several seconds closer to live, so what
   you see keeps up with chat. It's on for Windows and phone. On TV it's off
   to start with, because TV sticks on Wi-Fi are more likely to pause and
@@ -121,7 +126,6 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 
 - **Multi-stream grows up (Windows).** The sleep timer now follows you into multi-stream and stops every tile.
   Up, Down and M change the volume and mute of the tile you are listening to, and Ctrl with Left or Right moves a tile.
-- **Mute a channel's go-live banner on TV.** Press Menu on a channel in Following. Muted channels are listed in Settings.
 - **Badges and Twitch emotes before you sign in.** Chat shows Twitch's own badges and most emotes even when signed out.
 - **Show badges** can now be switched off on phone and TV, and a text chip still shows for any badge picture that did not load.
 - **7TV names stay readable.** Very dark or very light name colours are nudged so they can be read on the chat background.

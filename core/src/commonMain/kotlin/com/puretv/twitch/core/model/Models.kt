@@ -255,11 +255,17 @@ data class AppSettings(
     // rendition instead of video nobody sees. Android phone only.
     val audioOnlyInBackground: Boolean = true,
 
-    // Go-live alerts for followed channels. Windows shows a tray notification,
-    // the phone a system notification, TV an in-app banner. Muted logins are
-    // lowercased.
+    // Go-live alerts, per channel. Windows shows a tray notification, the phone a
+    // system notification, TV an in-app banner. liveNotifications is the global
+    // on/off; notifyChannels holds the lowercased logins the viewer turned the bell
+    // on for (any channel, followed or not), and only those are ever announced.
+    // notifyMutedLogins is from the old everyone-you-follow model and is no longer
+    // read; it stays so older settings files still load.
     val liveNotifications: Boolean = true,
     val notifyMutedLogins: Set<String> = emptySet(),
+    val notifyChannels: Set<String> = emptySet(),
+    // The "alerts are now per channel" note in Settings was dismissed.
+    val perChannelNoteDismissed: Boolean = false,
     // Windows only: closing the window hides it to the tray instead of quitting,
     // and PureTV can start hidden in the tray when Windows starts. Both off by
     // default: the close button quits, as it always has.

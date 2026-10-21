@@ -127,6 +127,8 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
+import com.puretv.twitch.desktop.ui.components.AlertBell
+import com.puretv.twitch.desktop.ui.components.rememberAlertBell
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
 import com.puretv.twitch.desktop.ui.components.LivePill
@@ -216,6 +218,7 @@ fun StreamContent(
     }.collectAsState(initial = vlcPlayer.status.value.copy(positionMs = 0L, durationMs = 0L))
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
     val appSettings by settingsStore.settings.collectAsState()
+    val bell = rememberAlertBell(settingsStore, channelLogin, state.channel?.displayName ?: channelLogin)
     val shell = LocalAppShell.current
     val mode = shell.playerMode
     val mini = mode == PlayerMode.MINI
@@ -295,7 +298,18 @@ fun StreamContent(
     // The new channel is on screen: the banner has done its job.
     LaunchedEffect(channelLogin) { flipTarget = null }
 
+    // The alert timer polls only the channels with a bell, so the live follows come
+    // from the followed feed (shared for 30 seconds with the rail) when the viewer
+    // reaches for a flip; the ring uses the previous answer and the next press this one.
+    fun refreshFollows() {
+        val userId = settingsStore.sessionUserId
+        if (!settingsStore.isLoggedIn || userId.isNullOrBlank()) return
+        scope.launch { runCatching { liveFollows.followedLive(userId) } }
+    }
+    LaunchedEffect(channelLogin) { refreshFollows() }
+
     fun flip(direction: FlipDirection) {
+        refreshFollows()
         val follows = if (settingsStore.isLoggedIn) liveFollows.liveNow.value.map { it.userLogin } else null
         val ring = ChannelFlip.ringFor(latestChannel, follows, flipOrigin.logins)
         val target = pendingFlip.press(ring, latestChannel, direction, System.currentTimeMillis())
@@ -501,6 +515,7 @@ fun StreamContent(
                         isFollowed = isFollowed,
                         canFollow = state.channel != null,
                         onToggleFollow = viewModel::toggleFollow,
+                        bell = bell,
                         onBack = onBack,
                         onOpenMultiView = onOpenMultiView,
                         radius = panelRadius,
@@ -761,6 +776,7 @@ private fun TopBar(
     isFollowed: Boolean,
     canFollow: Boolean,
     onToggleFollow: () -> Unit,
+    bell: AlertBell,
     onBack: () -> Unit,
     onOpenMultiView: () -> Unit,
     radius: Dp,
@@ -803,6 +819,13 @@ private fun TopBar(
             }
         }
         AdBlockPill(adBlockStatus)
+        bell.message?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = c.primary, maxLines = 1) }
+        ExpressiveIconButton(
+            icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
+            contentDescription = if (bell.on) "Turn off go-live alerts" else "Tell me when this channel goes live",
+            onClick = bell.toggle,
+            tint = if (bell.on) c.primary else null,
+        )
         ExpressiveButton(
             text = "Watch with another channel",
             onClick = onOpenMultiView,

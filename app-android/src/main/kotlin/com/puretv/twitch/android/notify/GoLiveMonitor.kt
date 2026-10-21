@@ -43,20 +43,21 @@ class GoLiveMonitor(
 
     /**
      * Runs for the life of the process (started by PureTvApp). The poll loop exists
-     * only while alerts are on, someone is signed in and the app is visible;
-     * collectLatest cancels it the moment any of those stops being true.
+     * only while alerts are on, someone is signed in, a channel has its bell on and
+     * the app is visible; collectLatest cancels it the moment any of those stops
+     * being true. A changed channel list restarts it, which polls at once.
      */
     fun start(scope: CoroutineScope): Job = scope.launch {
         val wanted = settingsStore.value.flow
-            .map { it.liveNotifications && it.accessToken.isNotBlank() && it.userId.isNotBlank() }
+            .map { (it.liveNotifications && it.accessToken.isNotBlank() && it.notifyChannels.isNotEmpty()) to it.notifyChannels }
             .distinctUntilChanged()
-        combine(wanted, visible) { on, onScreen -> on && onScreen }
+        combine(wanted, visible) { (on, channels), onScreen -> (on && onScreen) to channels }
             .distinctUntilChanged()
-            .collectLatest { active -> if (active) monitor.value.pollEvery(IN_APP_INTERVAL_MS) }
+            .collectLatest { (active, _) -> if (active) monitor.value.pollEvery(IN_APP_INTERVAL_MS) }
     }
 
     companion object {
-        /** In-app cadence: one small Helix call, so an alert lands within about two minutes. */
+        /** In-app cadence: one small batched call, so an alert lands within about two minutes. */
         const val IN_APP_INTERVAL_MS = 120_000L
     }
 }

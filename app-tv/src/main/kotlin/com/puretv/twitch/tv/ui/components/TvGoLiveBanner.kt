@@ -109,7 +109,7 @@ private fun BannerCard(banner: GoLiveBanner) {
             )
         }
         Text(
-            "Find it in Following",
+            "Find it in Following or Search",
             style = MaterialTheme.typography.bodyMedium,
             color = c.onSurfaceVariant,
             maxLines = 1,

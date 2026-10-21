@@ -89,7 +89,7 @@ fun TvFollowingScreen(
     viewModel: TvFollowingViewModel = koinViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val muted by viewModel.mutedLogins.collectAsState()
+    val alertSet by viewModel.alertLogins.collectAsState()
     val c = PureTvTvTheme.colors
     val drawerFocusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
@@ -168,7 +168,7 @@ fun TvFollowingScreen(
             TvPageTitle("Following")
             if (state.isLoggedIn && !noData) {
                 Text(
-                    "Press Menu on a channel to mute or unmute its go-live banner.",
+                    "Press Menu on a channel to turn its go-live banner on or off.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.onSurfaceVariant,
                 )
@@ -204,8 +204,8 @@ fun TvFollowingScreen(
                     if (state.live.isNotEmpty()) {
                         LiveSection(
                             rows = state.live,
-                            muted = muted,
-                            onToggleMute = viewModel::toggleMute,
+                            alerts = alertSet,
+                            onToggleAlerts = viewModel::toggleAlerts,
                             onOpenChannel = onOpenChannel,
                             firstCardFocusRequester = firstFocusRequester,
                         )
@@ -213,8 +213,8 @@ fun TvFollowingScreen(
                     if (state.offline.isNotEmpty()) {
                         OfflineSection(
                             rows = state.offline,
-                            muted = muted,
-                            onToggleMute = viewModel::toggleMute,
+                            alerts = alertSet,
+                            onToggleAlerts = viewModel::toggleAlerts,
                             onOpenChannel = onOpenChannel,
                             firstRowFocusRequester = if (state.live.isEmpty()) firstFocusRequester else null,
                         )
@@ -283,8 +283,8 @@ private fun ErrorBlock(reason: String?, onRetry: () -> Unit, focusRequester: Foc
 @Composable
 private fun LiveSection(
     rows: List<FollowRow>,
-    muted: Set<String>,
-    onToggleMute: (String) -> Unit,
+    alerts: Set<String>,
+    onToggleAlerts: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
     firstCardFocusRequester: FocusRequester?,
 ) {
@@ -299,8 +299,8 @@ private fun LiveSection(
                 TvFollowLiveCard(
                     row = row,
                     onClick = { onOpenChannel(row.login) },
-                    muted = row.login.lowercase() in muted,
-                    onToggleMute = { onToggleMute(row.login) },
+                    alerts = row.login.lowercase() in alerts,
+                    onToggleAlerts = { onToggleAlerts(row.login) },
                     modifier = if (index == 0 && firstCardFocusRequester != null) {
                         Modifier.focusRequester(firstCardFocusRequester)
                     } else {
@@ -322,8 +322,8 @@ private fun LiveSection(
 private fun TvFollowLiveCard(
     row: FollowRow,
     onClick: () -> Unit,
-    muted: Boolean,
-    onToggleMute: () -> Unit,
+    alerts: Boolean,
+    onToggleAlerts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTvTheme.colors
@@ -334,7 +334,7 @@ private fun TvFollowLiveCard(
         modifier = modifier
             .padding(6.dp)
             .width(220.dp)
-            .onMenuKey(onToggleMute)
+            .onMenuKey(onToggleAlerts)
             .prewarmStreamOnFocus(row.login, live = row.isLive)
             .tvFocusClickable(
                 interaction = interaction,
@@ -387,8 +387,8 @@ private fun TvFollowLiveCard(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            if (muted) {
-                Text("Banner muted", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, maxLines = 1)
+            if (alerts) {
+                Text("Go-live banner on", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant, maxLines = 1)
             }
         }
     }
@@ -398,8 +398,8 @@ private fun TvFollowLiveCard(
 @Composable
 private fun OfflineSection(
     rows: List<FollowRow>,
-    muted: Set<String>,
-    onToggleMute: (String) -> Unit,
+    alerts: Set<String>,
+    onToggleAlerts: (String) -> Unit,
     onOpenChannel: (String) -> Unit,
     firstRowFocusRequester: FocusRequester?,
 ) {
@@ -416,8 +416,8 @@ private fun OfflineSection(
                 TvFollowOfflineRow(
                     row = row,
                     onClick = { onOpenChannel(row.login) },
-                    muted = row.login.lowercase() in muted,
-                    onToggleMute = { onToggleMute(row.login) },
+                    alerts = row.login.lowercase() in alerts,
+                    onToggleAlerts = { onToggleAlerts(row.login) },
                     modifier = if (index == 0 && firstRowFocusRequester != null) {
                         Modifier.focusRequester(firstRowFocusRequester)
                     } else {
@@ -440,8 +440,8 @@ private fun OfflineSection(
 private fun TvFollowOfflineRow(
     row: FollowRow,
     onClick: () -> Unit,
-    muted: Boolean,
-    onToggleMute: () -> Unit,
+    alerts: Boolean,
+    onToggleAlerts: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTvTheme.colors
@@ -454,7 +454,7 @@ private fun TvFollowOfflineRow(
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         modifier = modifier
             .fillMaxWidth()
-            .onMenuKey(onToggleMute)
+            .onMenuKey(onToggleAlerts)
             .tvFocusClickable(
                 interaction = interaction,
                 onClick = onClick,
@@ -476,7 +476,7 @@ private fun TvFollowOfflineRow(
             modifier = Modifier.weight(1f),
         )
         Text(
-            text = if (muted) "Banner muted · Offline" else "Offline",
+            text = if (alerts) "Go-live banner on · Offline" else "Offline",
             style = PureTvTvType.data,
             color = if (focused) c.onPrimary else c.onSurfaceVariant,
         )

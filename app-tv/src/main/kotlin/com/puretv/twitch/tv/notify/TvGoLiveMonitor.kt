@@ -51,18 +51,21 @@ class TvGoLiveMonitor(
         banners.offer(streams, watchingLogin)
     }
 
-    /** Polls while banners are on and someone is signed in; collectLatest stops it when either changes. */
+    /**
+     * Polls while banners are on and a channel has its bell on (signed in or not);
+     * collectLatest stops it when either changes, and a changed list polls at once.
+     */
     fun start() {
         job?.cancel()
         job = scope.launch {
             settingsStore.value.flow
-                .map { it.liveNotifications && it.accessToken.isNotBlank() && it.userId.isNotBlank() }
+                .map { (it.liveNotifications && it.notifyChannels.isNotEmpty()) to it.notifyChannels }
                 .distinctUntilChanged()
-                .collectLatest { active ->
+                .collectLatest { (active, _) ->
                     if (active) {
                         monitor.value.pollEvery(POLL_INTERVAL_MS)
                     } else {
-                        // Banners switched off or signed out: the first poll after they
+                        // Banners switched off or no channels: the first poll after they
                         // resume seeds silently instead of announcing a backlog.
                         monitor.value.alertsStopped()
                     }
@@ -80,7 +83,7 @@ class TvGoLiveMonitor(
     private companion object {
         const val TAG = "TvGoLiveMonitor"
 
-        /** One small Helix call, so a banner appears within about two minutes. */
+        /** One small batched call, so a banner appears within about two minutes. */
         const val POLL_INTERVAL_MS = 120_000L
     }
 }

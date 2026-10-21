@@ -90,13 +90,17 @@ val tvModule = module {
         val settings = get<AppSettingsStore>()
         val refresher = get<TokenRefresher>()
         val banners = get<TvGoLiveMonitor>()
+        val streamRepo = get<com.puretv.twitch.core.repository.StreamRepository>()
         LiveFollowsMonitor(
             fetchLive = { userId ->
                 retryOnceIfUnauthorized(renew = { refresher.refreshIfPossible() }) { api.getFollowedStreams(userId) }
             },
+            // By login, so it covers channels the viewer does not follow and works signed out.
+            fetchWatched = { logins ->
+                retryOnceIfUnauthorized(renew = { refresher.refreshIfPossible() }) { streamRepo.streamsForChannels(logins) }
+            },
             store = get<DataStoreLiveNotifyStore>(),
             settings = { settings.flow.first() },
-            userId = { settings.flow.first().let { if (it.accessToken.isNotBlank()) it.userId else null } },
             clock = System::currentTimeMillis,
             onGoLive = { streams -> banners.announce(streams) },
         )

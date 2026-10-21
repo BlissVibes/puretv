@@ -33,7 +33,7 @@ class GoLiveTextTest {
 
     @Test fun manyAreSummarised() {
         val text = GoLiveText.forBatch(listOf(s("A"), s("B"), s("C"), s("D"), s("E")))
-        assertEquals("5 channels you follow went live", text.title)
+        assertEquals("5 channels went live", text.title)
         assertEquals("A, B, C and 2 more", text.body)
     }
 

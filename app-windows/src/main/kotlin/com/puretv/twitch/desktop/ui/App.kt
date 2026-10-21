@@ -85,6 +85,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.screens.BrowseContent
 import com.puretv.twitch.desktop.ui.screens.CategoryContent
 import com.puretv.twitch.desktop.ui.screens.ChannelContent
+import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.ui.screens.FollowingContent
 import com.puretv.twitch.desktop.ui.screens.HomeContent
@@ -187,10 +188,9 @@ fun App(
     var updateDismissed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { updateManager.checkForUpdates() }
 
-    // The one-time tray offer (closing still quits by default): only to someone signed
-    // in with alerts on, since that is who loses alerts by closing the window.
-    val signedIn by settingsStore.loggedInState.collectAsState()
-    val showTrayHint = isTraySupported && signedIn && settings.liveNotifications &&
+    // The one-time tray offer (closing still quits by default): only to someone with
+    // alerts on for at least one channel, since that is who loses alerts by closing the window.
+    val showTrayHint = isTraySupported && settings.liveNotifications && settings.notifyChannels.isNotEmpty() &&
         !settings.closeToTray && !settings.trayHintShown
 
     // The Windows animation-effects switch decides whether things move. Read at start and again
@@ -842,12 +842,9 @@ private fun NavigationRail(
                 onToggleOffline = { railVm.toggleOffline() },
                 onOpenChannel = onOpenChannel,
                 onSignIn = onSignIn,
-                mutedLogins = railSettings.notifyMutedLogins,
-                onToggleMute = { login ->
-                    val key = login.lowercase()
-                    railSettingsStore.updateSettings {
-                        it.copy(notifyMutedLogins = if (key in it.notifyMutedLogins) it.notifyMutedLogins - key else it.notifyMutedLogins + key)
-                    }
+                alertLogins = railSettings.notifyChannels,
+                onToggleAlerts = { login ->
+                    railSettingsStore.updateSettings { GoLiveAlerts.bellTapped(it, login) }
                 },
                 modifier = Modifier.weight(1f).fillMaxWidth().padding(top = 20.dp),
             )

@@ -140,19 +140,20 @@ class PureTvApp : Application(), SingletonImageLoader.Factory {
 
         // Go-live alerts. The notification channel exists from the first run so the
         // viewer can find it in Android settings; the background worker is scheduled
-        // only while alerts are on and someone is signed in, and cancelled
-        // otherwise; the in-app timer runs while the app is on screen. All three
-        // are local: nothing is pushed to the phone, PureTV asks Twitch itself.
+        // only while alerts are on, someone is signed in and at least one channel has
+        // its bell on, and cancelled otherwise (no channels, no background wake-ups);
+        // the in-app timer runs while the app is on screen. All three are local:
+        // nothing is pushed to the phone, PureTV asks Twitch itself.
         appScope.launch {
             koinApp.koin.get<GoLiveNotifications>().ensureChannel()
         }
         appScope.launch {
             koinApp.koin.get<AppSettingsStore>().flow
-                .map { it.liveNotifications && it.accessToken.isNotBlank() }
+                .map { it.liveNotifications && it.accessToken.isNotBlank() && it.notifyChannels.isNotEmpty() }
                 .distinctUntilChanged()
                 .collect { wanted ->
                     GoLiveScheduler.sync(this@PureTvApp, wanted)
-                    // Alerts stopped (switched off, signed out): the first poll after
+                    // Alerts stopped (switched off, signed out, no channels): the first poll after
                     // they resume seeds silently instead of announcing a backlog.
                     if (!wanted) runCatching { koinApp.koin.get<LiveFollowsMonitor>().alertsStopped() }
                 }

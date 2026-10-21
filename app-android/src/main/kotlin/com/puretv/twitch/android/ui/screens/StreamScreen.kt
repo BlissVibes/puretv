@@ -78,11 +78,13 @@ import com.puretv.twitch.android.ui.components.ChatPanel
 import com.puretv.twitch.android.ui.components.ExpressiveButton
 import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
+import com.puretv.twitch.android.ui.components.ExpressiveIconButton
 import com.puretv.twitch.android.ui.components.ExpressiveIcons
 import com.puretv.twitch.android.ui.components.LivePill
 import com.puretv.twitch.android.ui.components.expressiveClickable
 import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.theme.PureTvMotion
+import com.puretv.twitch.android.ui.components.rememberAlertBell
 import com.puretv.twitch.android.ui.theme.PureTvTheme
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.core.model.StreamQuality
@@ -278,13 +280,15 @@ private fun BackgroundPlayNotificationPermission() {
 
 /**
  * Avatar, name, category and viewer count, mirroring the desktop watch page's
- * top bar. No follow action here: unlike desktop's `StreamViewModel`, the
- * Android one exposes no `isFollowed`/`toggleFollow`, so a follow button would
- * be chrome with nothing behind it. Left out rather than faked.
+ * top bar, plus the go-live bell so alerts can be turned on while watching. No
+ * follow action here: unlike desktop's `StreamViewModel`, the Android one exposes
+ * no `isFollowed`/`toggleFollow`, so a follow button would be chrome with nothing
+ * behind it. Left out rather than faked.
  */
 @Composable
 private fun ChannelHeaderRow(channel: com.puretv.twitch.core.model.ChannelInfo, streamInfo: com.puretv.twitch.core.model.StreamInfo?) {
     val c = PureTvTheme.colors
+    val bell = rememberAlertBell(channel.login, channel.displayName)
     Row(
         modifier = Modifier.fillMaxWidth().padding(12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -314,7 +318,14 @@ private fun ChannelHeaderRow(channel: com.puretv.twitch.core.model.ChannelInfo, 
                     overflow = TextOverflow.Ellipsis,
                 )
             }
+            bell.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = c.primary, maxLines = 2) }
         }
+        ExpressiveIconButton(
+            icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
+            contentDescription = if (bell.on) "Turn off go-live alerts" else "Tell me when this channel goes live",
+            onClick = bell.toggle,
+            tint = if (bell.on) c.primary else null,
+        )
     }
 }
 

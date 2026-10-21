@@ -37,8 +37,8 @@ fun rememberNotificationPermissionRequest(onResult: (Boolean) -> Unit = {}): () 
 }
 
 /**
- * Go-live alerts are on by default, so signing in (or opening the app signed in)
- * with them on asks for the permission they need. Nothing waits on the answer, and
+ * Go-live alerts need the permission once a channel has its bell on, so opening the
+ * app signed in with any alerts set up asks for the permission they need. Nothing waits on the answer, and
  * Android itself stops showing the prompt once the viewer has declined it twice;
  * Settings keeps the switch and a way to the system settings after that.
  */
@@ -51,7 +51,9 @@ fun AskForGoLiveNotifications() {
         if (!needsNotificationPermission(context)) return@LaunchedEffect
         // Off the main thread: resolving the settings store opens the encrypted prefs.
         val wanted = runCatching {
-            withContext(Dispatchers.IO) { koin.get<AppSettingsStore>().flow.first().liveNotifications }
+            withContext(Dispatchers.IO) {
+                koin.get<AppSettingsStore>().flow.first().let { it.liveNotifications && it.notifyChannels.isNotEmpty() }
+            }
         }.getOrDefault(false)
         if (wanted) request()
     }

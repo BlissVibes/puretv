@@ -76,6 +76,10 @@ class AppSettingsStore(
 
         // Remote control (Wave 4).
         val TV_REMOTE_FLIP = booleanPreferencesKey("tv_remote_flip")
+
+        // Per-channel go-live alerts: the channels the viewer turned the bell on for.
+        val NOTIFY_CHANNELS = stringSetPreferencesKey("notify_channels")
+        val PER_CHANNEL_NOTE_DISMISSED = booleanPreferencesKey("per_channel_note_dismissed")
     }
 
     private data class TokenSnapshot(val accessToken: String, val username: String, val userId: String)
@@ -120,6 +124,9 @@ class AppSettingsStore(
             audioNormalizer = prefs[Keys.AUDIO_NORMALIZER] ?: AppSettings().audioNormalizer,
             // Remote control (Wave 4).
             tvRemoteFlip = prefs[Keys.TV_REMOTE_FLIP] ?: AppSettings().tvRemoteFlip,
+            // Per-channel go-live alerts.
+            notifyChannels = prefs[Keys.NOTIFY_CHANNELS] ?: emptySet(),
+            perChannelNoteDismissed = prefs[Keys.PER_CHANNEL_NOTE_DISMISSED] ?: false,
         )
     }
         // The corruption handler above covers a file DataStore can parse but not
@@ -172,6 +179,9 @@ class AppSettingsStore(
             prefs[Keys.AUDIO_NORMALIZER] = next.audioNormalizer
             // Remote control (Wave 4).
             prefs[Keys.TV_REMOTE_FLIP] = next.tvRemoteFlip
+            // Per-channel go-live alerts.
+            prefs[Keys.NOTIFY_CHANNELS] = next.notifyChannels.mapTo(HashSet()) { it.lowercase() }
+            prefs[Keys.PER_CHANNEL_NOTE_DISMISSED] = next.perChannelNoteDismissed
         }
     }
 

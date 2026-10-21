@@ -19,7 +19,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
- * The background half of phone go-live alerts: one `/streams/followed` poll per run,
+ * The background half of phone go-live alerts: one batched poll of the channels with their bell on per run,
  * every 15 minutes (WorkManager's floor), only with a network. What just went live
  * is posted by the shared [LiveFollowsMonitor]'s callback, so this only has to ask.
  *
@@ -38,7 +38,7 @@ class GoLiveWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     override suspend fun doWork(): Result {
         try {
             val settings = settingsStore.flow.first()
-            if (!settings.liveNotifications || settings.accessToken.isBlank()) return Result.success()
+            if (!settings.liveNotifications || settings.accessToken.isBlank() || settings.notifyChannels.isEmpty()) return Result.success()
             // On screen, the in-app timer is already polling more often than this.
             if (inApp.isAppVisible) return Result.success()
             // Nothing could be shown (permission denied, notifications blocked for the
@@ -59,7 +59,7 @@ class GoLiveWorker(context: Context, params: WorkerParameters) : CoroutineWorker
     }
 }
 
-/** Keeps exactly one periodic go-live job scheduled while alerts are on and someone is signed in. */
+/** Keeps exactly one periodic go-live job scheduled while alerts are on, someone is signed in and a channel has its bell on. */
 object GoLiveScheduler {
     private const val WORK_NAME = "go-live"
 

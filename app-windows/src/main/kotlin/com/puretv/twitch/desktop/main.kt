@@ -44,7 +44,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -89,22 +88,21 @@ fun main(args: Array<String>) {
         }
     }
 
-    // Go-live alerts: one /streams/followed call every LIVE_POLL_INTERVAL_MS, counted
-    // from the last time anything asked (the followed rail refreshing while the window
-    // is focused counts, so they never double up). Runs only while alerts are on,
-    // someone is signed in and Windows has a tray to show them in; collectLatest
-    // cancels the loop the moment any of those stops being true.
+    // Go-live alerts: one batched call for the channels the viewer turned the bell on
+    // for, every LIVE_POLL_INTERVAL_MS (and at once when that list changes). Runs only
+    // while alerts are on, at least one channel is opted in (signed in or not) and
+    // Windows has a tray to show them in; collectLatest cancels the loop the moment
+    // any of those stops being true, so with no channels there are no network calls.
     val monitor = koinApp.koin.get<LiveFollowsMonitor>()
     backgroundScope.launch {
-        combine(settingsStore.settings.map { it.liveNotifications }, settingsStore.loggedInState) { on, signedIn ->
-            on && signedIn && isTraySupported
-        }
+        settingsStore.settings
+            .map { (it.liveNotifications && it.notifyChannels.isNotEmpty() && isTraySupported) to it.notifyChannels }
             .distinctUntilChanged()
-            .collectLatest { active ->
+            .collectLatest { (active, _) ->
                 if (active) {
                     monitor.pollEvery(LIVE_POLL_INTERVAL_MS)
                 } else {
-                    // Whatever goes live while alerts are off or nobody is signed in is
+                    // Whatever goes live while alerts are off or no channel is opted in is
                     // old news when they resume: the first poll then seeds silently.
                     monitor.alertsStopped()
                 }
@@ -145,7 +143,6 @@ fun main(args: Array<String>) {
     application {
         val windowState: WindowState = rememberWindowState(width = 1280.dp, height = 720.dp)
         val settings by settingsStore.settings.collectAsState()
-        val signedIn by settingsStore.loggedInState.collectAsState()
         var windowVisible by remember { mutableStateOf(!startHidden) }
         var frontRequests by remember { mutableIntStateOf(0) }
 
@@ -179,7 +176,7 @@ fun main(args: Array<String>) {
 
         // Alerts are delivered through the tray icon, so it is there whenever they can
         // arrive, and whenever the window is hidden (the only way back to it).
-        if (isTraySupported && ((settings.liveNotifications && signedIn) || settings.closeToTray || !windowVisible)) {
+        if (isTraySupported && ((settings.liveNotifications && settings.notifyChannels.isNotEmpty()) || settings.closeToTray || !windowVisible)) {
             // The icon is added to the system tray as Tray enters composition; this runs
             // right after, so a go-live toast that had nowhere to go yet appears now.
             LaunchedEffect(Unit) { notifier.flushPending() }

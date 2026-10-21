@@ -35,6 +35,8 @@ import androidx.tv.material3.Text
 import com.puretv.twitch.core.adblock.AdBlockStrategy
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.notify.GoLiveAlerts
+import com.puretv.twitch.core.notify.GoLiveText
 import com.puretv.twitch.core.model.TV_CHAT_BESIDE_VIDEO
 import com.puretv.twitch.core.model.TV_CHAT_OVER_VIDEO
 import com.puretv.twitch.tv.data.AppSettingsStore
@@ -165,8 +167,11 @@ fun TvSettingsScreen(onBack: () -> Unit, viewModel: SettingsViewModel = koinView
             GoLiveSection(
                 enabled = state.settings.liveNotifications,
                 onEnabledChange = viewModel::setLiveNotifications,
-                mutedLogins = state.settings.notifyMutedLogins,
-                onUnmuteAll = viewModel::unmuteAllLiveNotifications,
+                showNote = GoLiveAlerts.showPerChannelNote(state.settings),
+                onDismissNote = viewModel::dismissPerChannelNote,
+                alertChannels = state.settings.notifyChannels,
+                onRemoveChannel = viewModel::removeAlertChannel,
+                onTurnOffAll = viewModel::turnOffAllAlertChannels,
             )
         }
         TvDivider()
@@ -523,8 +528,11 @@ private fun strategyLabel(strategy: AdBlockStrategy): String = when (strategy) {
 private fun GoLiveSection(
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
-    mutedLogins: Set<String>,
-    onUnmuteAll: () -> Unit,
+    showNote: Boolean,
+    onDismissNote: () -> Unit,
+    alertChannels: Set<String>,
+    onRemoveChannel: (String) -> Unit,
+    onTurnOffAll: () -> Unit,
 ) {
     val c = PureTvTvTheme.colors
     Column {
@@ -537,16 +545,39 @@ private fun GoLiveSection(
                 Text("Go-live banner", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "While PureTV is open, a banner in the corner says when a channel you follow starts " +
+                    "While PureTV is open, a banner in the corner says when a channel you picked starts " +
                         "streaming. It never moves your selection, so the remote keeps doing what it was doing. " +
-                        "Press Menu on a channel in Following to mute its banner.",
+                        "Alerts are per channel: open a channel and choose the bell, or press Menu on it in Following.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = c.onSurfaceVariant,
                 )
             }
             Switch(checked = enabled, onCheckedChange = onEnabledChange)
         }
-        if (mutedLogins.isNotEmpty()) {
+        if (showNote) {
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+            ) {
+                Text(
+                    GoLiveText.PER_CHANNEL_NOTE,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = c.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                TvExpressiveButton(text = "Got it", onClick = onDismissNote, style = TvButtonStyle.Outlined)
+            }
+        }
+        if (alertChannels.isEmpty()) {
+            Spacer(Modifier.height(20.dp))
+            Text(
+                "No channels yet. Open a channel and choose the bell to get a banner when it goes live.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+        } else {
             Spacer(Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -555,19 +586,23 @@ private fun GoLiveSection(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (mutedLogins.size == 1) "1 channel muted" else "${mutedLogins.size} channels muted",
+                        if (alertChannels.size == 1) "Banners for 1 channel" else "Banners for ${alertChannels.size} channels",
                         style = MaterialTheme.typography.titleMedium,
                         color = c.onSurface,
                     )
-                    Text(
-                        mutedLogins.sorted().joinToString(", "),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = c.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
                 }
-                TvExpressiveButton(text = "Unmute all", onClick = onUnmuteAll, style = TvButtonStyle.Outlined)
+                TvExpressiveButton(text = "Turn off all", onClick = onTurnOffAll, style = TvButtonStyle.Outlined)
+            }
+            alertChannels.sorted().forEach { login ->
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                ) {
+                    Text(login, style = MaterialTheme.typography.bodyLarge, color = c.onSurface, modifier = Modifier.weight(1f))
+                    TvExpressiveButton(text = "Remove", onClick = { onRemoveChannel(login) }, style = TvButtonStyle.Outlined)
+                }
             }
         }
     }

@@ -13,6 +13,13 @@ object GoLiveText {
     /** Long enough for a stream title to read, short enough for a toast's second line. */
     const val MAX_BODY = 80
 
+    /** The brief confirmation after tapping a channel's bell; [on] is the new state. */
+    fun bellConfirmation(displayName: String, on: Boolean): String =
+        if (on) "You'll be told when $displayName goes live" else "Alerts off for $displayName"
+
+    /** One-time note for people who had alerts for every follow before they became per channel. */
+    const val PER_CHANNEL_NOTE = "Alerts are now per channel. Open a channel and tap the bell."
+
     /** How the channel is named: its display name, or the login when that is blank. */
     fun name(stream: StreamInfo): String = stream.userName.trim().ifBlank { stream.userLogin }
 
@@ -31,7 +38,7 @@ object GoLiveText {
             1 -> forStream(streams.single())
             2, 3 -> GoLiveMessage("${joinNames(names)} are live", cut(streams.joinToString(", ") { detail(it) }))
             else -> GoLiveMessage(
-                "${streams.size} channels you follow went live",
+                "${streams.size} channels went live",
                 "${names.take(3).joinToString(", ")} and ${streams.size - 3} more",
             )
         }

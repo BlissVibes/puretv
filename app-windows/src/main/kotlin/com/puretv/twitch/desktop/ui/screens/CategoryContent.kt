@@ -40,6 +40,7 @@ import com.puretv.twitch.core.playback.FlipOrigin
 import com.puretv.twitch.desktop.ui.CategoryViewModel
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.components.channelWindowMenu
 import com.puretv.twitch.desktop.ui.components.CoverImage
 import com.puretv.twitch.desktop.ui.components.EditorialEmptyState
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
@@ -229,7 +230,7 @@ private fun CategoryStreamCard(stream: StreamInfo, onClick: () -> Unit, modifier
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
 
-    ExpressiveCard(onClick = onClick, modifier = modifier.fillMaxWidth().prewarmStreamOnHover(stream.userLogin)) {
+    ExpressiveCard(onClick = onClick, modifier = modifier.fillMaxWidth().prewarmStreamOnHover(stream.userLogin).channelWindowMenu(stream.userLogin, true)) {
         Column {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shapes.thumbShape)) {
                 val thumbUrl = stream.thumbnailUrl.replace("{width}", "440").replace("{height}", "248")

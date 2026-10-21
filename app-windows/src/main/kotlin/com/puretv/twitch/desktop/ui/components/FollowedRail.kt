@@ -157,6 +157,9 @@ private fun SignInPrompt(onSignIn: () -> Unit) {
     )
 }
 
+/** The rail is 236dp wide plus the 8dp gutter; a context menu must not reach past it. */
+private const val RAIL_MENU_LIMIT = 244
+
 /** One live/offline row: a pill that squares off to [PureTvTheme.shapes.pillMorph] on hover. */
 @Composable
 private fun FollowRowItem(row: FollowRow, alerts: Boolean, onClick: () -> Unit) {
@@ -167,6 +170,8 @@ private fun FollowRowItem(row: FollowRow, alerts: Boolean, onClick: () -> Unit) 
         modifier = Modifier
             .fillMaxWidth()
             .prewarmStreamOnHover(row.login, live = row.isLive)
+            // The menu stays inside the rail: past it is the native video surface.
+            .channelWindowMenu(row.login, row.isLive, keepLeftOf = RAIL_MENU_LIMIT)
             .expressiveClickable(
                 interaction = interaction,
                 onClick = onClick,

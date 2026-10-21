@@ -48,6 +48,7 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.LivePill
 import com.puretv.twitch.desktop.ui.components.handCursor
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.components.channelWindowMenu
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -207,6 +208,7 @@ private fun SearchResultRow(result: ChannelSearchResult, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .channelWindowMenu(result.broadcaster_login, result.is_live)
             .hoverable(interaction)
             .handCursor()
             .clickable(interactionSource = interaction, indication = null, onClick = onClick)

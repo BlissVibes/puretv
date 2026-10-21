@@ -71,6 +71,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.components.channelWindowMenu
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.StaggerLedger
 import com.puretv.twitch.desktop.ui.theme.staggerIn
@@ -209,7 +210,7 @@ fun HomeContent(
                                             flipOrigin.record(emptyList()) // flips use the live follows
                                             onOpenChannel(ch.login)
                                         },
-                                        modifier = Modifier.width(240.dp).prewarmStreamOnHover(ch.login, live = ch.isLive),
+                                        modifier = Modifier.width(240.dp).prewarmStreamOnHover(ch.login, live = ch.isLive).channelWindowMenu(ch.login, ch.isLive),
                                     )
                                 }
                             }
@@ -239,6 +240,7 @@ fun HomeContent(
                                         name = game.name,
                                         boxArtUrl = game.boxArtUrl,
                                         onClick = { onOpenCategory(game.id, game.name) },
+                                        gameId = game.id,
                                         modifier = Modifier.width(150.dp),
                                     )
                                 }
@@ -265,7 +267,7 @@ fun HomeContent(
                                 flipOrigin.record(state.topStreams.map { it.userLogin })
                                 onOpenChannel(stream.userLogin)
                             },
-                            modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin),
+                            modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin).channelWindowMenu(stream.userLogin, true),
                         )
                     }
                 } else if (state.following.isEmpty()) {

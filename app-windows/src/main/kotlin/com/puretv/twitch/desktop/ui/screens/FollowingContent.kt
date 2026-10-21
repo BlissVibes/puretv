@@ -49,6 +49,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.components.channelWindowMenu
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -244,7 +245,7 @@ private fun LiveGridRow(rowItems: List<FollowRow>, onOpenChannel: (String) -> Un
             LiveFollowCard(
                 row,
                 onClick = { onOpenChannel(row.login) },
-                modifier = Modifier.weight(1f).prewarmStreamOnHover(row.login, live = row.isLive),
+                modifier = Modifier.weight(1f).prewarmStreamOnHover(row.login, live = row.isLive).channelWindowMenu(row.login, row.isLive),
             )
         }
         repeat(4 - rowItems.size) { Spacer(Modifier.weight(1f)) }
@@ -292,6 +293,7 @@ private fun LiveListRow(row: FollowRow, onClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
+            .channelWindowMenu(row.login, row.isLive)
             .expressiveClickable(
                 interaction = interaction,
                 onClick = onClick,
@@ -353,6 +355,7 @@ private fun OfflineRow(row: FollowRow, onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier
             .fillMaxWidth()
+            .channelWindowMenu(row.login, row.isLive)
             .expressiveClickable(
                 interaction = interaction,
                 onClick = onClick,

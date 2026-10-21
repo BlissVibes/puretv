@@ -76,6 +76,9 @@ import com.puretv.twitch.desktop.platform.openInBrowser
 import com.puretv.twitch.desktop.platform.SystemAnimations
 import com.puretv.twitch.desktop.update.UpdateManager
 import com.puretv.twitch.desktop.update.UpdateState
+import com.puretv.twitch.desktop.ui.components.ContextMenuHost
+import com.puretv.twitch.desktop.ui.components.ContextMenuPopup
+import com.puretv.twitch.desktop.ui.components.LocalContextMenuHost
 import com.puretv.twitch.desktop.ui.components.CountBadge
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.FollowedRail
@@ -379,7 +382,9 @@ fun App(
             // the content pane read as two cards floating on it. That separation is
             // what the 8dp gutter and the 28dp pane corners are for; without the
             // darker ground they would just look like arbitrary rounding.
+            val contextMenus = remember { ContextMenuHost() }
             Surface(modifier = Modifier.fillMaxSize(), color = c.surfaceLowest) {
+                CompositionLocalProvider(LocalContextMenuHost provides contextMenus) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (shell.playerMode != PlayerMode.FULLSCREEN && shell.playerMode != PlayerMode.MINI) {
                         CustomTitleBar(
@@ -573,6 +578,8 @@ fun App(
                             }
                         }
                     }
+                }
+                ContextMenuPopup(contextMenus)
                 }
             }
         }

@@ -27,6 +27,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.desktop.ui.BrowseViewModel
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.WindowDestination
+import com.puretv.twitch.desktop.ui.components.openInNewWindowMenu
 import com.puretv.twitch.desktop.ui.components.CoverImage
 import com.puretv.twitch.desktop.ui.components.EditorialEmptyState
 import com.puretv.twitch.desktop.ui.components.PageTitle
@@ -89,6 +91,7 @@ fun BrowseContent(koin: Koin, onOpenCategory: (gameId: String, gameName: String)
                     name = game.name,
                     boxArtUrl = game.boxArtUrl,
                     onClick = { onOpenCategory(game.id, game.name) },
+                    gameId = game.id,
                 )
             }
         }
@@ -103,13 +106,16 @@ fun BrowseContent(koin: Koin, onOpenCategory: (gameId: String, gameName: String)
  * anywhere on the tile, art or title, animates the whole thing together.
  */
 @Composable
-internal fun GameTile(name: String, boxArtUrl: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun GameTile(name: String, boxArtUrl: String, onClick: () -> Unit, modifier: Modifier = Modifier, gameId: String? = null) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
 
     Column(
-        modifier = modifier.expressiveClickable(
+        modifier = modifier.then(
+            if (gameId == null) Modifier
+            else Modifier.openInNewWindowMenu(WindowDestination.Category(gameId, name), "Open category in new window"),
+        ).expressiveClickable(
             interaction = interaction,
             onClick = onClick,
             restRadius = 0.dp,

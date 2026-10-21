@@ -182,6 +182,9 @@ internal data class GqlVideosUser(val videos: GqlVideoConnection? = null)
 internal data class GqlVideosData(val user: GqlVideosUser? = null)
 
 @Serializable
+internal data class GqlVideoData(val video: GqlVideoNode? = null)
+
+@Serializable
 internal data class GqlUsersData(val users: List<GqlUserWithStream?> = emptyList())
 
 // ---- Mapping into the Helix-shaped core models ----

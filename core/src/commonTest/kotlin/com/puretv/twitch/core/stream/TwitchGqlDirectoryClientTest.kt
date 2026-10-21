@@ -340,6 +340,37 @@ class TwitchGqlDirectoryClientTest {
         assertNull(variables?.get("type"))
     }
 
+    @Test fun oneVideoByIdMapsItsTitleChannelAndKind() = runTest {
+        var variables: JsonObject? = null
+        val api = client { request ->
+            variables = request.bodyJson()["variables"]?.jsonObject
+            respond(
+                """
+                {"data":{"video":{"id":"2904296965","title":"best clips","lengthSeconds":600,"createdAt":"2026-10-18T16:16:06Z",
+                  "publishedAt":"2026-10-18T16:16:06Z","viewCount":12,"broadcastType":"HIGHLIGHT",
+                  "previewThumbnailURL":"https://static-cdn.jtvnw.net/cf_vods/d2nvs/abc_shroud//thumb/thumb0-320x180.jpg",
+                  "owner":{"id":"37402112","login":"shroud","displayName":"shroud"}}}}
+                """.trimIndent(),
+                HttpStatusCode.OK,
+                jsonHeaders,
+            )
+        }
+        val v = api.videoById("2904296965")!!
+        assertEquals("2904296965", variables?.get("id")?.jsonPrimitive?.content)
+        assertEquals("best clips", v.title)
+        assertEquals("shroud", v.userLogin)
+        assertEquals(com.puretv.twitch.core.model.VideoType.HIGHLIGHT, v.type)
+        assertEquals(600L, v.durationSeconds)
+    }
+
+    @Test fun anUnknownVideoIdIsNullAndABlankOneAsksNothing() = runTest {
+        var calls = 0
+        val api = client { calls++; respond("""{"data":{"video":null}}""", HttpStatusCode.OK, jsonHeaders) }
+        assertNull(api.videoById("1"))
+        assertNull(api.videoById(" "))
+        assertEquals(1, calls)
+    }
+
     @Test fun noLoginsMeansNoRequest() = runTest {
         var calls = 0
         val api = client { calls++; respond("{}", HttpStatusCode.OK, jsonHeaders) }

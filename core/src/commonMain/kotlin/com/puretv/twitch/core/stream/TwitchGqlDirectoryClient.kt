@@ -134,6 +134,13 @@ class TwitchGqlDirectoryClient(
         return data.user?.videos?.edges.orEmpty().mapNotNull { it?.node?.toVideoInfo(userId) }
     }
 
+    /** One past video by its id (title, channel, kind, art), or null when there is no such video. */
+    suspend fun videoById(videoId: String): VideoInfo? {
+        if (videoId.isBlank()) return null
+        val data: GqlVideoData = execute(VIDEO_QUERY, buildJsonObject { put("id", videoId) })
+        return data.video?.toVideoInfo(fallbackUserId = "")
+    }
+
     /**
      * Which of [logins] are live right now, as Helix-shaped streams. Asks in
      * chunks of [MAX_PAGE] side by side; unknown logins come back as null
@@ -258,6 +265,10 @@ internal const val VIDEOS_QUERY =
     "query(\$id: ID!, \$first: Int, \$type: BroadcastType) { user(id: \$id) { videos(first: \$first, type: \$type, sort: TIME) " +
         "{ edges { node { id title lengthSeconds createdAt publishedAt viewCount broadcastType " +
         "previewThumbnailURL(width: 320, height: 180) owner { id login displayName } } } } } }"
+
+internal const val VIDEO_QUERY =
+    "query(\$id: ID!) { video(id: \$id) { id title lengthSeconds createdAt publishedAt viewCount broadcastType " +
+        "previewThumbnailURL(width: 320, height: 180) owner { id login displayName } } }"
 
 internal const val USERS_QUERY =
     "query(\$logins: [String!]) { users(logins: \$logins) { stream { $STREAM_FIELDS } } }"

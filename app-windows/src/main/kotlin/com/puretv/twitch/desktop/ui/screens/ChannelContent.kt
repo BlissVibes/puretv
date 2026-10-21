@@ -23,7 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,7 +41,12 @@ import com.puretv.twitch.core.model.VideoInfo
 import com.puretv.twitch.core.model.VideoType
 import com.puretv.twitch.desktop.player.formatTimecode
 import com.puretv.twitch.desktop.ui.ChannelViewModel
+import com.puretv.twitch.desktop.ui.AddOutcome
+import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.VodLaunch
+import com.puretv.twitch.desktop.ui.note
+import com.puretv.twitch.desktop.ui.toTileSource
+import kotlinx.coroutines.delay
 import com.puretv.twitch.desktop.ui.VodListViewModel
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.ui.components.AlertBell
@@ -303,9 +310,19 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
     val vm = rememberDesktopViewModel(userId) { koin.get<VodListViewModel> { parametersOf(userId) } }
     val state by vm.state.collectAsState()
     val c = PureTvTheme.colors
+    val session = remember { koin.get<MultiSession>() }
+    // What the add and pop out buttons did, for a few seconds.
+    var note by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(note) {
+        if (note != null) {
+            delay(3_000)
+            note = null
+        }
+    }
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Text("Past broadcasts", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
+        note?.let { Text(it, style = PureTvType.data, color = c.primary) }
         Spacer(Modifier.height(14.dp))
         ExpressiveChipRow(
             options = VOD_FILTERS,
@@ -320,7 +337,17 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
         }
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             state.videos.forEach { v ->
-                VodRow(v, onClick = { onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl)) })
+                VodRow(
+                    v,
+                    onClick = { onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl)) },
+                    onAddToMulti = {
+                        val outcome = session.addVod(v.toTileSource(channelLogin))
+                        note = outcome.note(popped = false)
+                        // A new tile is in the grid, which only shows on the multi-stream screen: go there.
+                        if (outcome == AddOutcome.Added) session.requestGrid()
+                    },
+                    onPopOut = { note = session.popOutVod(v.toTileSource(channelLogin)).note(popped = true) },
+                )
             }
         }
         if (state.cursor != null) {
@@ -337,7 +364,7 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
 
 /** A VOD row: 150x84 thumbnail with its duration chip, title + mono meta, a tonal play button. */
 @Composable
-private fun VodRow(v: VideoInfo, onClick: () -> Unit) {
+private fun VodRow(v: VideoInfo, onClick: () -> Unit, onAddToMulti: () -> Unit, onPopOut: () -> Unit) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
 
@@ -372,6 +399,18 @@ private fun VodRow(v: VideoInfo, onClick: () -> Unit) {
                     color = c.onSurfaceVariant,
                 )
             }
+            ExpressiveIconButton(
+                icon = ExpressiveIcons.Add,
+                contentDescription = "Add ${v.title} to multi-stream",
+                onClick = onAddToMulti,
+                boxSize = 40.dp,
+            )
+            ExpressiveIconButton(
+                icon = ExpressiveIcons.OpenInNew,
+                contentDescription = "Pop out ${v.title} into its own window",
+                onClick = onPopOut,
+                boxSize = 40.dp,
+            )
             ExpressiveIconButton(
                 icon = ExpressiveIcons.Play,
                 contentDescription = "Play ${v.title}",

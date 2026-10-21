@@ -145,6 +145,36 @@ enum class MultiShortcutAction {
     CycleSleepTimer,
     MoveEarlier,
     MoveLater,
+
+    // Only when the selected tile is a past video.
+    TogglePlayPause,
+    SeekBack,
+    SeekForward,
+    SeekBackLarge,
+    SeekForwardLarge,
+    JumpBack,
+    JumpForward,
+}
+
+/** How far a seek action skips in milliseconds (negative is back), or null for actions that do not seek. */
+fun MultiShortcutAction.seekDeltaMs(): Long? = when (this) {
+    MultiShortcutAction.SeekBack -> -VodTileLogic.ARROW_STEP_MS
+    MultiShortcutAction.SeekForward -> VodTileLogic.ARROW_STEP_MS
+    MultiShortcutAction.SeekBackLarge -> -VodTileLogic.ARROW_STEP_LARGE_MS
+    MultiShortcutAction.SeekForwardLarge -> VodTileLogic.ARROW_STEP_LARGE_MS
+    MultiShortcutAction.JumpBack -> -VodTileLogic.JUMP_STEP_MS
+    MultiShortcutAction.JumpForward -> VodTileLogic.JUMP_STEP_MS
+    else -> null
+}
+
+fun PopoutShortcutAction.seekDeltaMs(): Long? = when (this) {
+    PopoutShortcutAction.SeekBack -> -VodTileLogic.ARROW_STEP_MS
+    PopoutShortcutAction.SeekForward -> VodTileLogic.ARROW_STEP_MS
+    PopoutShortcutAction.SeekBackLarge -> -VodTileLogic.ARROW_STEP_LARGE_MS
+    PopoutShortcutAction.SeekForwardLarge -> VodTileLogic.ARROW_STEP_LARGE_MS
+    PopoutShortcutAction.JumpBack -> -VodTileLogic.JUMP_STEP_MS
+    PopoutShortcutAction.JumpForward -> VodTileLogic.JUMP_STEP_MS
+    else -> null
 }
 
 /**
@@ -161,6 +191,10 @@ object MultiShortcuts {
         textInputFocused: Boolean = false,
         // The key is being held (auto-repeat). Only volume repeats; the rest fire once.
         isRepeat: Boolean = false,
+        // Shift is held: the arrows skip the long step.
+        shift: Boolean = false,
+        // The selected tile is a past video: Space, the arrows and J / L are its transport.
+        vodSelected: Boolean = false,
     ): MultiShortcutAction? {
         if (textInputFocused || alt) return null
         val action = if (ctrl) {
@@ -175,11 +209,17 @@ object MultiShortcuts {
                 KeyEvent.VK_DOWN -> MultiShortcutAction.VolumeDown
                 KeyEvent.VK_M -> MultiShortcutAction.ToggleMute
                 KeyEvent.VK_Z -> MultiShortcutAction.CycleSleepTimer
+                KeyEvent.VK_SPACE -> if (vodSelected) MultiShortcutAction.TogglePlayPause else null
+                KeyEvent.VK_LEFT -> if (vodSelected) (if (shift) MultiShortcutAction.SeekBackLarge else MultiShortcutAction.SeekBack) else null
+                KeyEvent.VK_RIGHT -> if (vodSelected) (if (shift) MultiShortcutAction.SeekForwardLarge else MultiShortcutAction.SeekForward) else null
+                KeyEvent.VK_J -> if (vodSelected) MultiShortcutAction.JumpBack else null
+                KeyEvent.VK_L -> if (vodSelected) MultiShortcutAction.JumpForward else null
                 else -> null
             }
         } ?: return null
-        val volume = action == MultiShortcutAction.VolumeUp || action == MultiShortcutAction.VolumeDown
-        if (isRepeat && !volume) return null
+        // Volume and skipping repeat while the key is held; the rest fire once.
+        val repeats = action == MultiShortcutAction.VolumeUp || action == MultiShortcutAction.VolumeDown || action.seekDeltaMs() != null
+        if (isRepeat && !repeats) return null
         return action
     }
 
@@ -195,6 +235,9 @@ object MultiShortcuts {
 
     /** The one-line hint under the grid, from the same table the keys use. */
     const val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   Ctrl + Left / Right move the selected channel"
+
+    /** The hint when the selected tile is a past video. */
+    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move"
 }
 
 /** What a keyboard shortcut does in a popped-out stream window. */
@@ -206,6 +249,15 @@ enum class PopoutShortcutAction {
     ExitFullscreen,
     CloseTile,
     Dock,
+
+    // Only in the window of a past video.
+    TogglePlayPause,
+    SeekBack,
+    SeekForward,
+    SeekBackLarge,
+    SeekForwardLarge,
+    JumpBack,
+    JumpForward,
 }
 
 /**
@@ -222,6 +274,9 @@ object PopoutShortcuts {
         fullscreen: Boolean,
         textInputFocused: Boolean = false,
         isRepeat: Boolean = false,
+        shift: Boolean = false,
+        // The window plays a past video: Space, the arrows and J / L are its transport.
+        vod: Boolean = false,
     ): PopoutShortcutAction? {
         if (textInputFocused || alt) return null
         val action = if (ctrl) {
@@ -234,16 +289,24 @@ object PopoutShortcuts {
                 KeyEvent.VK_F -> PopoutShortcutAction.ToggleFullscreen
                 KeyEvent.VK_ESCAPE -> if (fullscreen) PopoutShortcutAction.ExitFullscreen else null
                 KeyEvent.VK_D -> PopoutShortcutAction.Dock
+                KeyEvent.VK_SPACE -> if (vod) PopoutShortcutAction.TogglePlayPause else null
+                KeyEvent.VK_LEFT -> if (vod) (if (shift) PopoutShortcutAction.SeekBackLarge else PopoutShortcutAction.SeekBack) else null
+                KeyEvent.VK_RIGHT -> if (vod) (if (shift) PopoutShortcutAction.SeekForwardLarge else PopoutShortcutAction.SeekForward) else null
+                KeyEvent.VK_J -> if (vod) PopoutShortcutAction.JumpBack else null
+                KeyEvent.VK_L -> if (vod) PopoutShortcutAction.JumpForward else null
                 else -> null
             }
         } ?: return null
-        val volume = action == PopoutShortcutAction.VolumeUp || action == PopoutShortcutAction.VolumeDown
-        if (isRepeat && !volume) return null
+        val repeats = action == PopoutShortcutAction.VolumeUp || action == PopoutShortcutAction.VolumeDown || action.seekDeltaMs() != null
+        if (isRepeat && !repeats) return null
         return action
     }
 
     /** The one-line hint in a popped-out window, from the same table the keys use. */
     const val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   Ctrl + W close"
+
+    /** The hint in the window of a past video. */
+    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   F fullscreen   D dock back   Ctrl + W close"
 }
 
 /**

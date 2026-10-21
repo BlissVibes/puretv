@@ -81,6 +81,7 @@ import com.puretv.twitch.desktop.ui.MultiViewUiState
 import com.puretv.twitch.desktop.ui.MultiViewViewModel
 import com.puretv.twitch.desktop.ui.SleepSession
 import com.puretv.twitch.desktop.ui.TileInfo
+import com.puretv.twitch.desktop.ui.TileSource
 import com.puretv.twitch.desktop.ui.components.AdBlockPill
 import com.puretv.twitch.desktop.ui.components.Avatar
 import com.puretv.twitch.desktop.ui.components.PlayerNoticeStrip
@@ -90,6 +91,8 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
+import com.puretv.twitch.desktop.ui.components.VodTransportRow
+import com.puretv.twitch.desktop.ui.seekDeltaMs
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
@@ -161,7 +164,8 @@ fun MultiViewContent(
         when {
             left.isEmpty() -> onBack()
             // One tile still in the grid is a stream like any other; one in its own window stays there.
-            sole != null && !viewModel.state.value.layout.isPopped(sole.id) -> onWatchSingle(sole.login)
+            // (A single past video stays here: there is no stream screen for it to hand over to.)
+            sole?.liveLogin != null && !viewModel.state.value.layout.isPopped(sole.id) -> onWatchSingle(sole.liveLogin!!)
         }
     }
 
@@ -208,9 +212,20 @@ fun MultiViewContent(
                 alt = e.isAltDown,
                 textInputFocused = latestTyping.value,
                 isRepeat = isRepeat,
+                shift = e.isShiftDown,
+                vodSelected = latestState.value.layout.active?.isVod == true,
             ) ?: return@KeyEventDispatcher false
             val activeId = latestState.value.layout.activeId
+            action.seekDeltaMs()?.let { delta ->
+                // Unconsumed while the video cannot seek yet, so the key is not swallowed into nothing.
+                return@KeyEventDispatcher viewModel.seekActiveBy(delta)
+            }
             when (action) {
+                MultiShortcutAction.TogglePlayPause -> viewModel.toggleActivePlay()
+                MultiShortcutAction.SeekBack, MultiShortcutAction.SeekForward,
+                MultiShortcutAction.SeekBackLarge, MultiShortcutAction.SeekForwardLarge,
+                MultiShortcutAction.JumpBack, MultiShortcutAction.JumpForward,
+                -> {}
                 MultiShortcutAction.VolumeUp -> viewModel.nudgeVolume(up = true)
                 MultiShortcutAction.VolumeDown -> viewModel.nudgeVolume(up = false)
                 MultiShortcutAction.ToggleMute -> viewModel.toggleActiveMute()
@@ -306,8 +321,19 @@ fun MultiViewContent(
                                 notice = "Already watching ${login.trim().removePrefix("@")}"
                             }
                             AddOutcome.Full -> notice = "Four streams is the limit"
-                            AddOutcome.Blank -> {}
+                            AddOutcome.Blank -> notice = "Type a channel name first"
                             AddOutcome.Added -> if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
+                        }
+                    },
+                    onAddVod = { vod ->
+                        when (val outcome = viewModel.state.value.layout.addVodOutcome(vod.videoId)) {
+                            is AddOutcome.AlreadyShown -> {
+                                viewModel.setActive(outcome.tileId)
+                                notice = "Already watching that video"
+                            }
+                            AddOutcome.Full -> notice = "Four streams is the limit"
+                            AddOutcome.Blank -> notice = "That video can't be added"
+                            AddOutcome.Added -> if (viewModel.addVod(vod) && viewModel.state.value.layout.count >= 2) pickerOpen = false
                         }
                     },
                 )
@@ -351,6 +377,8 @@ fun MultiViewContent(
                                     canMoveEarlier = tile.id != layout.docked.first().id,
                                     canMoveLater = tile.id != layout.docked.last().id,
                                     onPopOut = { session.popOut(tile.id) },
+                                    onTogglePlay = { viewModel.togglePlay(tile.id) },
+                                    onSeek = { viewModel.seekTo(tile.id, it) },
                                     onMoveEarlier = { viewModel.move(tile.id, -1) },
                                     onMoveLater = { viewModel.move(tile.id, 1) },
                                 )
@@ -361,7 +389,7 @@ fun MultiViewContent(
                     }
                 }
                 Text(
-                    MultiShortcuts.HINT,
+                    if (layout.active?.isVod == true) MultiShortcuts.VOD_HINT else MultiShortcuts.HINT,
                     style = MaterialTheme.typography.labelSmall,
                     color = c.onSurfaceVariant,
                     maxLines = 1,
@@ -380,6 +408,7 @@ fun MultiViewContent(
                 viewModel = viewModel,
                 appSettings = appSettings,
                 channelName = layout.active?.let { state.info[it.id]?.displayName ?: it.login },
+                replayOf = layout.active?.vod,
                 onClose = { shell.toggleChat() },
                 onRequestSignIn = onRequestSignIn,
                 onInputFocusChanged = { chatFocused = it },
@@ -396,12 +425,15 @@ private fun MultiChatColumn(
     viewModel: MultiViewViewModel,
     appSettings: AppSettings,
     channelName: String?,
+    // Set when the selected tile is a past video: the column shows that video's chat replay.
+    replayOf: TileSource.Vod?,
     onClose: () -> Unit,
     onRequestSignIn: () -> Unit,
     onInputFocusChanged: (Boolean) -> Unit,
 ) {
     val c = PureTvTheme.colors
     val chat by viewModel.chatState.collectAsState()
+    val replay by viewModel.vodChatState.collectAsState()
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(
             modifier = Modifier
@@ -414,7 +446,7 @@ private fun MultiChatColumn(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text("Chat", style = MaterialTheme.typography.titleMedium, color = c.onSurface, maxLines = 1)
+                Text(if (replayOf != null) "Chat replay" else "Chat", style = MaterialTheme.typography.titleMedium, color = c.onSurface, maxLines = 1)
                 Text(
                     channelName ?: "No channel",
                     style = MaterialTheme.typography.bodySmall,
@@ -448,15 +480,35 @@ private fun MultiChatColumn(
             ) {
                 ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {
                     // The room changes with the active tile: a fresh list state per channel.
-                    key(chat.channel) {
-                        ChatMessageList(
-                            messages = chat.messages,
-                            onReply = viewModel::startReply,
-                            modifier = Modifier.fillMaxSize(),
-                        )
+                    if (replayOf != null) {
+                        // The replay follows the video's own clock, one list per video.
+                        key(replayOf.videoId) {
+                            ChatMessageList(
+                                messages = if (replay.videoId == replayOf.videoId) replay.messages else emptyList(),
+                                onReply = {},
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    } else {
+                        key(chat.channel) {
+                            ChatMessageList(
+                                messages = chat.messages,
+                                onReply = viewModel::startReply,
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
                     }
                 }
             }
+        }
+        if (replayOf != null) {
+            Text(
+                "Replay of this video's chat. Chatting happens on the live stream.",
+                style = MaterialTheme.typography.labelSmall,
+                color = c.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+            )
+            return@Column
         }
         RoomModeChips(chat.modes)
         ChatInputBar(
@@ -511,8 +563,11 @@ private fun Tile(
     onMoveEarlier: () -> Unit,
     onMoveLater: () -> Unit,
     onPopOut: () -> Unit,
+    onTogglePlay: () -> Unit,
+    onSeek: (Long) -> Unit,
 ) {
     val c = PureTvTheme.colors
+    val vod = tile.vod
     Column(modifier = Modifier.fillMaxSize()) {
         // The outline: a frame of padding around the video, in the accent colour while active.
         Box(
@@ -543,6 +598,8 @@ private fun Tile(
                 )
             }
         }
+        // A past video's seek bar sits between the picture and the strip, outside the video.
+        if (vod != null) VodTransportRow(info.player, onTogglePlay = onTogglePlay, onSeek = onSeek)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -556,7 +613,7 @@ private fun Tile(
             Avatar(displayName = info.displayName, imageUrl = info.avatarUrl, size = 28)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    info.displayName,
+                    vod?.title?.ifBlank { null } ?: info.displayName,
                     style = MaterialTheme.typography.titleSmall,
                     color = c.onSurface,
                     maxLines = 1,
@@ -571,14 +628,15 @@ private fun Tile(
                     else -> "Click to select"
                 }
                 Text(
-                    sub,
+                    if (vod != null && info.message == null) "${vod.kind.label} from ${info.displayName}. $sub" else sub,
                     style = MaterialTheme.typography.labelSmall,
                     color = if (info.message == null && (audible || isActive)) c.primary else c.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null) AdBlockPill(info.adBlockStatus)
+            // Past videos have no ads to block.
+            if (vod == null && (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null)) AdBlockPill(info.adBlockStatus)
             // This tile's own sound. It sits in the strip, below the video, because a click on
             // the native video surface never reaches Compose.
             ExpressiveIconButton(
@@ -666,7 +724,7 @@ private fun MultiTopBar(
         Column(modifier = Modifier.weight(1f)) {
             Text("Multi-stream", style = MaterialTheme.typography.titleLarge, color = c.onSurface, maxLines = 1)
             Text(
-                "${layout.count} of ${MultiViewState.MAX_TILES} channels",
+                "${layout.count} of ${MultiViewState.MAX_TILES} streams",
                 style = MaterialTheme.typography.bodySmall,
                 color = c.onSurfaceVariant,
                 maxLines = 1,
@@ -727,8 +785,15 @@ private fun MultiTopBar(
  * channel by name.
  */
 @Composable
-private fun AddChannelPanel(koin: Koin, shown: MultiViewState, onFocusChanged: (Boolean) -> Unit, onAdd: (String) -> Unit) {
+private fun AddChannelPanel(
+    koin: Koin,
+    shown: MultiViewState,
+    onFocusChanged: (Boolean) -> Unit,
+    onAdd: (String) -> Unit,
+    onAddVod: (TileSource.Vod) -> Unit,
+) {
     val c = PureTvTheme.colors
+    var pastOpen by remember { mutableStateOf(false) }
     val rail = rememberDesktopViewModel { koin.get<FollowedRailViewModel>() }
     val railState by rail.state.collectAsState()
     androidx.compose.runtime.LaunchedEffect(rail) { rail.refresh() }
@@ -775,6 +840,15 @@ private fun AddChannelPanel(koin: Koin, shown: MultiViewState, onFocusChanged: (
             }
             ExpressiveButton(text = "Add", onClick = ::submit, size = ExpressiveButtonSize.Medium, icon = ExpressiveIcons.Add)
         }
+
+        ExpressiveButton(
+            text = if (pastOpen) "Hide past broadcasts" else "Past broadcasts and highlights",
+            onClick = { pastOpen = !pastOpen },
+            style = if (pastOpen) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
+            size = ExpressiveButtonSize.Medium,
+            icon = ExpressiveIcons.Play,
+        )
+        if (pastOpen) VodPickerPanel(koin = koin, onFocusChanged = onFocusChanged, onPick = onAddVod)
 
         val candidates = railState.live.filterNot { shown.contains(it.login) }
         when {

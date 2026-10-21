@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.model.PlaylistVariant
 import com.puretv.twitch.core.model.StreamQuality
 
 /**
@@ -81,6 +82,26 @@ object TileQuality {
         }
         return lines.filterIndexed { index, _ -> index !in dropped }.joinToString("\n")
     }
+
+    /**
+     * The URL a past-video tile plays: the single best rendition of [variants] at or below
+     * [maxHeight] lines (the same rule as [capMaster], preferring the higher frame rate at
+     * the same height), so four tiles do not decode four source-quality videos. When every
+     * rendition is taller than the cap the smallest one is used, and a ladder with no sized
+     * rendition (audio only, or nothing parsed) plays [masterUrl] and lets VLC choose.
+     */
+    fun vodUrl(masterUrl: String, variants: List<PlaylistVariant>, maxHeight: Int): String {
+        val sized = variants.filter { vodHeightOf(it) > 0 }
+        if (sized.isEmpty()) return masterUrl
+        val chosen = sized.filter { vodHeightOf(it) <= maxHeight }
+            .maxWithOrNull(compareBy<PlaylistVariant> { vodHeightOf(it) }.thenBy { it.frameRate })
+            ?: sized.minWithOrNull(compareBy<PlaylistVariant> { vodHeightOf(it) }.thenByDescending { it.frameRate })
+            ?: return masterUrl
+        return chosen.url
+    }
+
+    private fun vodHeightOf(variant: PlaylistVariant): Int =
+        variant.resolution.substringAfter('x', "").trim().toIntOrNull() ?: 0
 
     private fun heightOf(streamInf: String): Int =
         attribute(streamInf, "RESOLUTION")?.substringAfter('x', "")?.trim()?.toIntOrNull() ?: 0

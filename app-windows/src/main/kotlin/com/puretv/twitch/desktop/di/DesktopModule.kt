@@ -44,6 +44,7 @@ import com.puretv.twitch.desktop.ui.HomeViewModel
 import com.puretv.twitch.desktop.ui.LoginViewModel
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiViewViewModel
+import com.puretv.twitch.desktop.ui.TileSource
 import com.puretv.twitch.desktop.ui.SearchViewModel
 import com.puretv.twitch.desktop.ui.WindowRegistry
 import com.puretv.twitch.desktop.ui.SettingsViewModel
@@ -200,13 +201,16 @@ val desktopModule = module {
             playback.playTicket, playback.isolated, playback.claims,
         )
     }
-    factory { (channelLogin: String) ->
-        MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    factory { (initial: TileSource) ->
+        MultiViewViewModel(initial, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
     }
     // The multi-stream session outlives the screen: tiles popped out into their own windows keep playing.
     single {
         val koin = getKoin()
-        MultiSession(create = { login -> koin.get<MultiViewViewModel> { parametersOf(login) } })
+        MultiSession(
+            create = { login -> koin.get<MultiViewViewModel> { parametersOf(TileSource.Live(login)) } },
+            createVod = { vod -> koin.get<MultiViewViewModel> { parametersOf(vod) } },
+        )
     }
     // Every PureTV window and the limits between them. Tiles count toward the player cap.
     single {

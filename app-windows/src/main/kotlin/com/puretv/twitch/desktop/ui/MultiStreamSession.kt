@@ -18,6 +18,9 @@ interface MultiTileHost {
     /** False when [login] is already shown, blank, or the tiles are full. */
     fun addChannel(login: String): Boolean
 
+    /** False when the video is already shown, or the tiles are full. */
+    fun addVod(source: TileSource.Vod): Boolean
+
     /** Closes tile [id] and returns the tiles left. */
     fun closeTile(id: Int): List<MultiTile>
 
@@ -52,6 +55,8 @@ class MultiStreamSession<T : MultiTileHost>(
     /** The one sleep timer of the app, shared by the stream screen, multi-stream and the popped-out windows. */
     val sleep: SleepSession = SleepSession(),
     val boundsStore: PopoutBoundsStore = PopoutBoundsStore(),
+    // Starts a session whose first tile is a past video; null when only live sessions can start.
+    private val createVod: ((TileSource.Vod) -> T)? = null,
 ) {
     private val _current = MutableStateFlow<T?>(null)
 
@@ -76,6 +81,37 @@ class MultiStreamSession<T : MultiTileHost>(
             return running
         }
         return create(login).also { _current.value = it }
+    }
+
+    /**
+     * Adds the past video [source] as a tile, starting the session when none is running.
+     * Says what happened, so the caller can tell the viewer when nothing was added.
+     */
+    @Synchronized
+    fun addVod(source: TileSource.Vod): AddOutcome {
+        val running = _current.value
+        if (running == null) {
+            val make = createVod ?: return AddOutcome.Blank
+            _current.value = make(source)
+            return AddOutcome.Added
+        }
+        val outcome = running.state.value.layout.addVodOutcome(source.videoId)
+        if (outcome == AddOutcome.Added) running.addVod(source)
+        return outcome
+    }
+
+    /**
+     * Shows the past video [source] in a window of its own: a new tile that is popped out
+     * at once, or the tile already showing it. Nothing happens when the tiles are full.
+     */
+    @Synchronized
+    fun popOutVod(source: TileSource.Vod): AddOutcome {
+        val outcome = addVod(source)
+        if (outcome != AddOutcome.Added && outcome !is AddOutcome.AlreadyShown) return outcome
+        val running = _current.value ?: return outcome
+        val tile = running.state.value.layout.tiles.firstOrNull { it.vod?.videoId == source.videoId.trim() } ?: return outcome
+        running.popOut(tile.id)
+        return outcome
     }
 
     /** The multi-stream screen was left: only the tiles in their own windows stay. */

@@ -180,6 +180,7 @@ class DesktopSettingsStore(
         val audioNormalizer: Boolean = false,
         // Per-channel go-live alerts. Missing from older files, which then load with none.
         val notifyChannels: List<String> = emptyList(),
+        val perChannelNoteDismissed: Boolean = false,
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -209,6 +210,7 @@ class DesktopSettingsStore(
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
         notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
+        perChannelNoteDismissed = perChannelNoteDismissed,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -240,6 +242,7 @@ class DesktopSettingsStore(
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
         notifyChannels = notifyChannels.sorted(),
+        perChannelNoteDismissed = perChannelNoteDismissed,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {
@@ -334,11 +337,16 @@ class DesktopSettingsStore(
      * [refreshMutex] keeps two overlapping calls from both spending the same
      * refresh token, since Twitch may rotate it on use.
      */
-    suspend fun refreshIfNeeded(http: HttpClient, nowEpochSeconds: Long = System.currentTimeMillis() / 1000) = refreshMutex.withLock {
+    suspend fun refreshIfNeeded(
+        http: HttpClient,
+        nowEpochSeconds: Long = System.currentTimeMillis() / 1000,
+        force: Boolean = false,
+    ) = refreshMutex.withLock {
         val current = loadTokens() ?: return@withLock
         val refresh = current.refreshToken ?: return@withLock
         if (current.expiresAtEpochSeconds <= 0) return@withLock
-        if (nowEpochSeconds < current.expiresAtEpochSeconds - REFRESH_LEEWAY_SECONDS) return@withLock
+        // `force` is for a 401: Twitch dropped the token early, so the expiry on file is wrong.
+        if (!force && nowEpochSeconds < current.expiresAtEpochSeconds - REFRESH_LEEWAY_SECONDS) return@withLock
         runCatching { DeviceAuth.refreshToken(http, refresh) }
             .onSuccess { fresh ->
                 saveTokens(

@@ -63,6 +63,10 @@ fun TvControlsOverlay(
     onToggleChat: () -> Unit = {},
     sleepLabel: String = "Sleep: Off",
     onCycleSleep: () -> Unit = {},
+    alertsOn: Boolean = false,
+    /** The short confirmation after a tap on the bell, shown under the title. */
+    alertsNote: String? = null,
+    onToggleAlerts: () -> Unit = {},
     /** Where the screen puts focus when the controls appear (Play/Pause). */
     playPauseFocusRequester: FocusRequester? = null,
 ) {
@@ -105,6 +109,7 @@ fun TvControlsOverlay(
                         style = PureTvTvType.dataSmall,
                         color = c.onSurfaceVariant,
                     )
+                    alertsNote?.let { Text(text = it, style = MaterialTheme.typography.bodyMedium, color = c.primary) }
                 }
                 // A standing fact about the app (mirrors TvShieldPill's own intent),
                 // so it stays up for the whole time the chrome is visible rather than
@@ -142,6 +147,12 @@ fun TvControlsOverlay(
                         onClick = onToggleChat,
                         style = TvButtonStyle.Tonal,
                         icon = ExpressiveIcons.Chat,
+                    )
+                    TvExpressiveButton(
+                        text = if (alertsOn) "Alerts on" else "Notify me",
+                        onClick = onToggleAlerts,
+                        style = TvButtonStyle.Tonal,
+                        icon = if (alertsOn) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
                     )
                     TvExpressiveButton(
                         text = sleepLabel,

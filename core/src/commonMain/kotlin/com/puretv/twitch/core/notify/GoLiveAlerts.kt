@@ -8,6 +8,14 @@ object GoLiveAlerts {
     /** Up to this many streams from one poll get an alert each; more become one summary. */
     const val MAX_SEPARATE = 3
 
+    /**
+     * Whether Settings shows [GoLiveText.PER_CHANNEL_NOTE]: alerts are on but no channel has
+     * a bell yet (everyone who had alerts before they became per channel is here), until the
+     * note is dismissed. It also goes away by itself once a bell is on.
+     */
+    fun showPerChannelNote(settings: AppSettings): Boolean =
+        settings.liveNotifications && settings.notifyChannels.isEmpty() && !settings.perChannelNoteDismissed
+
     /** True when the bell is on for [login] in the opted-in list [channels]. */
     fun isOn(channels: Set<String>, login: String): Boolean {
         val key = login.trim()

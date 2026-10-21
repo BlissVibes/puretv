@@ -298,7 +298,18 @@ fun StreamContent(
     // The new channel is on screen: the banner has done its job.
     LaunchedEffect(channelLogin) { flipTarget = null }
 
+    // The alert timer polls only the channels with a bell, so the live follows come
+    // from the followed feed (shared for 30 seconds with the rail) when the viewer
+    // reaches for a flip; the ring uses the previous answer and the next press this one.
+    fun refreshFollows() {
+        val userId = settingsStore.sessionUserId
+        if (!settingsStore.isLoggedIn || userId.isNullOrBlank()) return
+        scope.launch { runCatching { liveFollows.followedLive(userId) } }
+    }
+    LaunchedEffect(channelLogin) { refreshFollows() }
+
     fun flip(direction: FlipDirection) {
+        refreshFollows()
         val follows = if (settingsStore.isLoggedIn) liveFollows.liveNow.value.map { it.userLogin } else null
         val ring = ChannelFlip.ringFor(latestChannel, follows, flipOrigin.logins)
         val target = pendingFlip.press(ring, latestChannel, direction, System.currentTimeMillis())

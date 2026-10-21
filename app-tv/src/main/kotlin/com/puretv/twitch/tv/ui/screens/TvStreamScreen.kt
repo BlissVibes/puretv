@@ -56,6 +56,7 @@ import com.puretv.twitch.tv.ui.components.TvChatOverlay
 import com.puretv.twitch.tv.ui.components.TvControlsOverlay
 import com.puretv.twitch.tv.ui.components.TvFlipBanner
 import com.puretv.twitch.tv.ui.components.TvSleepBanner
+import com.puretv.twitch.tv.ui.components.rememberTvAlertBell
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import kotlinx.coroutines.delay
 import org.koin.androidx.compose.koinViewModel
@@ -96,6 +97,8 @@ fun TvStreamScreen(
     viewModel: StreamViewModel = koinViewModel(parameters = { parametersOf(channelLogin) }),
 ) {
     val state by viewModel.state.collectAsState()
+    val bellLogin = state.channelLogin.ifBlank { channelLogin }
+    val bell = rememberTvAlertBell(bellLogin, state.channel?.displayName ?: bellLogin)
     val context = LocalContext.current
     val tvPlayer = koinInject<TvPlayer>()
     val goLive = koinInject<TvGoLiveMonitor>()
@@ -315,6 +318,9 @@ fun TvStreamScreen(
                     onToggleChat = { chatVisible = !chatVisible },
                     sleepLabel = state.sleepLabel,
                     onCycleSleep = viewModel::cycleSleepTimer,
+                    alertsOn = bell.on,
+                    alertsNote = bell.message,
+                    onToggleAlerts = bell.toggle,
                     playPauseFocusRequester = playPauseFocusRequester,
                 )
                 if (!state.chatBesideVideo) {
@@ -400,6 +406,9 @@ private fun StreamVideoArea(
     onToggleChat: () -> Unit,
     sleepLabel: String,
     onCycleSleep: () -> Unit,
+    alertsOn: Boolean,
+    alertsNote: String?,
+    onToggleAlerts: () -> Unit,
     playPauseFocusRequester: FocusRequester,
 ) {
     val context = LocalContext.current
@@ -463,6 +472,9 @@ private fun StreamVideoArea(
             onToggleChat = onToggleChat,
             sleepLabel = sleepLabel,
             onCycleSleep = onCycleSleep,
+            alertsOn = alertsOn,
+            alertsNote = alertsNote,
+            onToggleAlerts = onToggleAlerts,
             playPauseFocusRequester = playPauseFocusRequester,
         )
     }

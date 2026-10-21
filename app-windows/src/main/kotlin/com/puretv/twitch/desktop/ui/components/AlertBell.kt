@@ -7,6 +7,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.window.isTraySupported
 import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.core.notify.GoLiveText
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
@@ -31,8 +32,13 @@ fun rememberAlertBell(settingsStore: DesktopSettingsStore, login: String, displa
         }
     }
     return AlertBell(on, message) {
-        settingsStore.updateSettings { GoLiveAlerts.bellTapped(it, login) }
-        message = GoLiveText.bellConfirmation(displayName, !on)
+        if (!on && !isTraySupported) {
+            // Alerts are delivered through the tray icon; promising one that cannot show would be a lie.
+            message = "Go-live alerts need the Windows system tray, which is not available here"
+        } else {
+            settingsStore.updateSettings { GoLiveAlerts.bellTapped(it, login) }
+            message = GoLiveText.bellConfirmation(displayName, !on)
+        }
     }
 }
 

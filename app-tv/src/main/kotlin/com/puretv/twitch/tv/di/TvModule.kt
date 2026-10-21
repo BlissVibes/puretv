@@ -96,7 +96,9 @@ val tvModule = module {
                 retryOnceIfUnauthorized(renew = { refresher.refreshIfPossible() }) { api.getFollowedStreams(userId) }
             },
             // By login, so it covers channels the viewer does not follow and works signed out.
-            fetchWatched = { logins -> streamRepo.streamsForChannels(logins) },
+            fetchWatched = { logins ->
+                retryOnceIfUnauthorized(renew = { refresher.refreshIfPossible() }) { streamRepo.streamsForChannels(logins) }
+            },
             store = get<DataStoreLiveNotifyStore>(),
             settings = { settings.flow.first() },
             clock = System::currentTimeMillis,

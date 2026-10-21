@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.puretv.twitch.android.ui.FollowingViewModel
 import com.puretv.twitch.android.ui.components.ExpressiveButton
+import com.puretv.twitch.android.ui.components.rememberNotificationPermissionRequest
 import com.puretv.twitch.android.ui.components.ExpressiveButtonSize
 import com.puretv.twitch.android.ui.components.ExpressiveButtonStyle
 import com.puretv.twitch.android.ui.components.ExpressiveCard
@@ -82,6 +83,13 @@ fun FollowingScreen(
 ) {
     val state by viewModel.state.collectAsState()
     val alertSet by viewModel.alertLogins.collectAsState()
+    // Turning a bell on needs the notification permission on Android 13+, same as the
+    // channel and stream bells; turning one off never asks.
+    val askPermission = rememberNotificationPermissionRequest()
+    val toggleAlerts: (String) -> Unit = { login ->
+        if (login.lowercase() !in alertSet) askPermission()
+        viewModel.toggleAlerts(login)
+    }
     val c = PureTvTheme.colors
     var layout by remember { mutableStateOf(FollowingLayout.GRID) }
     val noData = state.live.isEmpty() && state.offline.isEmpty()
@@ -142,7 +150,7 @@ fun FollowingScreen(
                                 color = c.onSurfaceVariant,
                             )
                             layout == FollowingLayout.GRID -> Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                                state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, alertSet, viewModel::toggleAlerts) }
+                                state.live.chunked(2).forEach { row -> LiveGridRow(row, onOpenStream, alertSet, toggleAlerts) }
                             }
                             else -> Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 state.live.forEach { row ->
@@ -150,7 +158,7 @@ fun FollowingScreen(
                                         row,
                                         onClick = { onOpenStream(row.login) },
                                         alerts = row.login.lowercase() in alertSet,
-                                        onToggleAlerts = { viewModel.toggleAlerts(row.login) },
+                                        onToggleAlerts = { toggleAlerts(row.login) },
                                     )
                                 }
                             }
@@ -162,7 +170,7 @@ fun FollowingScreen(
                             Spacer(Modifier.height(28.dp))
                             Text("Offline · ${state.offline.size}", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
                             Spacer(Modifier.height(12.dp))
-                            OfflineList(state.offline, onOpenStream, alertSet, viewModel::toggleAlerts)
+                            OfflineList(state.offline, onOpenStream, alertSet, toggleAlerts)
                         }
                     }
                 }

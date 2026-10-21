@@ -141,6 +141,8 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onStartWithWindows = { on ->
                 if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
             },
+            showNote = GoLiveAlerts.showPerChannelNote(state.settings),
+            onDismissNote = { settingsStore.updateSettings { it.copy(perChannelNoteDismissed = true) } },
             alertChannels = state.settings.notifyChannels,
             onRemoveChannel = { login ->
                 settingsStore.updateSettings { it.copy(notifyChannels = GoLiveAlerts.toggled(it.notifyChannels, login)) }
@@ -430,6 +432,8 @@ private fun NotificationsPanel(
     onCloseToTray: (Boolean) -> Unit,
     startWithWindows: Boolean,
     onStartWithWindows: (Boolean) -> Unit,
+    showNote: Boolean,
+    onDismissNote: () -> Unit,
     alertChannels: Set<String>,
     onRemoveChannel: (String) -> Unit,
     onTurnOffAll: () -> Unit,
@@ -441,6 +445,17 @@ private fun NotificationsPanel(
         Column {
             Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
             Spacer(Modifier.height(20.dp))
+            if (showNote) {
+                SettingsRow(label = "Alerts are now per channel", description = "Open a channel and tap the bell.") {
+                    ExpressiveButton(
+                        text = "Got it",
+                        onClick = onDismissNote,
+                        style = ExpressiveButtonStyle.Outlined,
+                        size = ExpressiveButtonSize.Small,
+                    )
+                }
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            }
             if (!trayAvailable) {
                 Text(
                     "Go-live alerts need the Windows system tray, which is not available here.",

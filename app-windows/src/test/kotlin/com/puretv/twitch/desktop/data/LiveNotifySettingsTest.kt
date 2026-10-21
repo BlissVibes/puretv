@@ -21,6 +21,7 @@ class LiveNotifySettingsTest {
                 liveNotifications = false,
                 notifyMutedLogins = setOf("a", "b"),
                 notifyChannels = setOf("Streamer", "other"),
+                perChannelNoteDismissed = true,
                 closeToTray = true,
                 startWithWindows = true,
                 trayHintShown = true,
@@ -32,6 +33,7 @@ class LiveNotifySettingsTest {
         assertEquals(false, reopened.liveNotifications)
         assertEquals(setOf("a", "b"), reopened.notifyMutedLogins)
         assertEquals(setOf("streamer", "other"), reopened.notifyChannels)
+        assertEquals(true, reopened.perChannelNoteDismissed)
         assertEquals(true, reopened.closeToTray)
         assertEquals(true, reopened.startWithWindows)
         assertEquals(true, reopened.trayHintShown)
@@ -46,6 +48,7 @@ class LiveNotifySettingsTest {
         assertEquals(defaults.liveNotifications, loaded.liveNotifications)
         assertEquals(emptySet(), loaded.notifyMutedLogins)
         assertEquals(emptySet(), loaded.notifyChannels, "nobody is opted in until they tap a bell")
+        assertEquals(false, loaded.perChannelNoteDismissed)
         assertEquals(false, loaded.closeToTray)
         assertEquals(false, loaded.startWithWindows)
         assertEquals(false, loaded.trayHintShown)

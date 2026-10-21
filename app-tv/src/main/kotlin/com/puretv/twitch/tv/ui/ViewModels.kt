@@ -614,6 +614,7 @@ class StreamViewModel(
     private var sleepJob: Job? = null
     private var lastFlipDirection = FlipDirection.NEXT
     @Volatile private var signedIn = false
+    @Volatile private var viewerUserId = ""
 
     // Watch history ("Continue watching" on Home). A channel counts once its first frame
     // is up, and its time is added when the viewer flips away or leaves. The writes
@@ -669,6 +670,8 @@ class StreamViewModel(
             // Settings the whole screen shares, whichever channel is on.
             settingsStore.flow.collect { settings ->
                 signedIn = settings.accessToken.isNotBlank()
+                viewerUserId = settings.userId
+                refreshFollows()
                 _state.update {
                     it.copy(
                         chatTextScale = ChatTextSize.from(settings.chatFontSize).scale,
@@ -785,10 +788,23 @@ class StreamViewModel(
     }
 
     /**
+     * Keeps the monitor's live follows fresh for the flip ring. The alert timer polls
+     * only the channels with a bell, so this asks for the followed feed itself (shared
+     * for 30 seconds, so a burst of presses is one request). The ring read right after
+     * uses the previous answer; the next press sees this one.
+     */
+    private fun refreshFollows() {
+        val userId = viewerUserId
+        if (!signedIn || userId.isBlank()) return
+        viewModelScope.launch { runCatching { liveFollows.followedLive(userId) } }
+    }
+
+    /**
      * The channels a flip walks: the viewer's live follows when they are signed in and
      * watching one of them, otherwise the row this stream was opened from.
      */
     private fun flipRing(): List<String> {
+        refreshFollows()
         val follows = if (signedIn) liveFollows.liveNow.value.map { it.userLogin } else null
         return ChannelFlip.ringFor(currentLogin, follows, flipOrigin.logins)
     }
@@ -1150,6 +1166,14 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
 
     fun setProxyUrl(url: String) = viewModelScope.launch {
         settingsStore.update { it.copy(customProxyUrl = url) }
+    }
+
+    fun dismissPerChannelNote() = viewModelScope.launch {
+        settingsStore.update { it.copy(perChannelNoteDismissed = true) }
+    }
+
+    fun removeAlertChannel(login: String) = viewModelScope.launch {
+        settingsStore.update { it.copy(notifyChannels = GoLiveAlerts.toggled(it.notifyChannels, login)) }
     }
 
     /** Clears the whole go-live list (a single channel is turned off from its page or Following). */

@@ -71,6 +71,8 @@ import com.puretv.twitch.core.adblock.AdSimulator
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.notify.GoLiveAlerts
+import com.puretv.twitch.core.notify.GoLiveText
 import kotlinx.coroutines.launch
 import org.koin.androidx.compose.koinViewModel
 import org.koin.compose.koinInject
@@ -151,6 +153,9 @@ fun SettingsScreen(onBack: () -> Unit) {
 
         NotificationsPanel(
             enabled = state.settings.liveNotifications,
+            signedIn = state.isLoggedIn,
+            showNote = GoLiveAlerts.showPerChannelNote(state.settings),
+            onDismissNote = viewModel::dismissPerChannelNote,
             alertChannels = state.settings.notifyChannels,
             onEnabledChange = viewModel::setLiveNotifications,
             onRemoveChannel = viewModel::removeAlertChannel,
@@ -472,6 +477,9 @@ private fun PlaybackPanel(
 @Composable
 private fun NotificationsPanel(
     enabled: Boolean,
+    signedIn: Boolean,
+    showNote: Boolean,
+    onDismissNote: () -> Unit,
     alertChannels: Set<String>,
     onEnabledChange: (Boolean) -> Unit,
     onRemoveChannel: (String) -> Unit,
@@ -489,6 +497,17 @@ private fun NotificationsPanel(
         Column {
             Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
             Spacer(Modifier.height(20.dp))
+            if (showNote) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                ) {
+                    Text(GoLiveText.PER_CHANNEL_NOTE, style = MaterialTheme.typography.bodyMedium, color = c.onSurface, modifier = Modifier.weight(1f))
+                    ExpressiveButton(text = "Got it", onClick = onDismissNote, style = ExpressiveButtonStyle.Outlined, size = ExpressiveButtonSize.Small)
+                }
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            }
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -537,7 +556,11 @@ private fun NotificationsPanel(
                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                 ) {
                     Text(
-                        if (alertChannels.size == 1) "Alerts for 1 channel" else "Alerts for ${alertChannels.size} channels",
+                        when {
+                            !signedIn -> "Paused until you sign in (${alertChannels.size} saved)"
+                            alertChannels.size == 1 -> "Alerts for 1 channel"
+                            else -> "Alerts for ${alertChannels.size} channels"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         color = c.onSurface,
                         modifier = Modifier.weight(1f),

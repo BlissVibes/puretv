@@ -264,6 +264,8 @@ data class AppSettings(
     val liveNotifications: Boolean = true,
     val notifyMutedLogins: Set<String> = emptySet(),
     val notifyChannels: Set<String> = emptySet(),
+    // The "alerts are now per channel" note in Settings was dismissed.
+    val perChannelNoteDismissed: Boolean = false,
     // Windows only: closing the window hides it to the tray instead of quitting,
     // and PureTV can start hidden in the tray when Windows starts. Both off by
     // default: the close button quits, as it always has.

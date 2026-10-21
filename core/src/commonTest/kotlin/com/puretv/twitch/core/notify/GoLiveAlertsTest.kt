@@ -36,6 +36,14 @@ class GoLiveAlertsTest {
         assertEquals(false, removed.liveNotifications, "removing a bell leaves the toggle alone")
     }
 
+    @Test fun theUpgradeNoteShowsOnceAndGoesAway() {
+        val upgraded = com.puretv.twitch.core.model.AppSettings()
+        assertEquals(true, GoLiveAlerts.showPerChannelNote(upgraded))
+        assertEquals(false, GoLiveAlerts.showPerChannelNote(upgraded.copy(perChannelNoteDismissed = true)))
+        assertEquals(false, GoLiveAlerts.showPerChannelNote(upgraded.copy(notifyChannels = setOf("a"))))
+        assertEquals(false, GoLiveAlerts.showPerChannelNote(upgraded.copy(liveNotifications = false)))
+    }
+
     @Test fun bellConfirmationNamesTheChannel() {
         assertEquals("You'll be told when Alice goes live", GoLiveText.bellConfirmation("Alice", true))
         assertEquals("Alerts off for Alice", GoLiveText.bellConfirmation("Alice", false))

@@ -7,6 +7,7 @@ import com.puretv.twitch.desktop.data.LiveNotifyFileStore
 import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import com.puretv.twitch.core.api.TwitchApiClient
+import com.puretv.twitch.core.api.retryOnceIfUnauthorized
 import com.puretv.twitch.core.notify.LiveFollowsMonitor
 import com.puretv.twitch.core.repository.StreamRepository
 import com.puretv.twitch.core.playback.FlipOrigin
@@ -48,6 +49,7 @@ import com.puretv.twitch.desktop.ui.VodListViewModel
 import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.VodChatViewModel
 import com.puretv.twitch.desktop.ui.VodPlayerViewModel
+import io.ktor.client.HttpClient
 import io.ktor.client.engine.HttpClientEngine
 import io.ktor.client.engine.okhttp.OkHttp
 import org.koin.core.parameter.parametersOf
@@ -89,10 +91,15 @@ val desktopModule = module {
         val api = get<TwitchApiClient>()
         val notifier = get<DesktopLiveNotifier>()
         val streams = get<StreamRepository>()
+        val http = get<HttpClient>()
         LiveFollowsMonitor(
             fetchLive = { userId -> api.getFollowedStreams(userId) },
-            // By login, so it covers channels the viewer does not follow and works signed out.
-            fetchWatched = { logins -> streams.streamsForChannels(logins) },
+            // By login, so it covers channels the viewer does not follow and works signed
+            // out. A 401 renews the sign-in once and asks again, because the tray can sit
+            // for days and Twitch may drop a token early.
+            fetchWatched = { logins ->
+                retryOnceIfUnauthorized(renew = { store.refreshIfNeeded(http, force = true) }) { streams.streamsForChannels(logins) }
+            },
             store = get<LiveNotifyFileStore>(),
             settings = { store.settings.value },
             clock = System::currentTimeMillis,

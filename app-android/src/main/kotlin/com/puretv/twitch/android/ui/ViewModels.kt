@@ -877,6 +877,10 @@ class SettingsViewModel(private val settingsStore: AppSettingsStore) : ViewModel
         settingsStore.update { it.copy(liveNotifications = enabled) }
     }
 
+    fun dismissPerChannelNote() = viewModelScope.launch {
+        settingsStore.update { it.copy(perChannelNoteDismissed = true) }
+    }
+
     fun removeAlertChannel(login: String) = viewModelScope.launch {
         settingsStore.update { it.copy(notifyChannels = GoLiveAlerts.toggled(it.notifyChannels, login)) }
     }

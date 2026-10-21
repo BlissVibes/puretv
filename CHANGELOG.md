@@ -16,6 +16,16 @@ release notes automatically.
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
 ### New
+- **More than one PureTV window (Windows).** Press Ctrl + N, the plus button in
+  the title bar, or New window in the tray menu to open another full PureTV
+  window, on another monitor when you have one. Each window has its own screens,
+  its own stream or past broadcast with its own volume, and its own theater,
+  fullscreen and mini player, so you can browse, search and watch different
+  creators in each. Right click (or middle click, or Ctrl + click) a stream,
+  channel, category, search result or followed channel to open it in a new
+  window. Closing a window closes only that one, and windows reopen where you
+  left them. Up to 6 windows and 8 videos at once, with a friendly note if you
+  go past that.
 - **Pop multi-stream out onto other monitors (Windows).** Every channel in
   multi-stream has a Pop out button that moves it into its own PureTV window.
   Drag that window to any monitor, resize it, or press F (or double click the

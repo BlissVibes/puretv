@@ -112,6 +112,8 @@ import com.puretv.twitch.desktop.ui.MiniControlStrip
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
 import com.puretv.twitch.desktop.ui.AppWindows
+import com.puretv.twitch.desktop.ui.WindowDestination
+import com.puretv.twitch.desktop.ui.openInNewWindow
 import com.puretv.twitch.desktop.ui.LocalAwtWindow
 import com.puretv.twitch.desktop.ui.LocalWindowPlayback
 import com.puretv.twitch.desktop.player.WindowPlayback
@@ -534,6 +536,7 @@ fun StreamContent(
                         bell = bell,
                         onBack = onBack,
                         onOpenMultiView = onOpenMultiView,
+                        onOpenInNewWindow = { openInNewWindow(WindowDestination.Channel(channelLogin)) },
                         radius = panelRadius,
                     )
                 }
@@ -795,6 +798,7 @@ private fun TopBar(
     bell: AlertBell,
     onBack: () -> Unit,
     onOpenMultiView: () -> Unit,
+    onOpenInNewWindow: () -> Unit,
     radius: Dp,
 ) {
     val c = PureTvTheme.colors
@@ -841,6 +845,11 @@ private fun TopBar(
             contentDescription = if (bell.on) "Turn off go-live alerts" else "Tell me when this channel goes live",
             onClick = bell.toggle,
             tint = if (bell.on) c.primary else null,
+        )
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.OpenInNew,
+            contentDescription = "Open this channel's page in a new window",
+            onClick = onOpenInNewWindow,
         )
         ExpressiveButton(
             text = "Watch with another channel",

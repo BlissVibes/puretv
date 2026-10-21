@@ -58,6 +58,8 @@ import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.rememberAlertBell
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.WindowDestination
+import com.puretv.twitch.desktop.ui.openInNewWindow
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import org.koin.core.Koin
@@ -129,6 +131,7 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
                 bell = bell,
                 onWatch = onWatch,
                 onToggleFollow = viewModel::toggleFollow,
+                onWatchInNewWindow = { openInNewWindow(WindowDestination.Stream(channelLogin)) },
             )
 
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -160,6 +163,7 @@ private fun IdentityRow(
     bell: AlertBell,
     onWatch: () -> Unit,
     onToggleFollow: () -> Unit,
+    onWatchInNewWindow: () -> Unit,
 ) {
     val c = PureTvTheme.colors
 
@@ -222,6 +226,14 @@ private fun IdentityRow(
                 style = if (bell.on) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Outlined,
                 size = ExpressiveButtonSize.Large,
                 icon = if (bell.on) ExpressiveIcons.NotifyOn else ExpressiveIcons.Notify,
+            )
+            ExpressiveButton(
+                text = "Watch in new window",
+                onClick = onWatchInNewWindow,
+                style = ExpressiveButtonStyle.Outlined,
+                size = ExpressiveButtonSize.Large,
+                icon = ExpressiveIcons.OpenInNew,
+                enabled = isLive,
             )
         }
     }

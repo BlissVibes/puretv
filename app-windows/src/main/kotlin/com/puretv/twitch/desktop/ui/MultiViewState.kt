@@ -1,17 +1,47 @@
 package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.core.model.StreamQuality
+import com.puretv.twitch.core.model.VideoType
 import com.puretv.twitch.desktop.player.DEFAULT_VOLUME
 import com.puretv.twitch.desktop.player.TileQuality
 
+/** What kind of past video a [TileSource.Vod] is. */
+enum class VodKind(val label: String) {
+    PAST_BROADCAST("Past broadcast"),
+    HIGHLIGHT("Highlight"),
+    UPLOAD("Upload"),
+    ;
+
+    companion object {
+        fun from(type: VideoType): VodKind = when (type) {
+            VideoType.HIGHLIGHT -> HIGHLIGHT
+            VideoType.UPLOAD -> UPLOAD
+            else -> PAST_BROADCAST
+        }
+    }
+}
+
 /**
- * What a tile plays. Only [Live] exists today. The extension point for past broadcasts and
- * highlights is a `Vod(videoId, startPositionMs)` case here: the runtime that starts a tile
- * (MultiViewViewModel.openRuntime), its strip (Tile and PoppedStreamWindow) and the chat
- * follow-the-selected-tile rule are the places that switch on the source.
+ * What a tile plays: a live channel, or a past video (broadcast, highlight or upload). The
+ * runtime that starts a tile (MultiViewViewModel.openRuntime), its strip (Tile and
+ * PoppedStreamWindow) and the chat follow-the-selected-tile rule switch on the source.
  */
 sealed interface TileSource {
     data class Live(val login: String) : TileSource
+
+    /**
+     * A past video. [channelLogin] is its channel (a live tile of the same channel may sit
+     * beside it); [startPositionMs] is where it starts when nothing better is known, which
+     * is where a video moved over from the player screen left off.
+     */
+    data class Vod(
+        val videoId: String,
+        val title: String,
+        val channelLogin: String,
+        val startPositionMs: Long = 0,
+        val kind: VodKind = VodKind.PAST_BROADCAST,
+        val thumbnailUrl: String = "",
+    ) : TileSource
 }
 
 /**
@@ -28,6 +58,15 @@ data class MultiTile(
 ) {
     /** True when this tile makes no sound by its own settings, whatever is selected. */
     val silent: Boolean get() = muted || volume <= 0
+
+    val vod: TileSource.Vod? get() = source as? TileSource.Vod
+    val isVod: Boolean get() = source is TileSource.Vod
+
+    /** The channel when this tile is live, else null: what live-only services (chat, ad block) are keyed by. */
+    val liveLogin: String? get() = (source as? TileSource.Live)?.login
+
+    /** The key a popped-out window's place is remembered by. No spaces: the store is space separated. */
+    val placeKey: String get() = vod?.let { "video-${it.videoId}" } ?: login
 }
 
 /**
@@ -65,14 +104,18 @@ data class MultiViewState(
     fun isPopped(id: Int): Boolean = id in poppedIds
     val active: MultiTile? get() = tiles.firstOrNull { it.id == activeId }
 
-    fun contains(login: String): Boolean = tiles.any { it.login.equals(login, ignoreCase = true) }
+    /** True when a live tile of [login] is shown. A past video of that channel does not count. */
+    fun contains(login: String): Boolean = tiles.any { it.liveLogin.equals(login, ignoreCase = true) }
+
+    /** True when the past video [videoId] is shown. */
+    fun containsVod(videoId: String): Boolean = tiles.any { it.vod?.videoId == videoId }
 
     /** What adding [login] would do, so a refused add can say why instead of doing nothing. */
     fun addOutcome(login: String): AddOutcome {
         val clean = login.trim().removePrefix("@").lowercase()
         return when {
             clean.isEmpty() -> AddOutcome.Blank
-            contains(clean) -> AddOutcome.AlreadyShown(tiles.first { it.login.equals(clean, ignoreCase = true) }.id)
+            contains(clean) -> AddOutcome.AlreadyShown(tiles.first { it.liveLogin.equals(clean, ignoreCase = true) }.id)
             !canAdd -> AddOutcome.Full
             else -> AddOutcome.Added
         }
@@ -88,6 +131,33 @@ data class MultiViewState(
         val clean = login.trim().removePrefix("@").lowercase()
         if (clean.isEmpty() || contains(clean) || !canAdd) return this
         val tile = MultiTile(nextId, clean, volume = volume.coerceIn(1, 100))
+        return copy(tiles = tiles + tile, activeId = activeId ?: tile.id, nextId = nextId + 1)
+    }
+
+    /** What adding the past video [videoId] would do (see [addOutcome]). */
+    fun addVodOutcome(videoId: String): AddOutcome {
+        val clean = videoId.trim()
+        return when {
+            clean.isEmpty() -> AddOutcome.Blank
+            containsVod(clean) -> AddOutcome.AlreadyShown(tiles.first { it.vod?.videoId == clean }.id)
+            !canAdd -> AddOutcome.Full
+            else -> AddOutcome.Added
+        }
+    }
+
+    /**
+     * The state with the past video [source] added as the last tile, with the same rules
+     * as [add]: the first tile becomes active, a video already on screen or a full screen
+     * change nothing, and the new tile is never silent.
+     */
+    fun addVod(source: TileSource.Vod, volume: Int = DEFAULT_VOLUME): MultiViewState {
+        if (addVodOutcome(source.videoId) != AddOutcome.Added) return this
+        val clean = source.copy(
+            videoId = source.videoId.trim(),
+            channelLogin = source.channelLogin.trim().removePrefix("@").lowercase(),
+            startPositionMs = source.startPositionMs.coerceAtLeast(0),
+        )
+        val tile = MultiTile(nextId, clean.channelLogin, volume = volume.coerceIn(1, 100), source = clean)
         return copy(tiles = tiles + tile, activeId = activeId ?: tile.id, nextId = nextId + 1)
     }
 

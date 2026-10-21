@@ -163,7 +163,8 @@ class VlcPlayer(
         currentUrl?.let { url ->
             if (moved || mp.status().state() != State.PLAYING) {
                 if (moved) _status.update { it.copy(isBuffering = true) }
-                runCatching { mp.media().play(url, *currentOptions) }
+                // A past video moved to a new window carries on from where it is, not from where it began.
+                runCatching { mp.media().play(url, *if (moved) optionsToReplay() else currentOptions) }
                     .onFailure { e -> _status.update { it.copy(error = "Player attach race: ${e.message}") } }
             }
         }
@@ -188,11 +189,34 @@ class VlcPlayer(
      * re-target an already-running session.
      */
     override fun play(streamUrl: String, lowLatency: Boolean) {
-        val mp = mediaPlayer ?: return
-        currentUrl = streamUrl
         // VLC starts a live HLS stream 15 s back from the end of the playlist by
         // default; low latency starts it LiveLatency.VLC_LIVE_DELAY_MS back.
         val options = if (lowLatency) arrayOf(":adaptive-livedelay=${LiveLatency.VLC_LIVE_DELAY_MS}") else emptyArray()
+        isVod = false
+        start(streamUrl, options)
+    }
+
+    /**
+     * Plays a past video from [startMs]. Unlike a live stream it keeps its place: when the
+     * video moves to another window, or is played again after it stopped, it starts from
+     * where it was (see [optionsToReplay]) instead of from [startMs] again.
+     */
+    fun playVod(videoUrl: String, startMs: Long) {
+        isVod = true
+        _status.update { it.copy(positionMs = startMs.coerceAtLeast(0)) }
+        start(videoUrl, VodPlayback.startOptions(startMs))
+    }
+
+    // True once a past video was started: its reloads resume at the current position.
+    @Volatile private var isVod = false
+
+    /** The per-media options for starting [currentUrl] again: a live stream as it was, a past video where it is now. */
+    private fun optionsToReplay(): Array<String> =
+        if (isVod) VodPlayback.startOptions(_status.value.positionMs) else currentOptions
+
+    private fun start(streamUrl: String, options: Array<String>) {
+        val mp = mediaPlayer ?: return
+        currentUrl = streamUrl
         currentOptions = options
         _status.update { it.copy(isBuffering = true, error = null) }
         val component = attachedComponent ?: return
@@ -239,7 +263,13 @@ class VlcPlayer(
         val mp = mediaPlayer ?: return
         SwingUtilities.invokeLater {
             if (mp.status().state() == State.PAUSED) mp.controls().play()
-            else currentUrl?.let { mp.media().play(it, *currentOptions) }
+            else currentUrl?.let { url ->
+                // A video that ended plays again from its start; one that stopped, from where it was.
+                val options = if (isVod) {
+                    VodPlayback.startOptions(VodPlayback.replayStartMs(_status.value.positionMs, _status.value.durationMs))
+                } else currentOptions
+                mp.media().play(url, *options)
+            }
         }
     }
 

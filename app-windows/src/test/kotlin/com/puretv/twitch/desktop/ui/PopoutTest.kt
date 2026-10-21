@@ -188,6 +188,10 @@ class MultiStreamSessionTest {
             val after = layout.add(login)
             return (after !== layout).also { layout = after }
         }
+        override fun addVod(source: TileSource.Vod): Boolean {
+            val after = layout.addVod(source)
+            return (after !== layout).also { layout = after }
+        }
         override fun closeTile(id: Int): List<MultiTile> { layout = layout.remove(id); return layout.tiles }
         override fun closeDocked(): List<MultiTile> { layout = layout.withoutDocked(); return layout.tiles }
         override fun popOut(id: Int) { layout = layout.popOut(id) }

@@ -23,7 +23,20 @@ import com.puretv.twitch.desktop.player.TILE_AUDIO_OUTPUT
 import com.puretv.twitch.desktop.player.TileQuality
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.player.VlcPlayer
+import com.puretv.twitch.core.repository.VodRepository
+import com.puretv.twitch.core.stream.MasterPlaylistResult
+import com.puretv.twitch.core.vod.VodChatReplayController
+import com.puretv.twitch.core.vod.VodFailures
+import com.puretv.twitch.core.vod.WatchProgress
+import com.puretv.twitch.core.vod.loadVodEmoteIndex
+import com.puretv.twitch.desktop.data.WatchProgressStore
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -45,6 +58,9 @@ data class TileInfo(
     /** Why this tile cannot play, in words; null while it plays or is still trying. */
     val message: String? = null,
 )
+
+/** The chat replay of the selected past video: [videoId] says which video the [messages] belong to. */
+data class VodChatView(val videoId: String? = null, val messages: List<ChatMessage> = emptyList())
 
 data class MultiViewUiState(
     val layout: MultiViewState = MultiViewState(),
@@ -72,7 +88,7 @@ data class MultiViewUiState(
  * and a stalled picture is reloaded with a fresh session.
  */
 class MultiViewViewModel(
-    initialLogin: String,
+    initial: TileSource,
     private val engine: VlcEngine,
     private val adBlockEngine: AdBlockEngine,
     private val localStreamProxy: LocalStreamProxy,
@@ -80,11 +96,13 @@ class MultiViewViewModel(
     private val settingsStore: DesktopSettingsStore,
     private val channelRepository: ChannelRepository,
     chatClient: TwitchChatClient,
-    emoteRepository: EmoteRepository,
+    private val emoteRepository: EmoteRepository,
     badgeRepository: BadgeRepository,
     apiClient: TwitchApiClient,
     private val players: DesktopPlayerProvider,
     private val notifier: DesktopLiveNotifier,
+    private val vodRepository: VodRepository,
+    private val progressStore: WatchProgressStore,
 ) : DesktopViewModel(), MultiTileHost {
 
     // New tiles start at the volume the viewer last had on the normal stream screen, when
@@ -97,10 +115,19 @@ class MultiViewViewModel(
 
     private val _state = MutableStateFlow(
         MultiViewUiState(
-            layout = MultiViewState(listenAll = rememberedListenAll).add(initialLogin, startVolume),
+            layout = MultiViewState(listenAll = rememberedListenAll).let {
+                when (initial) {
+                    is TileSource.Live -> it.add(initial.login, startVolume)
+                    is TileSource.Vod -> it.addVod(initial, startVolume)
+                }
+            },
         ),
     )
     override val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
+
+    // Chat replay of the selected past video (see the collector in init).
+    private val _vodChat = MutableStateFlow(VodChatView())
+    val vodChatState: StateFlow<VodChatView> = _vodChat.asStateFlow()
 
     // One chat connection for the whole screen, following the active tile.
     private val chat = MultiChatSession(
@@ -115,9 +142,14 @@ class MultiViewViewModel(
     private class Runtime(
         val id: Int,
         val login: String,
+        /** Non-null for a past video: it never touches the live proxy, ad block or stall watchdog. */
+        val vod: TileSource.Vod? = null,
         val watchdog: PlaybackStallWatchdog = PlaybackStallWatchdog(),
     ) {
         @Volatile var player: VlcPlayer? = null
+        @Volatile var master: MasterPlaylistResult? = null
+        @Volatile var startMs = 0L
+        @Volatile var loadJob: Job? = null
         @Volatile var autoRetries = 0
         @Volatile var playingHeight = 0
         @Volatile var closed = false
@@ -147,12 +179,23 @@ class MultiViewViewModel(
         _state.value.layout.tiles.forEach { openRuntime(it) }
         // Go-live toasts skip every channel on screen, not only the one App knows about.
         scope.launch {
-            _state.map { s -> s.layout.tiles.mapTo(HashSet()) { it.login } }.distinctUntilChanged()
+            // Only live tiles: a past video of a channel does not make its going live uninteresting.
+            _state.map { s -> s.layout.tiles.mapNotNullTo(HashSet()) { it.liveLogin } }.distinctUntilChanged()
                 .collect { tiles -> synchronized(watchLock) { if (!cleared) notifier.alsoWatching = tiles } }
         }
-        // Chat belongs to the active tile: when the sound moves, so does the chat.
+        // Chat belongs to the active tile: when the sound moves, so does the chat. A past
+        // video has no live room; its replay is shown instead (see below).
         scope.launch {
-            _state.map { it.layout.active?.login }.distinctUntilChanged().collect { chat.switchTo(it) }
+            _state.map { it.layout.active?.liveLogin }.distinctUntilChanged().collect { chat.switchTo(it) }
+        }
+        scope.launch { followVodChat() }
+        // Places of the playing past videos are saved for Continue Watching.
+        scope.launch {
+            while (true) {
+                delay(VodTileLogic.SAVE_EVERY_MS)
+                val vods = synchronized(lock) { runtimes.values.filter { it.vod != null && !it.closed } }
+                for (rt in vods) if (rt.player?.status?.value?.isPlaying == true) runCatching { saveProgress(rt) }
+            }
         }
         // One loop watches every tile for a picture that froze while still "playing".
         scope.launch {
@@ -161,6 +204,8 @@ class MultiViewViewModel(
                 val now = System.currentTimeMillis()
                 val live = synchronized(lock) { runtimes.values.toList() }
                 for (rt in live) {
+                    // A past video that is paused or seeking is not stalled.
+                    if (rt.vod != null) continue
                     val player = rt.player ?: continue
                     if (rt.watchdog.sample(player.status.value, now)) {
                         // A stalled session should not be reused: mint a fresh one.
@@ -199,6 +244,56 @@ class MultiViewViewModel(
         applyAudio()
         return true
     }
+
+    /** Adds the past video [source] as a tile; false when it is already shown or the screen is full. */
+    override fun addVod(source: TileSource.Vod): Boolean {
+        val before = _state.value.layout
+        val after = before.addVod(source, startVolume)
+        if (after === before) return false
+        _state.update { it.copy(layout = after) }
+        openRuntime(after.tiles.last())
+        retargetQuality()
+        applyAudio()
+        return true
+    }
+
+    // ---- Past video controls ------------------------------------------------------
+
+    private fun vodPlayer(id: Int): VlcPlayer? =
+        synchronized(lock) { runtimes[id]?.takeIf { it.vod != null && !it.closed }?.player }
+
+    private fun activeVodId(): Int? = _state.value.layout.active?.takeIf { it.isVod }?.id
+
+    /** Play or pause the past video of tile [id]. */
+    fun togglePlay(id: Int) {
+        vodPlayer(id)?.togglePlayPause()
+    }
+
+    /** Seek the past video of tile [id] to [positionMs], kept inside the video. */
+    fun seekTo(id: Int, positionMs: Long) {
+        val player = vodPlayer(id) ?: return
+        player.seekTo(VodTileLogic.clampSeek(positionMs, player.status.value.durationMs))
+    }
+
+    /** Skips [deltaMs] in the past video of tile [id]; false while it cannot seek yet. */
+    fun seekBy(id: Int, deltaMs: Long): Boolean {
+        val player = vodPlayer(id) ?: return false
+        val s = player.status.value
+        val target = VodTileLogic.seekTarget(s.positionMs, deltaMs, s.durationMs, s.isSeekable) ?: return false
+        player.seekTo(target)
+        return true
+    }
+
+    /** Space on the keyboard: play or pause the selected tile when it is a past video. */
+    fun toggleActivePlay() {
+        activeVodId()?.let(::togglePlay)
+    }
+
+    /** The arrow keys, J and L: skip in the selected tile when it is a past video. */
+    fun seekActiveBy(deltaMs: Long): Boolean = activeVodId()?.let { seekBy(it, deltaMs) } ?: false
+
+    /** Where the past video of tile [id] is now, for handing it to another surface. */
+    fun positionOf(id: Int): Long = vodPlayer(id)?.status?.value?.positionMs ?: 0L
 
     /** Closes tile [id], stopping and freeing its player. The tiles left are returned. */
     override fun closeTile(id: Int): List<MultiTile> {
@@ -282,7 +377,7 @@ class MultiViewViewModel(
     // ---- Runtimes ---------------------------------------------------------------
 
     private fun openRuntime(tile: MultiTile) {
-        val rt = Runtime(tile.id, tile.login)
+        val rt = Runtime(tile.id, tile.login, tile.vod)
         synchronized(lock) { runtimes[tile.id] = rt }
         _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login))) }
         val setup = scope.launch {
@@ -307,6 +402,14 @@ class MultiViewViewModel(
             }
             if (!player.isAvailable) return@launch
             applyAudio()
+            val vod = rt.vod
+            if (vod != null) {
+                // A past video plays its own playlist directly: no proxy, no ad pipeline.
+                rt.startMs = VodTileLogic.initialStartMs(vod.startPositionMs, progressStore.get(vod.videoId))
+                launchVodWatchers(rt, player)
+                startVod(rt, rt.startMs)
+                return@launch
+            }
             if (!rt.closed) adBlockEngine.resetForNewStream(rt.login)
             // Wait for the shared proxy start before the first request goes out.
             proxyReady.first { it != null }
@@ -365,8 +468,132 @@ class MultiViewViewModel(
         }
     }
 
+    private fun launchVodWatchers(rt: Runtime, player: VlcPlayer) {
+        synchronized(lock) {
+            rt.jobs += scope.launch {
+                player.status.map { it.isBuffering to it.isPlaying }.distinctUntilChanged().collect { (buffering, playing) ->
+                    updateInfo(rt.id) { it.copy(isBuffering = buffering && !playing, message = if (playing) null else it.message) }
+                }
+            }
+            rt.jobs += scope.launch {
+                // A player fault reloads the video at the place it had reached, with a fresh
+                // playlist, after a growing pause. It never starts over from the beginning.
+                player.status.map { it.error to it.isPlaying }.distinctUntilChanged().collect { (error, playing) ->
+                    if (playing) rt.autoRetries = 0
+                    if (error == null || rt.closed) return@collect
+                    if (rt.autoRetries < AUTO_RETRY_DELAYS_MS.size) {
+                        delay(AUTO_RETRY_DELAYS_MS[rt.autoRetries])
+                        rt.autoRetries++
+                        rt.master = null
+                        if (!rt.closed) startVod(rt, resumePoint(rt))
+                    } else {
+                        updateInfo(rt.id) { it.copy(message = VodFailures.COULD_NOT_LOAD) }
+                    }
+                }
+            }
+        }
+    }
+
+    /** Where a reload of a past video picks up: the place it had reached, else where it was started. */
+    private fun resumePoint(rt: Runtime): Long {
+        val s = rt.player?.status?.value
+        return VodTileLogic.retryStartMs(s?.positionMs ?: 0, rt.startMs, s?.durationMs ?: 0)
+    }
+
+    /**
+     * Every (re)start of a past video: resolves its playlist (kept for reloads), picks the
+     * rendition the tile count allows and plays it from [atMs]. A video that cannot be
+     * resolved is explained, or retried after a pause when the failure may pass.
+     */
+    private fun startVod(rt: Runtime, atMs: Long) {
+        val vod = rt.vod ?: return
+        val player = rt.player ?: return
+        var next = atMs
+        val job = scope.launch {
+            while (!rt.closed) {
+                val resolved = runCatching { rt.master ?: vodRepository.resolvePlayableVod(vod.videoId) }
+                val master = resolved.getOrNull()
+                if (master != null) {
+                    rt.master = master
+                    val height = targetHeight()
+                    val url = TileQuality.vodUrl(master.masterUrl, master.variants, height)
+                    synchronized(lock) {
+                        if (rt.closed) return@launch
+                        rt.playingHeight = height
+                        player.playVod(url, next)
+                    }
+                    applyAudio()
+                    return@launch
+                }
+                val error = resolved.exceptionOrNull()
+                if (VodFailures.isPermanent(error) || rt.autoRetries >= AUTO_RETRY_DELAYS_MS.size) {
+                    updateInfo(rt.id) { it.copy(message = VodFailures.message(error), isBuffering = false) }
+                    return@launch
+                }
+                delay(AUTO_RETRY_DELAYS_MS[rt.autoRetries])
+                rt.autoRetries++
+                next = resumePoint(rt)
+            }
+        }
+        synchronized(lock) {
+            rt.loadJob?.cancel()
+            rt.loadJob = job
+            rt.jobs += job
+        }
+    }
+
+    /** Saves where the past video of [rt] is, for Continue Watching. Nothing is saved this early in a video. */
+    private fun saveProgress(rt: Runtime) {
+        val vod = rt.vod ?: return
+        val s = rt.player?.status?.value ?: return
+        if (!VodTileLogic.shouldSave(s.positionMs, s.durationMs)) return
+        progressStore.save(
+            WatchProgress(
+                vodId = vod.videoId,
+                positionMs = s.positionMs,
+                durationMs = s.durationMs,
+                updatedAt = System.currentTimeMillis(),
+                title = vod.title,
+                channelLogin = vod.channelLogin,
+                thumbnailUrl = vod.thumbnailUrl,
+            ),
+        )
+    }
+
+    /** Chat replay follows the selected tile when it is a past video, and fades out otherwise. */
+    private suspend fun followVodChat() {
+        _state.map { s -> s.layout.active?.vod?.let { it to s.info[s.layout.activeId]?.player } }
+            .distinctUntilChanged()
+            .collectLatest { target ->
+                if (target == null) {
+                    _vodChat.value = VodChatView()
+                    return@collectLatest
+                }
+                val (vod, player) = target
+                val replayScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+                try {
+                    val controller = VodChatReplayController(
+                        scope = replayScope,
+                        fetch = { offset -> vodRepository.videoComments(vod.videoId, offset) },
+                        loadEmoteIndex = { loadVodEmoteIndex(vod.channelLogin, channelRepository, emoteRepository) },
+                    )
+                    _vodChat.value = VodChatView(vod.videoId)
+                    replayScope.launch { controller.messages.collect { _vodChat.value = VodChatView(vod.videoId, it) } }
+                    if (player == null) awaitCancellation()
+                    player.status.map { it.positionMs / 1000 }.distinctUntilChanged().collect { controller.onPosition(it) }
+                } finally {
+                    replayScope.cancel()
+                }
+            }
+    }
+
     /** Every (re)start of a tile goes through here, so retries keep the tile's quality and low latency. */
     private fun startPlayback(rt: Runtime) {
+        if (rt.vod != null) {
+            startVod(rt, resumePoint(rt))
+            applyAudio()
+            return
+        }
         val player = rt.player ?: return
         val height = targetHeight()
         val lowLatency = settingsStore.settings.value.lowLatencyMode
@@ -433,9 +660,12 @@ class MultiViewViewModel(
         val rt = synchronized(lock) {
             runtimes.remove(id)?.also { it.closed = true }
         } ?: return
+        // Saved before the player is stopped: a stopped player reads position 0.
+        runCatching { saveProgress(rt) }
         synchronized(lock) { rt.jobs.toList() }.forEach { it.cancel() }
         rt.player?.let { rt.freeOnce(it) }
-        adBlockEngine.forgetChannel(rt.login)
+        // A past video has no ad-block state, and a live tile of the same channel must keep its own.
+        if (rt.vod == null) adBlockEngine.forgetChannel(rt.login)
     }
 
     override fun shutDown() = dispose()

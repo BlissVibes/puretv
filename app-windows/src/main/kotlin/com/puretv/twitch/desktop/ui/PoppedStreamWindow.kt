@@ -51,6 +51,7 @@ import com.puretv.twitch.desktop.ui.components.Avatar
 import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
+import com.puretv.twitch.desktop.ui.components.VodTransportRow
 import com.puretv.twitch.desktop.ui.theme.PureTvDesktopTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.ShapeIntensity
@@ -134,7 +135,7 @@ private fun PoppedStreamWindow(
 ) {
     val c = PureTvTheme.colors
     // Where it opens is decided once, when the tile is popped out.
-    val initial = remember(tile.id) { session.placementFor(tile.id, tile.login, layout.popped.size - 1) }
+    val initial = remember(tile.id) { session.placementFor(tile.id, tile.placeKey, layout.popped.size - 1) }
     val windowState = rememberWindowState(
         position = initial?.let { WindowPosition(it.x.dp, it.y.dp) } ?: WindowPosition.PlatformDefault,
         size = initial?.let { DpSize(it.width.dp, it.height.dp) }
@@ -155,7 +156,7 @@ private fun PoppedStreamWindow(
         onCloseRequest = { session.closeTile(tileId) },
         visible = visible,
         state = windowState,
-        title = "${info.displayName} - PureTV",
+        title = "${tile.vod?.title?.ifBlank { null } ?: info.displayName} - PureTV",
         icon = icon,
         undecorated = true,
     ) {
@@ -206,7 +207,7 @@ private fun PoppedStreamWindow(
                 override fun componentResized(e: ComponentEvent) = save()
                 private fun save() {
                     if (!gate.shouldSave(awtWindow.extendedState and Frame.MAXIMIZED_BOTH != 0)) return
-                    session.boundsStore.remember(tile.login, MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height))
+                    session.boundsStore.remember(tile.placeKey,MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height))
                     // Written a moment after the last change, so a crash does not lose the position.
                     flushSoon.restart()
                 }
@@ -241,8 +242,19 @@ private fun PoppedStreamWindow(
                     alt = e.isAltDown,
                     fullscreen = gate.fullscreen,
                     isRepeat = isRepeat,
+                    shift = e.isShiftDown,
+                    vod = tile.isVod,
                 ) ?: return@KeyEventDispatcher false
+                action.seekDeltaMs()?.let { delta ->
+                    // Unconsumed while the video cannot seek yet.
+                    return@KeyEventDispatcher viewModel.seekBy(tileId, delta)
+                }
                 when (action) {
+                    PopoutShortcutAction.TogglePlayPause -> viewModel.togglePlay(tileId)
+                    PopoutShortcutAction.SeekBack, PopoutShortcutAction.SeekForward,
+                    PopoutShortcutAction.SeekBackLarge, PopoutShortcutAction.SeekForwardLarge,
+                    PopoutShortcutAction.JumpBack, PopoutShortcutAction.JumpForward,
+                    -> {}
                     PopoutShortcutAction.VolumeUp -> viewModel.nudgeVolume(tileId, up = true)
                     PopoutShortcutAction.VolumeDown -> viewModel.nudgeVolume(tileId, up = false)
                     PopoutShortcutAction.ToggleMute -> viewModel.toggleMute(tileId)
@@ -293,6 +305,14 @@ private fun PoppedStreamWindow(
                     )
                 }
             }
+            // A past video's seek bar sits between the picture and the strip, outside the video.
+            if (tile.isVod) {
+                VodTransportRow(
+                    info.player,
+                    onTogglePlay = { viewModel.togglePlay(tileId) },
+                    onSeek = { viewModel.seekTo(tileId, it) },
+                )
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -307,7 +327,7 @@ private fun PoppedStreamWindow(
                 TooltipArea(
                     tooltip = {
                         Text(
-                            PopoutShortcuts.HINT,
+                            if (tile.isVod) PopoutShortcuts.VOD_HINT else PopoutShortcuts.HINT,
                             style = MaterialTheme.typography.labelSmall,
                             color = c.onSurface,
                             modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(c.surfaceHigh).padding(8.dp),
@@ -316,7 +336,7 @@ private fun PoppedStreamWindow(
                     modifier = Modifier.weight(1f),
                 ) {
                     Column {
-                        Text(info.displayName, style = MaterialTheme.typography.titleSmall, color = c.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(tile.vod?.title?.ifBlank { null } ?: info.displayName, style = MaterialTheme.typography.titleSmall, color = c.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         val sub = when {
                             info.message != null -> info.message
                             audible -> "You are listening"
@@ -334,7 +354,7 @@ private fun PoppedStreamWindow(
                         )
                     }
                 }
-                if (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null) AdBlockPill(info.adBlockStatus)
+                if (!tile.isVod && (info.adBlockStatus != AdBlockStatus.UNKNOWN || info.player != null)) AdBlockPill(info.adBlockStatus)
                 ExpressiveIconButton(
                     icon = if (tile.silent) ExpressiveIcons.VolumeOff else ExpressiveIcons.VolumeUp,
                     contentDescription = if (tile.silent) "Unmute ${info.displayName}" else "Mute ${info.displayName}",

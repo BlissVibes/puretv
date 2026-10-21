@@ -9,6 +9,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
+class SingleInstanceTitleTest {
+    @Test fun matchesThePlainTitleAndTheScreenPrefixedOne() {
+        val title = "PureTV for Twitch"
+        assertTrue(SingleInstance.titleMatches("PureTV for Twitch", title))
+        assertTrue(SingleInstance.titleMatches("forsen (live) - PureTV for Twitch", title))
+        assertFalse(SingleInstance.titleMatches("forsen - PureTV 2", title))
+        assertFalse(SingleInstance.titleMatches("Not PureTV for Twitch", title))
+    }
+}
+
 class SingleInstanceTest {
     private val dir: File = Files.createTempDirectory("puretv-instance").toFile()
     private val lockFile = File(dir, "instance.lock")

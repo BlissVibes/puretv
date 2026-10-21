@@ -55,6 +55,19 @@ object NewWindowLayout {
 }
 
 /**
+ * Whether a window's move or resize is a place worth remembering: not while it is maximized,
+ * and not while it is minimized, when Windows parks it at -32000, -32000.
+ */
+object WindowBoundsGate {
+    private const val ICONIFIED = 1 // java.awt.Frame.ICONIFIED
+    private const val MAXIMIZED_BOTH = 6 // java.awt.Frame.MAXIMIZED_BOTH
+    private const val PARKED_BELOW = -30_000
+
+    fun shouldSave(extendedState: Int, x: Int, y: Int): Boolean =
+        extendedState and ICONIFIED == 0 && extendedState and MAXIMIZED_BOTH == 0 && x > PARKED_BELOW && y > PARKED_BELOW
+}
+
+/**
  * Decides whether a key press belongs to this window. The AWT keyboard focus manager is
  * global, so every window's shortcut handler sees every key; each one stands down unless
  * its own window (or something it owns, such as a dialog) is the active one. A key typed in

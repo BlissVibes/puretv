@@ -56,6 +56,22 @@ class AdBlockChannelStatusTest {
     }
 
     @Test
+    fun aPillFollowingOneChannelNeverShowsAnotherWindowsReports() = runTest {
+        // The main window reads its own channel, so another window's channel (which still
+        // moves the app-wide status) cannot change what the main window's pill says.
+        val e = engine()
+        e.resetForNewStream("main")
+        e.resetForNewStream("other")
+        e.reportAdBlocked("main")
+        e.reportFiltered(e.filterPlaylist(AD_PLAYLIST), "other")
+        assertEquals(AdBlockStatus.AD_FILTERED, e.status.value)
+        assertEquals(AdBlockStatus.AD_BLOCKED, e.statusFor("main").first())
+        e.reportResolutionFailure("other")
+        assertEquals(AdBlockStatus.AD_BLOCKED, e.statusFor("main").first())
+        assertEquals(AdBlockStatus.AD_BLOCK_OFF, e.statusFor("other").first())
+    }
+
+    @Test
     fun resetForNewStreamOnlyResetsThatChannel() = runTest {
         val e = engine()
         e.reportAdBlocked("shroud")

@@ -415,7 +415,7 @@ class StreamViewModel(
     private val badgeRepository: BadgeRepository,
     private val playableStreamCache: PlayableStreamCache,
     private val playTicket: PlayTicket,
-    // A window other than the main one: ad blocking is reported per channel, not app-wide.
+    // A window other than the main one: it forgets its channel's ad-block state when it leaves it.
     private val isolated: Boolean = false,
     private val claims: ChannelClaims = ChannelClaims(),
 ) : DesktopViewModel() {
@@ -473,7 +473,8 @@ class StreamViewModel(
 
     init {
         claims.acquire(channelLogin)
-        if (isolated) adBlockEngine.resetForNewStream(channelLogin) else adBlockEngine.resetForNewStream()
+        // Reported per channel, so another window's or tile's channel never moves this pill.
+        adBlockEngine.resetForNewStream(channelLogin)
         scope.launch {
             // SECTION 08.3 — VLC talks to our local proxy (port 7979), never
             // straight to Twitch's CDN: that's the choke point where every
@@ -568,8 +569,7 @@ class StreamViewModel(
                 .collect { rebuildEmoteIndicesAndPublish() }
         }
         scope.launch {
-            val statuses = if (isolated) adBlockEngine.statusFor(channelLogin) else adBlockEngine.status
-            statuses.collect { status -> _state.update { it.copy(adBlockStatus = status) } }
+            adBlockEngine.statusFor(channelLogin).collect { status -> _state.update { it.copy(adBlockStatus = status) } }
         }
         scope.launch {
             vlcPlayer.status.first { it.isPlaying }

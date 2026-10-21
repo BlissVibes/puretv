@@ -24,7 +24,28 @@ import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.player.ChannelClaims
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.player.WindowPlayback
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
+import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.ui.components.ExpressiveButton
+import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
+import com.puretv.twitch.desktop.ui.components.ExpressiveButtonStyle
+import com.puretv.twitch.desktop.ui.theme.PureTvDesktopTheme
+import com.puretv.twitch.desktop.ui.theme.PureTvTheme
+import com.puretv.twitch.desktop.ui.theme.ShapeIntensity
+import com.puretv.twitch.desktop.ui.theme.ThemeVariant
 import java.awt.Dimension
+import java.awt.KeyEventDispatcher
+import java.awt.event.KeyEvent
 import java.awt.Frame
 import java.awt.KeyboardFocusManager
 import java.awt.event.ComponentAdapter
@@ -95,8 +116,12 @@ private fun SecondaryWindow(
     // This window's own player, made off the UI thread: the first one loads libVLC, which is slow.
     val secondary = remember(entry.id) { WindowPlayback.secondary(koin.get<VlcEngine>(), koin.get<ChannelClaims>()) }
     var ready by remember(entry.id) { mutableStateOf(false) }
-    LaunchedEffect(secondary) {
+    var failed by remember(entry.id) { mutableStateOf(false) }
+    var attempt by remember(entry.id) { mutableStateOf(0) }
+    LaunchedEffect(secondary, attempt) {
+        failed = false
         ready = withContext(Dispatchers.IO) { runCatching { secondary.prepare() }.getOrDefault(false) }
+        failed = !ready
     }
     DisposableEffect(secondary) { onDispose { secondary.release() } }
     DisposableEffect(entry.id) {
@@ -123,6 +148,22 @@ private fun SecondaryWindow(
             if (awtWindow.extendedState and Frame.ICONIFIED != 0) awtWindow.extendedState = awtWindow.extendedState and Frame.ICONIFIED.inv()
             awtWindow.toFront()
         }
+        // Ctrl+W closes this window (Esc too while it only shows the error below). Only the window
+        // that has the keyboard answers.
+        val latestFailed = rememberUpdatedState(failed)
+        DisposableEffect(awtWindow) {
+            val dispatcher = KeyEventDispatcher { e ->
+                if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
+                val closeKey = (e.keyCode == KeyEvent.VK_W && e.isControlDown && !e.isAltDown) ||
+                    (e.keyCode == KeyEvent.VK_ESCAPE && latestFailed.value)
+                if (!closeKey || !AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false
+                registry.close(entry.id)
+                true
+            }
+            val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+            kfm.addKeyEventDispatcher(dispatcher)
+            onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+        }
         DisposableEffect(awtWindow) {
             AppWindows.add(awtWindow)
             awtWindow.minimumSize = Dimension(NewWindowLayout.MIN_WIDTH, NewWindowLayout.MIN_HEIGHT)
@@ -132,7 +173,8 @@ private fun SecondaryWindow(
                 override fun componentMoved(e: ComponentEvent) = save()
                 override fun componentResized(e: ComponentEvent) = save()
                 private fun save() {
-                    if (awtWindow.extendedState and Frame.MAXIMIZED_BOTH != 0) return
+                    // Not a place worth keeping: maximized, or minimized (Windows reports -32000 then).
+                    if (!WindowBoundsGate.shouldSave(awtWindow.extendedState, awtWindow.x, awtWindow.y)) return
                     // A fullscreen player covers the whole monitor; that is not a place to come back to.
                     if (awtWindow.graphicsConfiguration?.bounds?.let { it.width == awtWindow.width && it.height == awtWindow.height } == true) return
                     boundsStore.remember(slotKey, MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height))
@@ -162,8 +204,40 @@ private fun SecondaryWindow(
                 start = entry.start,
                 playback = secondary.playback,
             )
+        } else if (failed) {
+            SetupFailed(
+                themeKey = koin.get<DesktopSettingsStore>().settings.collectAsState().value,
+                onRetry = { attempt++ },
+                onClose = { registry.close(entry.id) },
+            )
         } else {
             Box(Modifier.fillMaxSize().background(Color(0xFF0E0E10)))
+        }
+    }
+}
+
+/** Shown in place of a window that could not get its video player ready: a way to try again and a way out. */
+@Composable
+private fun SetupFailed(themeKey: AppSettings, onRetry: () -> Unit, onClose: () -> Unit) {
+    PureTvDesktopTheme(ThemeVariant.fromKey(themeKey.theme), ShapeIntensity.fromKey(themeKey.shapeIntensity)) {
+        val c = PureTvTheme.colors
+        Column(
+            modifier = Modifier.fillMaxSize().background(c.surfaceLowest).padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text("This window could not start its video player", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Other PureTV windows are not affected. Try again, or close this window (Esc).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(24.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                ExpressiveButton(text = "Try again", onClick = onRetry, style = ExpressiveButtonStyle.Filled, size = ExpressiveButtonSize.Medium)
+                ExpressiveButton(text = "Close window", onClick = onClose, style = ExpressiveButtonStyle.Tonal, size = ExpressiveButtonSize.Medium)
+            }
         }
     }
 }

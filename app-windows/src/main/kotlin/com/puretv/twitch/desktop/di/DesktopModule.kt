@@ -202,7 +202,10 @@ val desktopModule = module {
         )
     }
     factory { (initial: TileSource) ->
-        MultiViewViewModel(initial, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+        MultiViewViewModel(
+            initial, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(),
+            claims = get(), admit = get<WindowRegistry>()::admitPlayer,
+        )
     }
     // The multi-stream session outlives the screen: tiles popped out into their own windows keep playing.
     single {
@@ -210,6 +213,7 @@ val desktopModule = module {
         MultiSession(
             create = { login -> koin.get<MultiViewViewModel> { parametersOf(TileSource.Live(login)) } },
             createVod = { vod -> koin.get<MultiViewViewModel> { parametersOf(vod) } },
+            admit = { koin.get<WindowRegistry>().admitPlayer() },
         )
     }
     // Every PureTV window and the limits between them. Tiles count toward the player cap.

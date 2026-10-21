@@ -66,6 +66,10 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.rememberAlertBell
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.WindowDestination
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import androidx.compose.ui.platform.LocalWindowInfo
+import com.puretv.twitch.desktop.ui.components.MenuAction
+import com.puretv.twitch.desktop.ui.components.contextMenu
 import com.puretv.twitch.desktop.ui.openInNewWindow
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -335,11 +339,20 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
             state.error != null -> Text("Couldn't load videos.", style = PureTvType.data, color = c.outline)
             state.videos.isEmpty() && !state.loading -> Text("No saved videos.", style = PureTvType.data, color = c.outline)
         }
+        val windowInfo = LocalWindowInfo.current
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             state.videos.forEach { v ->
                 VodRow(
                     v,
-                    onClick = { onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl)) },
+                    // Ctrl held opens the video in a new window instead of here.
+                    onClick = {
+                        if (windowInfo.keyboardModifiers.isCtrlPressed) {
+                            openInNewWindow(WindowDestination.Vod(v.id, channelLogin, v.title, v.thumbnailUrl))
+                        } else {
+                            onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl))
+                        }
+                    },
+                    channelLogin = channelLogin,
                     onAddToMulti = {
                         val outcome = session.addVod(v.toTileSource(channelLogin))
                         note = outcome.note(popped = false)
@@ -364,11 +377,25 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
 
 /** A VOD row: 150x84 thumbnail with its duration chip, title + mono meta, a tonal play button. */
 @Composable
-private fun VodRow(v: VideoInfo, onClick: () -> Unit, onAddToMulti: () -> Unit, onPopOut: () -> Unit) {
+private fun VodRow(v: VideoInfo, onClick: () -> Unit, channelLogin: String, onAddToMulti: () -> Unit, onPopOut: () -> Unit) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
+    val inNewWindow = WindowDestination.Vod(v.id, channelLogin, v.title, v.thumbnailUrl)
 
-    ExpressiveCard(onClick = onClick, modifier = Modifier.fillMaxWidth(), contentPadding = 12.dp) {
+    ExpressiveCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().contextMenu(
+            actions = {
+                listOf(
+                    MenuAction("Open in new window") { openInNewWindow(inNewWindow) },
+                    MenuAction("Add to multi-stream", onAddToMulti),
+                    MenuAction("Pop out into its own window", onPopOut),
+                )
+            },
+            onMiddleClick = { openInNewWindow(inNewWindow) },
+        ),
+        contentPadding = 12.dp,
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Box(modifier = Modifier.size(width = 150.dp, height = 84.dp).clip(shapes.thumbShape)) {
                 CoverImage(imageUrl = v.thumbnailUrl, seed = v.id, contentDescription = v.title, modifier = Modifier.fillMaxSize())

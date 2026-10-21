@@ -144,6 +144,23 @@ class WindowRegistryTest {
         assertEquals(listOf<WindowDestination>(WindowDestination.Stream("y")), second.navigated)
     }
 
+    @Test fun navigateFallsBackToTheMainWindowWhenTheChosenOneIsNotReady() {
+        val r = WindowRegistry()
+        val a = opened(r.open(WindowDestination.Home))
+        val main = FakeHost()
+        r.attach(0, main)
+        r.focused(a) // used last, but it has not attached a host yet
+        assertTrue(r.navigate(WindowDestination.Stream("x")))
+        assertEquals(listOf<WindowDestination>(WindowDestination.Stream("x")), main.navigated)
+    }
+
+    @Test fun admitPlayerPostsTheReasonWhenFull() {
+        val r = WindowRegistry(maxPlayers = 1, tiles = { 1 })
+        assertFalse(r.admitPlayer())
+        assertTrue(r.notice.value!!.contains("lot of video"))
+        assertTrue(WindowRegistry(maxPlayers = 2, tiles = { 1 }).admitPlayer())
+    }
+
     @Test fun navigateWithoutAHostSaysSo() {
         val r = WindowRegistry()
         assertFalse(r.navigate(WindowDestination.Home))

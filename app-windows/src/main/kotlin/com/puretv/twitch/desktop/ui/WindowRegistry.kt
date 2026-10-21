@@ -105,6 +105,13 @@ class WindowRegistry(
     /** Whether one more player may start. The add-tile path of multi-stream asks this too. */
     fun canStartPlayer(): Boolean = playersInUse() < maxPlayers
 
+    /** [canStartPlayer] for a caller that is about to start one: when not, the reason is posted as the [notice]. */
+    fun admitPlayer(): Boolean {
+        if (canStartPlayer()) return true
+        postNotice(PLAYER_CAP_MESSAGE)
+        return false
+    }
+
     fun canOpenWindow(): Boolean = _windows.value.size < maxWindows
 
     /**
@@ -115,7 +122,7 @@ class WindowRegistry(
     fun open(destination: WindowDestination): OpenResult = synchronized(lock) {
         if (!canOpenWindow()) return refuse("PureTV already has $maxWindows windows open. Close one to open another.")
         if (destination.startsPlayer() && !canStartPlayer()) {
-            return refuse("That is a lot of video at once. Stop a stream or close a window first.")
+            return refuse(PLAYER_CAP_MESSAGE)
         }
         val entry = WindowEntry(
             id = nextId++,
@@ -202,9 +209,12 @@ class WindowRegistry(
         if (hosts[id] === host) hosts.remove(id)
     }
 
-    /** Sends [destination] to window [id] (default: the one used last). False when it has no host yet. */
+    /**
+     * Sends [destination] to window [id] (default: the one used last), or to the main window when
+     * that one is not ready yet. False when no window can take it yet.
+     */
     fun navigate(destination: WindowDestination, id: Int = mostRecentlyFocused()): Boolean {
-        val host = synchronized(lock) { hosts[id] } ?: return false
+        val host = synchronized(lock) { hosts[id] ?: hosts[PRIMARY_ID] } ?: return false
         host.navigate(destination)
         return true
     }
@@ -250,6 +260,7 @@ class WindowRegistry(
         const val PRIMARY_ID = 0
         const val MAX_WINDOWS = 6
         const val MAX_PLAYERS = 8
+        private const val PLAYER_CAP_MESSAGE = "That is a lot of video at once. Stop a stream or close a window first."
 
         @Volatile private var installed: WindowRegistry? = null
 

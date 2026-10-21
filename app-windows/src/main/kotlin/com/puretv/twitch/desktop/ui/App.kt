@@ -343,17 +343,17 @@ fun App(
             val watching = allWindows.any { it.watching } || multiRunning != null
             LaunchedEffect(watching) { if (!watching) sleep.set(0) }
             // The timer ran out: whatever this window plays stops, wherever the timer was started.
-            val sleepExpired = sleep.ui.expired
-            LaunchedEffect(sleepExpired) {
-                if (!sleepExpired) return@LaunchedEffect
-                shell.exitImmersive()
+            // Every window acts on each expiry once, whichever window's tick noticed it.
+            val expiryGate = remember { SleepExpiryGate(sleep.expiryCount) }
+            val expiries = sleep.expiryCount
+            LaunchedEffect(expiries) {
+                if (!expiryGate.take(expiries)) return@LaunchedEffect
+                shell.exitImmersive() // fullscreen, theater and the mini player
+                multiSession.end()
                 when (val r = route) {
                     is Route.Stream -> route = Route.Channel(r.login)
                     is Route.Vod -> route = Route.Channel(r.launch.channelLogin)
-                    is Route.Multi -> {
-                        multiSession.end()
-                        route = if (r.login.isBlank()) Route.Top else Route.Channel(r.login)
-                    }
+                    is Route.Multi -> route = if (r.login.isBlank()) Route.Top else Route.Channel(r.login)
                     else -> Unit
                 }
             }

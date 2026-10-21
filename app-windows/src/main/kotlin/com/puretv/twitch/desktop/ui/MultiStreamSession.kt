@@ -57,6 +57,8 @@ class MultiStreamSession<T : MultiTileHost>(
     val boundsStore: PopoutBoundsStore = PopoutBoundsStore(),
     // Starts a session whose first tile is a past video; null when only live sessions can start.
     private val createVod: ((TileSource.Vod) -> T)? = null,
+    // Asked before a session starts on a past video: false when PureTV is already playing all it allows.
+    private val admit: () -> Boolean = { true },
 ) {
     private val _current = MutableStateFlow<T?>(null)
 
@@ -92,6 +94,7 @@ class MultiStreamSession<T : MultiTileHost>(
         val running = _current.value
         if (running == null) {
             val make = createVod ?: return AddOutcome.Blank
+            if (!admit()) return AddOutcome.Full
             _current.value = make(source)
             return AddOutcome.Added
         }

@@ -4,6 +4,7 @@ import com.puretv.twitch.core.playback.SleepStatus
 import com.puretv.twitch.core.playback.SleepTimer
 import com.puretv.twitch.core.playback.SleepTimerText
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 
@@ -67,11 +68,40 @@ class SleepSession(clock: () -> Long = System::currentTimeMillis) {
     var ui by mutableStateOf(SleepUi())
         private set
 
-    fun cycle() { ui = controller.cycle() }
+    /**
+     * Counts the times the timer ran out. [SleepUi.expired] is only true for the one tick that
+     * saw it, so with several windows whichever ticked first would hide it from the rest; a
+     * window instead remembers the count it has handled (see [SleepExpiryGate]).
+     */
+    var expiryCount by mutableIntStateOf(0)
+        private set
 
-    fun set(minutes: Int) { ui = controller.set(minutes) }
+    private fun publish(next: SleepUi) {
+        if (next.expired && !ui.expired) expiryCount++
+        ui = next
+    }
 
-    fun onActivity() { controller.onActivity()?.let { ui = it } }
+    fun cycle() { publish(controller.cycle()) }
 
-    fun tick(): SleepUi = controller.tick().also { ui = it }
+    fun set(minutes: Int) { publish(controller.set(minutes)) }
+
+    fun onActivity() { controller.onActivity()?.let { publish(it) } }
+
+    fun tick(): SleepUi = controller.tick().also { publish(it) }
+}
+
+/**
+ * Lets each window act on every expiry of the sleep timer exactly once, whichever window's
+ * tick noticed it. Made with the count the window starts at, so a window opened later does
+ * not replay an old expiry.
+ */
+class SleepExpiryGate(start: Int) {
+    private var handled = start
+
+    /** True once for each new expiry seen in [expiryCount]. */
+    fun take(expiryCount: Int): Boolean {
+        if (expiryCount <= handled) return false
+        handled = expiryCount
+        return true
+    }
 }

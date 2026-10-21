@@ -198,6 +198,8 @@ fun main(args: Array<String>) {
                     if (registry.navigate(WindowDestination.Stream(login))) return@collect
                     delay(100)
                 }
+                // Still nobody ready: open the stream in a window of its own rather than lose the click.
+                openInNewWindow(WindowDestination.Stream(login))
             }
         }
         // A popped-out tile asked for the multi-stream grid (chat, add a channel, dock back).

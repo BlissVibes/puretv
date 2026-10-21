@@ -156,6 +156,30 @@ class SingleInstance(
     }
 
     companion object {
+        /** True for [title] itself and for "<screen> - [title]", which is how PureTV titles its window. */
+        fun titleMatches(actual: String, title: String): Boolean = actual == title || actual.endsWith(" - $title")
+
+        private fun findJavaWindowTitled(title: String): com.sun.jna.platform.win32.WinDef.HWND? {
+            val user32 = User32.INSTANCE
+            var found: com.sun.jna.platform.win32.WinDef.HWND? = null
+            user32.EnumWindows({ hwnd, _ ->
+                val text = CharArray(512)
+                val cls = CharArray(64)
+                val n = user32.GetWindowText(hwnd, text, text.size)
+                user32.GetClassName(hwnd, cls, cls.size)
+                val className = String(cls).trimEnd('\u0000')
+                if (n > 0 && className.startsWith("SunAwt") && user32.IsWindowVisible(hwnd) &&
+                    titleMatches(String(text, 0, n), title)
+                ) {
+                    found = hwnd
+                    false
+                } else {
+                    true
+                }
+            }, null)
+            return found
+        }
+
         private const val POLL_MS = 250L
         private const val REQUEST_NAME = "show.request"
 
@@ -166,7 +190,9 @@ class SingleInstance(
          */
         fun focusWindowTitled(title: String): Boolean {
             val user32 = User32.INSTANCE
-            val hwnd = user32.FindWindow(null, title) ?: return false
+            // The title carries the screen being shown ("forsen - PureTV for Twitch"), so an
+            // exact match is only the first try; then any Java window whose title matches.
+            val hwnd = user32.FindWindow(null, title) ?: findJavaWindowTitled(title) ?: return false
             if (!user32.IsWindowVisible(hwnd)) return false
             // Restore only a minimized window: SW_RESTORE would also un-maximize one.
             val placement = WinUser.WINDOWPLACEMENT()

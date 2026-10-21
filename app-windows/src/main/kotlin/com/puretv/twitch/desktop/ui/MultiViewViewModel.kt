@@ -14,6 +14,7 @@ import com.puretv.twitch.core.stream.Failure
 import com.puretv.twitch.core.stream.FailureKind
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.notify.DesktopLiveNotifier
+import com.puretv.twitch.desktop.player.ChannelClaims
 import com.puretv.twitch.desktop.player.DEFAULT_VOLUME
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.LocalStreamProxy
@@ -105,6 +106,10 @@ class MultiViewViewModel(
     private val notifier: DesktopLiveNotifier,
     private val vodRepository: VodRepository,
     private val progressStore: WatchProgressStore,
+    // Which windows and tiles watch which channel; a channel is only forgotten by the last one.
+    private val claims: ChannelClaims = ChannelClaims(),
+    // Asked before a tile is added: false when the app is already playing as much video as it allows.
+    private val admit: () -> Boolean = { true },
 ) : DesktopViewModel(), MultiTileHost {
 
     // New tiles start at the volume the viewer last had on the normal stream screen, when
@@ -240,7 +245,7 @@ class MultiViewViewModel(
     override fun addChannel(login: String): Boolean {
         val before = _state.value.layout
         val after = before.add(login, startVolume)
-        if (after === before) return false
+        if (after === before || !admit()) return false
         _state.update { it.copy(layout = after) }
         val tile = after.tiles.last()
         openRuntime(tile)
@@ -253,7 +258,7 @@ class MultiViewViewModel(
     override fun addVod(source: TileSource.Vod): Boolean {
         val before = _state.value.layout
         val after = before.addVod(source, startVolume)
-        if (after === before) return false
+        if (after === before || !admit()) return false
         _state.update { it.copy(layout = after) }
         openRuntime(after.tiles.last())
         retargetQuality()
@@ -383,6 +388,7 @@ class MultiViewViewModel(
     private fun openRuntime(tile: MultiTile) {
         val rt = Runtime(tile.id, tile.login, tile.vod)
         synchronized(lock) { runtimes[tile.id] = rt }
+        if (rt.vod == null) claims.acquire(rt.login)
         _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login.ifBlank { "Past video" }))) }
         val setup = scope.launch {
             // libVLC is built on first use and its plugin scan is slow: not on the UI thread.
@@ -700,7 +706,7 @@ class MultiViewViewModel(
         synchronized(lock) { rt.jobs.toList() }.forEach { it.cancel() }
         rt.player?.let { rt.freeOnce(it) }
         // A past video has no ad-block state, and a live tile of the same channel must keep its own.
-        if (rt.vod == null) adBlockEngine.forgetChannel(rt.login)
+        if (rt.vod == null && claims.release(rt.login)) adBlockEngine.forgetChannel(rt.login)
     }
 
     override fun shutDown() = dispose()

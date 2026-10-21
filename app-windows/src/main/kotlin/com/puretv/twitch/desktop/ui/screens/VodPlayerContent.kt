@@ -56,7 +56,11 @@ import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.player.formatTimecode
+import com.puretv.twitch.desktop.ui.AddOutcome
 import com.puretv.twitch.desktop.ui.LocalAppShell
+import com.puretv.twitch.desktop.ui.MultiSession
+import com.puretv.twitch.desktop.ui.note
+import com.puretv.twitch.desktop.ui.toTileSource
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PoppedWindows
 import com.puretv.twitch.desktop.ui.VodChatViewModel
@@ -128,6 +132,15 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
     val appSettings by settingsStore.settings.collectAsState()
     var settingsMenuOpen by remember { mutableStateOf(false) }
+    val multiSession = remember { koin.get<MultiSession>() }
+    // Shown in place of the channel name for a few seconds when multi-stream refused the video.
+    var note by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(note) {
+        if (note != null) {
+            delay(3_000)
+            note = null
+        }
+    }
     val shell = LocalAppShell.current
     val mode = shell.playerMode
     val isChatOpen = shell.isChatOpen
@@ -213,7 +226,17 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
                     VodTopBar(
                         mode = mode,
                         title = launch.title.ifBlank { "Past broadcast" },
-                        channelLogin = launch.channelLogin,
+                        channelLogin = note ?: launch.channelLogin,
+                        onAddToMulti = {
+                            val outcome = multiSession.addVod(launch.toTileSource(viewModel.status.value.positionMs))
+                            if (outcome == AddOutcome.Full) note = outcome.note(popped = false)
+                            // Moved over: the multi-stream screen replaces this one, which stops this player once.
+                            else multiSession.requestGrid()
+                        },
+                        onPopOut = {
+                            val outcome = multiSession.popOutVod(launch.toTileSource(viewModel.status.value.positionMs))
+                            if (outcome == AddOutcome.Full) note = outcome.note(popped = true) else onBack()
+                        },
                         isChatOpen = isChatOpen,
                         onBack = onBack,
                         onToggleChat = { shell.toggleChat() },
@@ -358,6 +381,8 @@ private fun VodTopBar(
     channelLogin: String,
     isChatOpen: Boolean,
     onBack: () -> Unit,
+    onAddToMulti: () -> Unit,
+    onPopOut: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
     onToggleFullscreen: () -> Unit,
@@ -399,6 +424,18 @@ private fun VodTopBar(
                 )
             }
         }
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.Grid,
+            contentDescription = "Add to multi-stream",
+            onClick = onAddToMulti,
+            boxSize = 48.dp,
+        )
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.OpenInNew,
+            contentDescription = "Pop out into its own window",
+            onClick = onPopOut,
+            boxSize = 48.dp,
+        )
         ExpressiveIconButton(
             icon = ExpressiveIcons.Chat,
             contentDescription = "Toggle chat",

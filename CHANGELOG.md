@@ -16,6 +16,15 @@ release notes automatically.
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
 ### New
+- **Past broadcasts and highlights in multi-stream (Windows).** Watch a past
+  broadcast, highlight or upload next to live streams, or in a window of its
+  own on any monitor. Add one from the plus button on a creator's video list,
+  from the video player, or from Add channel > Past broadcasts and highlights
+  (pick from a creator's latest videos or paste a twitch.tv/videos link). Each
+  video tile has play and pause, a seek bar, the time, its own volume, Pop out
+  and Dock. With a video selected, Space plays or pauses, Left and Right skip 5
+  seconds (Shift for 30), J and L skip 10, and its chat replay shows beside
+  it. Videos pick up where you left off and show in Continue Watching.
 - **Pop multi-stream out onto other monitors (Windows).** Every channel in
   multi-stream has a Pop out button that moves it into its own PureTV window.
   Drag that window to any monitor, resize it, or press F (or double click the

@@ -278,3 +278,48 @@ class PopoutShortcutsTest {
         assertEquals(PopoutShortcutAction.VolumeUp, action(KeyEvent.VK_UP, repeat = true))
     }
 }
+
+class PopoutFollowUpTest {
+    private val primary = MiniRect(0, 0, 2560, 1400)
+    private val left = MiniRect(-1920, 0, 1920, 1040)
+    private val above = MiniRect(0, -1080, 1920, 1040)
+    private val desk = listOf(primary, left, above)
+
+    @Test fun monitorsHoldingAPoppedWindowAreFilledAfterTheFreeOnes() {
+        val windowOnLeft = MiniRect(-1500, 100, 960, 588)
+        val order = PopoutLayout.monitorOrder(desk, avoid = 0, occupied = listOf(windowOnLeft))
+        assertEquals(listOf(2, 1, 0), order)
+        val places = PopoutLayout.assign(1, desk, avoid = 0, occupied = listOf(windowOnLeft))
+        assertEquals(2, PopoutLayout.monitorOf(places.single(), desk))
+    }
+
+    @Test fun savingIsOffWhileFullscreenOrMaximizedAndTheFlagIsImmediate() {
+        val gate = PopoutSaveGate()
+        assertTrue(gate.shouldSave(maximized = false))
+        assertFalse(gate.shouldSave(maximized = true))
+        gate.fullscreen = true
+        assertFalse(gate.shouldSave(maximized = false))
+        gate.fullscreen = false
+        assertTrue(gate.shouldSave(maximized = false))
+    }
+
+    @Test fun aHandlerThatStoodDownDoesNotSwallowTheNextPress() {
+        val held = HeldKey()
+        assertFalse(held.pressed(KeyEvent.VK_M))
+        assertTrue(held.pressed(KeyEvent.VK_M))
+        // The key was released while another window had the keyboard, so no release was seen.
+        held.clear()
+        assertFalse(held.pressed(KeyEvent.VK_M))
+        held.released(KeyEvent.VK_M)
+        assertFalse(held.pressed(KeyEvent.VK_M))
+        assertFalse(held.pressed(KeyEvent.VK_UP))
+    }
+
+    @Test fun aRefusedAddSaysWhy() {
+        val s = MultiViewState().add("a").add("b")
+        assertEquals(AddOutcome.Added, s.addOutcome("c"))
+        assertEquals(AddOutcome.Blank, s.addOutcome("  "))
+        assertEquals(AddOutcome.AlreadyShown(s.tiles[1].id), s.addOutcome("@B"))
+        assertEquals(AddOutcome.Full, s.add("c").add("d").addOutcome("e"))
+    }
+}

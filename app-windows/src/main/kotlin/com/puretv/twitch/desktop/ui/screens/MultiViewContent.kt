@@ -67,6 +67,8 @@ import com.puretv.twitch.desktop.ui.components.LocalBadgeIndex
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
+import com.puretv.twitch.desktop.ui.AddOutcome
+import com.puretv.twitch.desktop.ui.HeldKey
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiShortcutAction
 import com.puretv.twitch.desktop.ui.PoppedWindows
@@ -140,6 +142,15 @@ fun MultiViewContent(
     val layout = state.layout
     val c = PureTvTheme.colors
 
+    // A short note under the top bar, for an add that did nothing.
+    var notice by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(3_000)
+            notice = null
+        }
+    }
+
     // With a single tile there is nothing to compare yet: start with the picker open.
     var pickerOpen by remember { mutableStateOf(layout.count < 2) }
 
@@ -177,16 +188,18 @@ fun MultiViewContent(
     val latestTyping = rememberUpdatedState(chatFocused || pickerFocused)
     val latestState = rememberUpdatedState(state)
     DisposableEffect(Unit) {
-        var heldKey = 0
+        val held = HeldKey()
         val dispatcher = KeyEventDispatcher { e ->
             // A key pressed in a popped-out window is that window's (see PoppedStreamWindow).
-            if (PoppedWindows.isActive()) return@KeyEventDispatcher false
+            if (PoppedWindows.isActive()) {
+                held.clear()
+                return@KeyEventDispatcher false
+            }
             // Any key press is the viewer being there (sleep timer), typing in chat included.
             if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
-            if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == heldKey) heldKey = 0
+            if (e.id == KeyEvent.KEY_RELEASED) held.released(e.keyCode)
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
-            val isRepeat = e.keyCode == heldKey
-            heldKey = e.keyCode
+            val isRepeat = held.pressed(e.keyCode)
             val action = MultiShortcuts.actionFor(
                 keyCode = e.keyCode,
                 ctrl = e.isControlDown,
@@ -272,7 +285,7 @@ fun MultiViewContent(
 
             // The timer's last-minute warning sits in the column like the stream screen's
             // notice strip: a native video surface would paint over anything floating.
-            PlayerNoticeStrip(text = sleep.ui.warning)
+            PlayerNoticeStrip(text = notice ?: sleep.ui.warning)
 
             AnimatedVisibility(
                 visible = pickerOpen && layout.canAdd,
@@ -284,7 +297,16 @@ fun MultiViewContent(
                     shown = layout,
                     onFocusChanged = { pickerFocused = it },
                     onAdd = { login ->
-                        if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
+                        when (val outcome = viewModel.state.value.layout.addOutcome(login)) {
+                            // Already on screen: show which one it is instead of doing nothing.
+                            is AddOutcome.AlreadyShown -> {
+                                viewModel.setActive(outcome.tileId)
+                                notice = "Already watching ${login.trim().removePrefix("@")}"
+                            }
+                            AddOutcome.Full -> notice = "Four streams is the limit"
+                            AddOutcome.Blank -> {}
+                            AddOutcome.Added -> if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
+                        }
                     },
                 )
             }

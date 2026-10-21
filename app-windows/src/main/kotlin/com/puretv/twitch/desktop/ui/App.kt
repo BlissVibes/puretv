@@ -263,6 +263,8 @@ fun App(
             // Hidden in the tray, nothing should keep playing or keep chat sockets open:
             // leaving the stream (or VOD) route disposes its player and chat.
             LaunchedEffect(windowVisible) {
+                // Streams in their own windows stop too: the session ends and its windows close.
+                if (!windowVisible) multiSession.end()
                 if (!windowVisible && (route is Route.Stream || route is Route.Multi || route is Route.Vod)) {
                     shell.exitImmersive()
                     route = Route.Top

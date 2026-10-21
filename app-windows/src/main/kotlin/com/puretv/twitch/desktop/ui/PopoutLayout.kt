@@ -42,9 +42,12 @@ object PopoutLayout {
      * [avoid] (the monitor the main window is on) last, so a popped stream does not land on
      * top of the window the viewer keeps browsing in. Returns indexes into the work areas.
      */
-    fun monitorOrder(works: List<MiniRect>, avoid: Int?): List<Int> {
+    fun monitorOrder(works: List<MiniRect>, avoid: Int?, occupied: List<MiniRect> = emptyList()): List<Int> {
         val sorted = works.indices.sortedWith(compareBy({ works[it].x }, { works[it].y }))
-        return sorted.filter { it != avoid } + sorted.filter { it == avoid }
+        // Monitors that already hold a popped-out window come after the free ones.
+        val busy = occupied.mapNotNull { monitorOf(it, works) }.toSet()
+        val free = sorted.filter { it != avoid && it !in busy }
+        return free + sorted.filter { it != avoid && it in busy } + sorted.filter { it == avoid }
     }
 
     /**
@@ -52,12 +55,13 @@ object PopoutLayout {
      * [monitorOrder], wrapping round when there are more tiles than monitors. A monitor
      * with one window gets the biggest 16:9 window that fits; a monitor that has to share
      * is tiled (two side by side, three or four in a 2x2 grid). Every result lies fully
-     * inside its monitor's work area, so none can start out of reach. Empty when there
-     * are no monitors to place on.
+     * inside its monitor's work area, so none can start out of reach. [occupied] are the
+     * windows already popped out: monitors holding one are filled after the free ones.
+     * Empty when there are no monitors to place on.
      */
-    fun assign(count: Int, works: List<MiniRect>, avoid: Int? = null): List<MiniRect> {
+    fun assign(count: Int, works: List<MiniRect>, avoid: Int? = null, occupied: List<MiniRect> = emptyList()): List<MiniRect> {
         if (count <= 0 || works.isEmpty()) return emptyList()
-        val order = monitorOrder(works, avoid)
+        val order = monitorOrder(works, avoid, occupied)
         val perMonitor = LinkedHashMap<Int, MutableList<Int>>()
         for (tile in 0 until count) perMonitor.getOrPut(order[tile % order.size]) { ArrayList() }.add(tile)
         val result = arrayOfNulls<MiniRect>(count)
@@ -119,6 +123,18 @@ object PopoutLayout {
     /** The index in [works] of the monitor holding the centre of [window], or null. */
     fun monitorOf(window: MiniRect, works: List<MiniRect>): Int? =
         works.indices.firstOrNull { works[it].contains(window.centerX, window.centerY) }
+}
+
+/**
+ * Decides whether a popped-out window's move or resize is a place worth remembering. It is
+ * not while the window is fullscreen or maximized, and the flag is set before the bounds are
+ * changed (and cleared only after they are put back), because the resize events arrive
+ * after the change, when a composed flag would not have caught up yet.
+ */
+class PopoutSaveGate {
+    @Volatile var fullscreen = false
+
+    fun shouldSave(maximized: Boolean): Boolean = !fullscreen && !maximized
 }
 
 /**

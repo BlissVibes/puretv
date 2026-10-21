@@ -69,11 +69,14 @@ import kotlin.math.roundToInt
 
 private val VIDEO_FRAME = 2.dp
 
+/** How long after the last move or resize a popped-out window's place is written to disk. */
+private const val FLUSH_DELAY_MS = 800
+
 /**
  * The windows of the tiles that were popped out of the multi-stream grid, one OS window per
  * tile. Called from the application, outside the main window, so they stay up when the main
- * window goes to another screen. [visible] follows the main window: hidden in the tray,
- * they hide with it and come back with it. [frontRequests] counts requests to bring
+ * window goes to another screen. [visible] follows the main window; hiding it to the tray
+ * ends the session (App), so they close with it. [frontRequests] counts requests to bring
  * everything forward (a second launch, the tray's Open PureTV).
  *
  * Each window plays the tile's own [com.puretv.twitch.desktop.player.VlcPlayer], which is
@@ -138,7 +141,7 @@ private fun PoppedStreamWindow(
             ?: DpSize(PopoutLayout.DEFAULT_WIDTH.dp, PopoutLayout.heightFor(PopoutLayout.DEFAULT_WIDTH).dp),
     )
     var fullscreen by remember { mutableStateOf(false) }
-    val latestFullscreen = rememberUpdatedState(fullscreen)
+    val gate = remember { PopoutSaveGate() }
     val latestLayout = rememberUpdatedState(layout)
     val tileId = tile.id
 
@@ -162,8 +165,10 @@ private fun PoppedStreamWindow(
         // Borderless fullscreen on the monitor the window is on, the way the main window does it:
         // no exclusive mode, which fights the video surface.
         fun setFullscreen(on: Boolean) {
-            if (on == latestFullscreen.value) return
+            if (on == gate.fullscreen) return
             if (on) {
+                // Before the bounds change: the resize events that follow must not be saved as a place.
+                gate.fullscreen = true
                 restore = MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height)
                 windowState.placement = WindowPlacement.Floating
                 awtWindow.extendedState = Frame.NORMAL
@@ -173,6 +178,7 @@ private fun PoppedStreamWindow(
                 restore = null
                 awtWindow.extendedState = Frame.NORMAL
                 if (back != null) awtWindow.setBounds(back.x, back.y, back.width, back.height)
+                gate.fullscreen = false
             }
             fullscreen = on
         }
@@ -194,17 +200,21 @@ private fun PoppedStreamWindow(
             PoppedWindows.add(awtWindow)
             awtWindow.minimumSize = Dimension(PopoutLayout.MIN_WIDTH, PopoutLayout.heightFor(PopoutLayout.MIN_WIDTH))
             // Where the window is left is remembered for this channel (fullscreen is not a place).
+            val flushSoon = javax.swing.Timer(FLUSH_DELAY_MS) { session.boundsStore.flush() }.apply { isRepeats = false }
             val track = object : ComponentAdapter() {
                 override fun componentMoved(e: ComponentEvent) = save()
                 override fun componentResized(e: ComponentEvent) = save()
                 private fun save() {
-                    if (latestFullscreen.value || awtWindow.extendedState and Frame.MAXIMIZED_BOTH != 0) return
+                    if (!gate.shouldSave(awtWindow.extendedState and Frame.MAXIMIZED_BOTH != 0)) return
                     session.boundsStore.remember(tile.login, MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height))
+                    // Written a moment after the last change, so a crash does not lose the position.
+                    flushSoon.restart()
                 }
             }
             awtWindow.addComponentListener(track)
             onDispose {
                 awtWindow.removeComponentListener(track)
+                flushSoon.stop()
                 PoppedWindows.remove(awtWindow)
                 session.boundsStore.flush()
             }
@@ -213,27 +223,30 @@ private fun PoppedStreamWindow(
         // Keys are read at the AWT level like the other player screens, because the video
         // surface is a native window. They only act while this window is the active one.
         DisposableEffect(awtWindow) {
-            var heldKey = 0
+            val held = HeldKey()
             val dispatcher = KeyEventDispatcher { e ->
-                if (KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow !== awtWindow) return@KeyEventDispatcher false
+                if (KeyboardFocusManager.getCurrentKeyboardFocusManager().activeWindow !== awtWindow) {
+                    // Another window has the keyboard: its key releases never reach here.
+                    held.clear()
+                    return@KeyEventDispatcher false
+                }
                 if (e.id == KeyEvent.KEY_PRESSED) session.sleep.onActivity()
-                if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == heldKey) heldKey = 0
+                if (e.id == KeyEvent.KEY_RELEASED) held.released(e.keyCode)
                 if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
-                val isRepeat = e.keyCode == heldKey
-                heldKey = e.keyCode
+                val isRepeat = held.pressed(e.keyCode)
                 // A popped-out window has no text box, so there is no typing to stand down for.
                 val action = PopoutShortcuts.actionFor(
                     keyCode = e.keyCode,
                     ctrl = e.isControlDown,
                     alt = e.isAltDown,
-                    fullscreen = latestFullscreen.value,
+                    fullscreen = gate.fullscreen,
                     isRepeat = isRepeat,
                 ) ?: return@KeyEventDispatcher false
                 when (action) {
                     PopoutShortcutAction.VolumeUp -> viewModel.nudgeVolume(tileId, up = true)
                     PopoutShortcutAction.VolumeDown -> viewModel.nudgeVolume(tileId, up = false)
                     PopoutShortcutAction.ToggleMute -> viewModel.toggleMute(tileId)
-                    PopoutShortcutAction.ToggleFullscreen -> setFullscreen(!latestFullscreen.value)
+                    PopoutShortcutAction.ToggleFullscreen -> setFullscreen(!gate.fullscreen)
                     PopoutShortcutAction.ExitFullscreen -> setFullscreen(false)
                     PopoutShortcutAction.CloseTile -> session.closeTile(tileId)
                     PopoutShortcutAction.Dock -> dockBack()
@@ -275,7 +288,7 @@ private fun PoppedStreamWindow(
                         onUserActivity = { session.sleep.onActivity() },
                         onClick = {
                             viewModel.setActive(tileId)
-                            if (doubleClick.click(System.currentTimeMillis())) SwingUtilities.invokeLater { setFullscreen(!latestFullscreen.value) }
+                            if (doubleClick.click(System.currentTimeMillis())) SwingUtilities.invokeLater { setFullscreen(!gate.fullscreen) }
                         },
                     )
                 }
@@ -285,7 +298,7 @@ private fun PoppedStreamWindow(
                     .fillMaxWidth()
                     .height(PopoutLayout.STRIP_HEIGHT.dp)
                     .background(c.surfaceContainer)
-                    .windowDrag(awtWindow, enabled = !fullscreen, onClick = { viewModel.setActive(tileId) }, onDoubleClick = { setFullscreen(!latestFullscreen.value) })
+                    .windowDrag(awtWindow, enabled = !fullscreen, onClick = { viewModel.setActive(tileId) }, onDoubleClick = { setFullscreen(!gate.fullscreen) })
                     .padding(start = 8.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(4.dp),

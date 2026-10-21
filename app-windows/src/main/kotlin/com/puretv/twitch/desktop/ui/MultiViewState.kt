@@ -67,6 +67,17 @@ data class MultiViewState(
 
     fun contains(login: String): Boolean = tiles.any { it.login.equals(login, ignoreCase = true) }
 
+    /** What adding [login] would do, so a refused add can say why instead of doing nothing. */
+    fun addOutcome(login: String): AddOutcome {
+        val clean = login.trim().removePrefix("@").lowercase()
+        return when {
+            clean.isEmpty() -> AddOutcome.Blank
+            contains(clean) -> AddOutcome.AlreadyShown(tiles.first { it.login.equals(clean, ignoreCase = true) }.id)
+            !canAdd -> AddOutcome.Full
+            else -> AddOutcome.Added
+        }
+    }
+
     /**
      * The state with [login] added as the last tile. The first tile becomes active;
      * after that the active tile stays, so adding a channel never moves the sound.
@@ -189,6 +200,14 @@ data class MultiViewState(
     companion object {
         const val MAX_TILES = 4
     }
+}
+
+/** The result of asking to add a channel (see [MultiViewState.addOutcome]). */
+sealed interface AddOutcome {
+    data object Added : AddOutcome
+    data object Blank : AddOutcome
+    data object Full : AddOutcome
+    data class AlreadyShown(val tileId: Int) : AddOutcome
 }
 
 /** Where a tile sits in the grid: column and row, and how many columns it spans. */

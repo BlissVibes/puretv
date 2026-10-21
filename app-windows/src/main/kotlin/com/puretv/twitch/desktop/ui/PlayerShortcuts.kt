@@ -245,3 +245,24 @@ object PopoutShortcuts {
     /** The one-line hint in a popped-out window, from the same table the keys use. */
     const val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   Ctrl + W close"
 }
+
+/**
+ * Tells an auto-repeat from a fresh press for one key handler. A handler that stands down
+ * (another window is active, a text box has focus) misses the key release, so it must
+ * [clear] what it remembers, or the next real press of that key would count as a repeat
+ * and be swallowed.
+ */
+class HeldKey {
+    private var code = 0
+
+    fun released(keyCode: Int) {
+        if (keyCode == code) code = 0
+    }
+
+    /** Records the press and returns true when [keyCode] was already held. */
+    fun pressed(keyCode: Int): Boolean = (keyCode == code).also { code = keyCode }
+
+    fun clear() {
+        code = 0
+    }
+}

@@ -112,10 +112,13 @@ class MultiStreamSession<T : MultiTileHost>(
     /** "Pop out all": every tile gets its own window, spread over the monitors. */
     fun popOutAll() {
         val running = _current.value ?: return
-        val tiles = running.state.value.layout.tiles
+        // Only the tiles still in the grid get a new window; the ones already out stay where they are.
+        val tiles = running.state.value.layout.docked
+        if (tiles.isEmpty()) return
         val works = PopoutLayout.screenWorkAreas()
         val main = mainBounds()
-        val places = PopoutLayout.assign(tiles.size, works, main?.let { PopoutLayout.monitorOf(it, works) })
+        val open = PoppedWindows.all.filter { it.isShowing }.map { MiniRect(it.x, it.y, it.width, it.height) }
+        val places = PopoutLayout.assign(tiles.size, works, main?.let { PopoutLayout.monitorOf(it, works) }, open)
         tiles.forEachIndexed { i, tile -> places.getOrNull(i)?.let { planned[tile.id] = it } }
         running.popOutAll()
     }

@@ -58,6 +58,7 @@ import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.player.formatTimecode
 import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.PlayerMode
+import com.puretv.twitch.desktop.ui.PoppedWindows
 import com.puretv.twitch.desktop.ui.VodChatViewModel
 import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.VodPlayerViewModel
@@ -151,6 +152,8 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val latestMode = rememberUpdatedState(mode)
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
+            // A key pressed in a popped-out multi-stream window is that window's.
+            if (PoppedWindows.isActive()) return@KeyEventDispatcher false
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             val m = latestMode.value
             when (e.keyCode) {

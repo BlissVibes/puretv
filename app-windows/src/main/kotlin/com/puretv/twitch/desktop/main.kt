@@ -34,6 +34,7 @@ import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.ui.App
+import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import com.puretv.twitch.desktop.ui.PoppedStreamWindows
 import io.ktor.client.HttpClient
@@ -156,6 +157,8 @@ fun main(args: Array<String>) {
         // returns after Compose has disposed, and a launch arriving in between would
         // have its show request answered (deleted) by a copy that is about to exit.
         val quit: () -> Unit = {
+            // Players are stopped and released before the engine goes (see below).
+            runCatching { koinApp.koin.get<MultiSession>().end() }
             guard.stopListening()
             exitApplication()
         }
@@ -273,6 +276,7 @@ fun main(args: Array<String>) {
     // proxy down explicitly (bounded so a wedged stop can't hang the quit), release
     // the player, then hard-exit. exitProcess still runs the shutdown hook above,
     // which flushes the persistence stores.
+    runCatching { koinApp.koin.get<MultiSession>().end() }
     runCatching { runBlocking { withTimeoutOrNull(3_000) { localStreamProxy.stop() } } }
     runCatching { playerProvider.releaseIfCreated() }
     runCatching { vlcEngine.releaseIfBuilt() }

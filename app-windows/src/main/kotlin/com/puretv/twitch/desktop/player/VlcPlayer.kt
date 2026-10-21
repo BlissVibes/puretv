@@ -81,6 +81,13 @@ class VlcPlayer(
         mediaPlayer?.events()?.addMediaPlayerEventListener(object : MediaPlayerEventAdapter() {
             override fun playing(mediaPlayer: MediaPlayer) {
                 _status.update { it.copy(isPlaying = true, isBuffering = false, error = null) }
+                if (pauseAfterStart) {
+                    // A reload of a video the viewer had paused: show it again, paused.
+                    pauseAfterStart = false
+                    SwingUtilities.invokeLater { mediaPlayer.controls().setPause(true) }
+                } else {
+                    pausedByUser = false
+                }
                 // Assert our volume on playback start so libVLC stops adopting its
                 // own default (~30-50% perceived) until the user first drags the slider.
                 // The audio output usually does not exist yet at this moment, so this
@@ -89,6 +96,7 @@ class VlcPlayer(
             }
 
             override fun paused(mediaPlayer: MediaPlayer) {
+                pausedByUser = true
                 _status.update { it.copy(isPlaying = false) }
             }
 
@@ -101,6 +109,7 @@ class VlcPlayer(
             }
 
             override fun error(mediaPlayer: MediaPlayer) {
+                pausedByUser = false
                 _status.update { it.copy(isPlaying = false, isBuffering = false, error = "Playback error — VLC reported a fault") }
             }
 
@@ -109,7 +118,13 @@ class VlcPlayer(
             }
 
             override fun timeChanged(mediaPlayer: MediaPlayer, newTime: Long) {
-                _status.update { it.copy(positionMs = newTime) }
+                if (isVod) {
+                    // libVLC reports 0 while it opens new media: that is not the place the video is at.
+                    lastGoodMs = VodPlayback.nextGood(lastGoodMs, newTime, _status.value.isPlaying)
+                    if (VodPlayback.shouldPublishTime(lastGoodMs, newTime)) _status.update { it.copy(positionMs = newTime) }
+                } else {
+                    _status.update { it.copy(positionMs = newTime) }
+                }
                 // libVLC forgets a volume set before its audio output exists, and starts
                 // that output muted: measured on a live tile, VLC read back volume 0 and
                 // muted while this player held 60 and unmuted, so the tile was silent.
@@ -161,8 +176,11 @@ class VlcPlayer(
         // render into — common on first stream open, where ViewModel.init
         // calls play() one EDT-tick before SwingPanel's HierarchyListener fires.
         currentUrl?.let { url ->
+            // A past video that had ended stays ended; playing it again starts it over.
+            if (moved && isVod && VodPlayback.isEnded(lastGoodMs, _status.value.durationMs)) return@let
             if (moved || mp.status().state() != State.PLAYING) {
                 if (moved) _status.update { it.copy(isBuffering = true) }
+                if (moved && isVod) pauseAfterStart = pausedByUser
                 // A past video moved to a new window carries on from where it is, not from where it began.
                 runCatching { mp.media().play(url, *if (moved) optionsToReplay() else currentOptions) }
                     .onFailure { e -> _status.update { it.copy(error = "Player attach race: ${e.message}") } }
@@ -201,18 +219,29 @@ class VlcPlayer(
      * video moves to another window, or is played again after it stopped, it starts from
      * where it was (see [optionsToReplay]) instead of from [startMs] again.
      */
-    fun playVod(videoUrl: String, startMs: Long) {
+    fun playVod(videoUrl: String, startMs: Long, keepPaused: Boolean = false) {
         isVod = true
-        _status.update { it.copy(positionMs = startMs.coerceAtLeast(0)) }
+        lastGoodMs = startMs.coerceAtLeast(0)
+        pauseAfterStart = keepPaused
+        _status.update { it.copy(positionMs = lastGoodMs) }
         start(videoUrl, VodPlayback.startOptions(startMs))
     }
 
     // True once a past video was started: its reloads resume at the current position.
     @Volatile private var isVod = false
 
+    // The last place the video was really at (see [VodPlayback.nextGood]); reloads start here.
+    @Volatile var lastGoodMs = 0L
+        private set
+
+    // True while the viewer has the video paused, so a reload can show it paused again.
+    @Volatile var pausedByUser = false
+        private set
+    @Volatile private var pauseAfterStart = false
+
     /** The per-media options for starting [currentUrl] again: a live stream as it was, a past video where it is now. */
     private fun optionsToReplay(): Array<String> =
-        if (isVod) VodPlayback.startOptions(_status.value.positionMs) else currentOptions
+        if (isVod) VodPlayback.startOptions(lastGoodMs) else currentOptions
 
     private fun start(streamUrl: String, options: Array<String>) {
         val mp = mediaPlayer ?: return
@@ -254,8 +283,22 @@ class VlcPlayer(
     /** Seek to an absolute position. No-op for non-seekable (live) media. */
     override fun seekTo(positionMs: Long) {
         val mp = mediaPlayer ?: return
+        val target = positionMs.coerceAtLeast(0)
+        if (isVod) {
+            // The target is the place now, until libVLC's clock catches up with it.
+            lastGoodMs = target
+            _status.update { it.copy(positionMs = target) }
+        }
         SwingUtilities.invokeLater {
-            if (mp.status().isSeekable) mp.controls().setTime(positionMs.coerceAtLeast(0))
+            val state = mp.status().state()
+            val url = currentUrl
+            if (isVod && url != null && (state == State.ENDED || state == State.STOPPED)) {
+                // Seeking after the video ended plays it again from the target.
+                pauseAfterStart = false
+                runCatching { mp.media().play(url, *VodPlayback.startOptions(target)) }
+            } else if (mp.status().isSeekable) {
+                mp.controls().setTime(target)
+            }
         }
     }
 
@@ -266,8 +309,9 @@ class VlcPlayer(
             else currentUrl?.let { url ->
                 // A video that ended plays again from its start; one that stopped, from where it was.
                 val options = if (isVod) {
-                    VodPlayback.startOptions(VodPlayback.replayStartMs(_status.value.positionMs, _status.value.durationMs))
+                    VodPlayback.startOptions(VodPlayback.replayStartMs(lastGoodMs, _status.value.durationMs))
                 } else currentOptions
+                pauseAfterStart = false
                 mp.media().play(url, *options)
             }
         }

@@ -36,6 +36,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -143,9 +145,11 @@ class MultiViewViewModel(
         val id: Int,
         val login: String,
         /** Non-null for a past video: it never touches the live proxy, ad block or stall watchdog. */
-        val vod: TileSource.Vod? = null,
+        vod: TileSource.Vod? = null,
         val watchdog: PlaybackStallWatchdog = PlaybackStallWatchdog(),
     ) {
+        // Replaced when the lookup of a pasted link fills in its title and channel.
+        @Volatile var vod: TileSource.Vod? = vod
         @Volatile var player: VlcPlayer? = null
         @Volatile var master: MasterPlaylistResult? = null
         @Volatile var startMs = 0L
@@ -379,7 +383,7 @@ class MultiViewViewModel(
     private fun openRuntime(tile: MultiTile) {
         val rt = Runtime(tile.id, tile.login, tile.vod)
         synchronized(lock) { runtimes[tile.id] = rt }
-        _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login))) }
+        _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login.ifBlank { "Past video" }))) }
         val setup = scope.launch {
             // libVLC is built on first use and its plugin scan is slow: not on the UI thread.
             val player = VlcPlayer(engine, audioOutput = TILE_AUDIO_OUTPUT, replayOnNewSurface = true)
@@ -421,14 +425,28 @@ class MultiViewViewModel(
         // Names and avatars are cosmetic: load them without holding up the picture.
         synchronized(lock) {
             rt.jobs += scope.launch {
-                val channel = runCatching { channelRepository.getChannel(tile.login) }.getOrNull()
+                // A video named only by a pasted link: ask who it is from and what it is called.
+                val named = rt.vod
+                if (named != null && (named.channelLogin.isBlank() || named.title.isBlank())) fillVodDetails(rt, named)
+                val login = rt.vod?.channelLogin ?: tile.login
+                val channel = if (login.isBlank()) null else runCatching { channelRepository.getChannel(login) }.getOrNull()
                 if (channel != null) {
                     updateInfo(rt.id) {
-                        it.copy(displayName = channel.displayName.ifBlank { tile.login }, avatarUrl = channel.profileImageUrl)
+                        it.copy(displayName = channel.displayName.ifBlank { login }, avatarUrl = channel.profileImageUrl)
                     }
                 }
             }
         }
+    }
+
+    /** Looks the video up by id and fills the tile in with its title, channel, kind and art. */
+    private suspend fun fillVodDetails(rt: Runtime, vod: TileSource.Vod) {
+        val video = runCatching { vodRepository.videoById(vod.videoId) }.getOrNull() ?: return
+        val details = video.toTileSource(vod.channelLogin)
+        if (rt.closed) return
+        changeTiles { it.withVodDetails(vod.videoId, details) }
+        rt.vod = _state.value.layout.tiles.firstOrNull { it.id == rt.id }?.vod ?: return
+        updateInfo(rt.id) { it.copy(displayName = rt.vod!!.channelLogin.ifBlank { it.displayName }) }
     }
 
     private fun launchWatchers(rt: Runtime, player: VlcPlayer) {
@@ -485,7 +503,7 @@ class MultiViewViewModel(
                         delay(AUTO_RETRY_DELAYS_MS[rt.autoRetries])
                         rt.autoRetries++
                         rt.master = null
-                        if (!rt.closed) startVod(rt, resumePoint(rt))
+                        if (!rt.closed) reloadVod(rt, retry = true)
                     } else {
                         updateInfo(rt.id) { it.copy(message = VodFailures.COULD_NOT_LOAD) }
                     }
@@ -494,51 +512,63 @@ class MultiViewViewModel(
         }
     }
 
-    /** Where a reload of a past video picks up: the place it had reached, else where it was started. */
-    private fun resumePoint(rt: Runtime): Long {
-        val s = rt.player?.status?.value
-        return VodTileLogic.retryStartMs(s?.positionMs ?: 0, rt.startMs, s?.durationMs ?: 0)
+    /**
+     * Where a reload of a past video picks up: the last place it was really at, else where it
+     * was started. Null when it had ended, which stays ended until the viewer presses play.
+     */
+    private fun reloadPoint(rt: Runtime): Long? {
+        val player = rt.player ?: return null
+        return VodTileLogic.reloadStartMs(player.lastGoodMs, rt.startMs, player.status.value.durationMs)
+    }
+
+    /** Reloads the past video of [rt] where it was, keeping it paused if it was paused. */
+    private fun reloadVod(rt: Runtime, retry: Boolean = false) {
+        val at = reloadPoint(rt) ?: return
+        startVod(rt, at, keepPaused = rt.player?.pausedByUser == true, retry = retry)
     }
 
     /**
      * Every (re)start of a past video: resolves its playlist (kept for reloads), picks the
      * rendition the tile count allows and plays it from [atMs]. A video that cannot be
-     * resolved is explained, or retried after a pause when the failure may pass.
+     * resolved is explained, or retried after a pause when the failure may pass. A new start
+     * replaces the one before it; a start that is not itself a [retry] clears the retries.
      */
-    private fun startVod(rt: Runtime, atMs: Long) {
+    private fun startVod(rt: Runtime, atMs: Long, keepPaused: Boolean = false, retry: Boolean = false) {
         val vod = rt.vod ?: return
         val player = rt.player ?: return
-        var next = atMs
-        val job = scope.launch {
-            while (!rt.closed) {
-                val resolved = runCatching { rt.master ?: vodRepository.resolvePlayableVod(vod.videoId) }
-                val master = resolved.getOrNull()
-                if (master != null) {
-                    rt.master = master
-                    val height = targetHeight()
-                    val url = TileQuality.vodUrl(master.masterUrl, master.variants, height)
-                    synchronized(lock) {
-                        if (rt.closed) return@launch
-                        rt.playingHeight = height
-                        player.playVod(url, next)
-                    }
-                    applyAudio()
-                    return@launch
-                }
-                val error = resolved.exceptionOrNull()
-                if (VodFailures.isPermanent(error) || rt.autoRetries >= AUTO_RETRY_DELAYS_MS.size) {
-                    updateInfo(rt.id) { it.copy(message = VodFailures.message(error), isBuffering = false) }
-                    return@launch
-                }
-                delay(AUTO_RETRY_DELAYS_MS[rt.autoRetries])
-                rt.autoRetries++
-                next = resumePoint(rt)
-            }
-        }
+        if (!retry) rt.autoRetries = 0
         synchronized(lock) {
+            if (rt.closed) return
             rt.loadJob?.cancel()
-            rt.loadJob = job
-            rt.jobs += job
+            rt.loadJob = scope.launch {
+                var next = atMs
+                while (!rt.closed) {
+                    val resolved = runCatching { rt.master ?: vodRepository.resolvePlayableVod(vod.videoId) }
+                    // A start that was replaced meanwhile must not play.
+                    currentCoroutineContext().ensureActive()
+                    val master = resolved.getOrNull()
+                    if (master != null) {
+                        rt.master = master
+                        val height = targetHeight()
+                        val url = TileQuality.vodUrl(master.masterUrl, master.variants, height)
+                        synchronized(lock) {
+                            if (rt.closed) return@launch
+                            rt.playingHeight = height
+                            player.playVod(url, next, keepPaused)
+                        }
+                        applyAudio()
+                        return@launch
+                    }
+                    val error = resolved.exceptionOrNull()
+                    if (VodFailures.isPermanent(error) || rt.autoRetries >= AUTO_RETRY_DELAYS_MS.size) {
+                        updateInfo(rt.id) { it.copy(message = VodFailures.message(error), isBuffering = false) }
+                        return@launch
+                    }
+                    delay(AUTO_RETRY_DELAYS_MS[rt.autoRetries])
+                    rt.autoRetries++
+                    next = reloadPoint(rt) ?: next
+                }
+            }
         }
     }
 
@@ -547,15 +577,17 @@ class MultiViewViewModel(
         val vod = rt.vod ?: return
         val s = rt.player?.status?.value ?: return
         if (!VodTileLogic.shouldSave(s.positionMs, s.durationMs)) return
+        // A tile that does not know its title or channel yet keeps what Continue Watching already has.
         progressStore.save(
-            WatchProgress(
-                vodId = vod.videoId,
-                positionMs = s.positionMs,
-                durationMs = s.durationMs,
-                updatedAt = System.currentTimeMillis(),
+            VodTileLogic.mergedProgress(
+                existing = progressStore.get(vod.videoId),
+                videoId = vod.videoId,
                 title = vod.title,
                 channelLogin = vod.channelLogin,
                 thumbnailUrl = vod.thumbnailUrl,
+                positionMs = s.positionMs,
+                durationMs = s.durationMs,
+                now = System.currentTimeMillis(),
             ),
         )
     }
@@ -590,7 +622,7 @@ class MultiViewViewModel(
     /** Every (re)start of a tile goes through here, so retries keep the tile's quality and low latency. */
     private fun startPlayback(rt: Runtime) {
         if (rt.vod != null) {
-            startVod(rt, resumePoint(rt))
+            reloadVod(rt)
             applyAudio()
             return
         }
@@ -619,6 +651,8 @@ class MultiViewViewModel(
         val changed = synchronized(lock) { runtimes.values.filter { it.player != null && it.playingHeight != 0 && it.playingHeight != height } }
         changed.forEach {
             it.watchdog.reset()
+            // A past video asks for a fresh playlist, so a long pause cannot leave it with a stale one.
+            it.master = null
             startPlayback(it)
         }
     }
@@ -662,6 +696,7 @@ class MultiViewViewModel(
         } ?: return
         // Saved before the player is stopped: a stopped player reads position 0.
         runCatching { saveProgress(rt) }
+        rt.loadJob?.cancel()
         synchronized(lock) { rt.jobs.toList() }.forEach { it.cancel() }
         rt.player?.let { rt.freeOnce(it) }
         // A past video has no ad-block state, and a live tile of the same channel must keep its own.

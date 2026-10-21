@@ -111,8 +111,76 @@ class VodTileLogicTest {
         assertEquals(ParsedVideo("123", (3600 + 2 * 60 + 3) * 1000L), VodTileLogic.parseVideo("https://www.twitch.tv/videos/123?t=1h2m3s"))
         assertEquals(ParsedVideo("123", 90_000), VodTileLogic.parseVideo("https://m.twitch.tv/videos/123?filter=archives&t=1m30s"))
         assertEquals(ParsedVideo("123"), VodTileLogic.parseVideo("https://www.twitch.tv/shroud/video/123"))
-        assertEquals(ParsedVideo("456"), VodTileLogic.parseVideo(" v456 "))
-        assertEquals(ParsedVideo("789"), VodTileLogic.parseVideo("789"))
+        assertEquals(ParsedVideo("456", certain = true), VodTileLogic.parseVideo(" v456 "))
+    }
+
+    @Test fun aBareNumberIsAChannelUnlessItIsLongAndThenOnlyAMaybe() {
+        // Short numbers are channel names (there are channels called 1234, 2020 and so on).
+        assertNull(VodTileLogic.parseVideo("789"))
+        assertNull(VodTileLogic.parseVideo("12345678"))
+        // Twitch video ids are long: a bare one is a video, but not a certain one.
+        assertEquals(ParsedVideo("2902385151", certain = false), VodTileLogic.parseVideo("2902385151"))
+        // A v prefix or a link is certain, however short the number.
+        assertEquals(ParsedVideo("789", certain = true), VodTileLogic.parseVideo("v789"))
+        assertTrue(VodTileLogic.parseVideo("https://www.twitch.tv/videos/5")!!.certain)
+    }
+
+    @Test fun lastGoodPlaceOnlyMovesOnARealReadingWhilePlaying() {
+        // libVLC reports 0 while it opens new media: the place must not reset.
+        assertEquals(754_000, VodPlayback.nextGood(754_000, 0, playing = true))
+        assertEquals(754_000, VodPlayback.nextGood(754_000, 800_000, playing = false))
+        assertEquals(800_000, VodPlayback.nextGood(754_000, 800_000, playing = true))
+        assertFalse(VodPlayback.shouldPublishTime(754_000, 0))
+        assertTrue(VodPlayback.shouldPublishTime(0, 0))
+        assertTrue(VodPlayback.shouldPublishTime(754_000, 1_000))
+    }
+
+    @Test fun aReloadAtTheEndStaysEndedAndOtherwiseResumes() {
+        assertNull(VodTileLogic.reloadStartMs(599_000, 0, 600_000))
+        assertTrue(VodPlayback.isEnded(598_000, 600_000))
+        assertFalse(VodPlayback.isEnded(597_000, 600_000))
+        assertEquals(300_000, VodTileLogic.reloadStartMs(300_000, 0, 600_000))
+        // Never played: where it was asked to start.
+        assertEquals(90_000, VodTileLogic.reloadStartMs(0, 90_000, 600_000))
+        assertEquals(0, VodPlayback.replayStartMs(599_000, 600_000))
+    }
+
+    @Test fun theSeekBarSettlesWhenTheClockIsCloseToTheTarget() {
+        assertTrue(VodTileLogic.seekSettled(300_000, 301_000))
+        assertTrue(VodTileLogic.seekSettled(300_000, 298_600))
+        assertFalse(VodTileLogic.seekSettled(300_000, 120_000))
+        assertFalse(VodTileLogic.seekSettled(300_000, 302_000))
+    }
+
+    @Test fun savingNeverBlanksMetadataThatIsAlreadyKept() {
+        val old = WatchProgress("1", 50_000, 600_000, 1, "Great run", "shroud", "thumb.jpg")
+        val merged = VodTileLogic.mergedProgress(old, "1", title = "", channelLogin = "", thumbnailUrl = "", positionMs = 90_000, durationMs = 600_000, now = 9)
+        assertEquals("Great run", merged.title)
+        assertEquals("shroud", merged.channelLogin)
+        assertEquals("thumb.jpg", merged.thumbnailUrl)
+        assertEquals(90_000, merged.positionMs)
+        assertEquals(9, merged.updatedAt)
+        // Known values win, and with nothing saved the entry is simply what the tile knows.
+        val fresh = VodTileLogic.mergedProgress(old, "1", "New title", "xqc", "n.jpg", 90_000, 600_000, 9)
+        assertEquals("New title", fresh.title)
+        assertEquals("", VodTileLogic.mergedProgress(null, "2", "", "", "", 30_000, 600_000, 9).title)
+    }
+
+    @Test fun detailsFillInATileOpenedFromAPastedLink() {
+        val s = MultiViewState().add("a").addVod(TileSource.Vod("123456789", "", "", 5_000))
+        val tile = s.tiles[1]
+        assertEquals("", tile.login)
+        val filled = s.withVodDetails("123456789", TileSource.Vod("123456789", "Great run", "Shroud", 0, VodKind.HIGHLIGHT, "t.jpg"))
+        val after = filled.tiles[1]
+        assertEquals("shroud", after.login)
+        assertEquals("Great run", after.vod!!.title)
+        assertEquals(VodKind.HIGHLIGHT, after.vod!!.kind)
+        assertEquals(5_000, after.vod!!.startPositionMs)
+        assertEquals(tile.id, after.id)
+        // The live tile is untouched, and an unknown video changes nothing.
+        assertSame(filled.tiles[0], filled.tiles[0])
+        assertSame(s, s.withVodDetails("999", TileSource.Vod("999", "x", "y")))
+        assertTrue(filled.contains("a"))
     }
 
     @Test fun refusesWhatIsNotAVideo() {

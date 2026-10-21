@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +26,8 @@ import com.puretv.twitch.desktop.ui.VodTileLogic
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val IdleStatus = MutableStateFlow(PlayerStatus())
 
@@ -45,7 +49,17 @@ fun VodTransportRow(
     val c = PureTvTheme.colors
     val status by (player?.status ?: IdleStatus).collectAsState()
     var dragMs by remember { mutableStateOf<Long?>(null) }
-    val shown = dragMs ?: status.positionMs
+    // After a seek the bar keeps showing the target until VLC's clock catches up with it
+    // (or a second passes), so it does not jump back to the old place and forward again.
+    var pendingMs by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(pendingMs) {
+        val target = pendingMs ?: return@LaunchedEffect
+        withTimeoutOrNull(VodTileLogic.SEEK_TIMEOUT_MS) {
+            snapshotFlow { status.positionMs }.first { VodTileLogic.seekSettled(target, it) }
+        }
+        pendingMs = null
+    }
+    val shown = dragMs ?: pendingMs ?: status.positionMs
     Row(
         modifier = modifier.fillMaxWidth().height(40.dp).background(c.surfaceContainer).padding(start = 4.dp, end = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -64,10 +78,14 @@ fun VodTransportRow(
             value = VodTileLogic.fraction(shown, status.durationMs),
             onValueChange = { dragMs = VodTileLogic.positionAt(it, status.durationMs) },
             onValueChangeFinished = {
-                dragMs?.let(onSeek)
+                dragMs?.let {
+                    pendingMs = it
+                    onSeek(it)
+                }
                 dragMs = null
             },
-            enabled = status.isSeekable && status.durationMs > 0,
+            // Also after the end, where a seek plays the video again from the target.
+            enabled = status.durationMs > 0,
             modifier = Modifier.weight(1f),
         )
         Text(formatTimecode(status.durationMs), style = PureTvType.dataSmall, color = c.onSurfaceVariant)

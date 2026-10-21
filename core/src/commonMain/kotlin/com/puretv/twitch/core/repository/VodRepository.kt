@@ -38,6 +38,19 @@ class VodRepository(
         return apiClient.getVideos(userId, type, first, after)
     }
 
+    /**
+     * One video's title, channel, kind and art by id, for a video named only by a pasted
+     * link. Signed in it asks Helix; signed out, or when Helix has nothing or fails, it asks
+     * the anonymous directory. Null when neither knows the video.
+     */
+    suspend fun videoById(videoId: String): com.puretv.twitch.core.model.VideoInfo? {
+        if (videoId.isBlank()) return null
+        if (apiClient.hasUserToken()) {
+            runCatching { apiClient.getVideoById(videoId) }.getOrNull()?.let { return it }
+        }
+        return directory?.let { runCatching { it.videoById(videoId) }.getOrNull() }
+    }
+
     suspend fun resolvePlayableVod(vodId: String, oauthToken: String? = null): MasterPlaylistResult =
         vodResolver.resolveVodMasterPlaylist(vodId, oauthToken)
 

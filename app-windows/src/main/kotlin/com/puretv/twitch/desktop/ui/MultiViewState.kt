@@ -162,6 +162,25 @@ data class MultiViewState(
     }
 
     /**
+     * The state with what is now known about the video [videoId] filled in: its title, channel,
+     * kind and art. Fields that [details] leaves blank keep the tile's own. The start place
+     * and the tile's volume, selection and order are untouched.
+     */
+    fun withVodDetails(videoId: String, details: TileSource.Vod): MultiViewState {
+        val i = tiles.indexOfFirst { it.vod?.videoId == videoId }
+        if (i < 0) return this
+        val old = tiles[i].vod!!
+        val merged = old.copy(
+            title = details.title.ifBlank { old.title },
+            channelLogin = details.channelLogin.trim().removePrefix("@").lowercase().ifBlank { old.channelLogin },
+            kind = details.kind,
+            thumbnailUrl = details.thumbnailUrl.ifBlank { old.thumbnailUrl },
+        )
+        if (merged == old) return this
+        return copy(tiles = tiles.toMutableList().also { it[i] = tiles[i].copy(login = merged.channelLogin, source = merged) })
+    }
+
+    /**
      * The state without tile [id]. When the active tile closes, the sound moves to
      * the tile that took its place (or the one before it, when it was last).
      */

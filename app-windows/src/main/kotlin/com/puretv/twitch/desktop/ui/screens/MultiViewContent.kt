@@ -319,7 +319,7 @@ fun MultiViewContent(
                                 notice = "Already watching ${login.trim().removePrefix("@")}"
                             }
                             AddOutcome.Full -> notice = "Four streams is the limit"
-                            AddOutcome.Blank -> {}
+                            AddOutcome.Blank -> notice = "Type a channel name first"
                             AddOutcome.Added -> if (viewModel.addChannel(login) && viewModel.state.value.layout.count >= 2) pickerOpen = false
                         }
                     },
@@ -330,7 +330,7 @@ fun MultiViewContent(
                                 notice = "Already watching that video"
                             }
                             AddOutcome.Full -> notice = "Four streams is the limit"
-                            AddOutcome.Blank -> {}
+                            AddOutcome.Blank -> notice = "That video can't be added"
                             AddOutcome.Added -> if (viewModel.addVod(vod) && viewModel.state.value.layout.count >= 2) pickerOpen = false
                         }
                     },

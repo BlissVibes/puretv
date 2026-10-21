@@ -41,6 +41,7 @@ import com.puretv.twitch.core.model.VideoInfo
 import com.puretv.twitch.core.model.VideoType
 import com.puretv.twitch.desktop.player.formatTimecode
 import com.puretv.twitch.desktop.ui.ChannelViewModel
+import com.puretv.twitch.desktop.ui.AddOutcome
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.note
@@ -327,7 +328,12 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
                 VodRow(
                     v,
                     onClick = { onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl)) },
-                    onAddToMulti = { note = session.addVod(v.toTileSource(channelLogin)).note(popped = false) },
+                    onAddToMulti = {
+                        val outcome = session.addVod(v.toTileSource(channelLogin))
+                        note = outcome.note(popped = false)
+                        // A new tile is in the grid, which only shows on the multi-stream screen: go there.
+                        if (outcome == AddOutcome.Added) session.requestGrid()
+                    },
                     onPopOut = { note = session.popOutVod(v.toTileSource(channelLogin)).note(popped = true) },
                 )
             }

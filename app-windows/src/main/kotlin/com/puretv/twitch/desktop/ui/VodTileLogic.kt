@@ -4,7 +4,8 @@ import com.puretv.twitch.core.vod.ResumePolicy
 import com.puretv.twitch.core.vod.WatchProgress
 
 /** A past video named by a pasted link or id, and where the link says to start. */
-data class ParsedVideo(val videoId: String, val startMs: Long = 0)
+/** [certain] is false for a bare number, which could just as well be a channel name. */
+data class ParsedVideo(val videoId: String, val startMs: Long = 0, val certain: Boolean = true)
 
 /**
  * The pure rules of a past-video tile: where it starts, where a retry or a moved window
@@ -23,18 +24,27 @@ object VodTileLogic {
     /** How often a playing tile saves its place. */
     const val SAVE_EVERY_MS = 10_000L
 
-    private val idPattern = Regex("""^v?(\d{1,15})$""", RegexOption.IGNORE_CASE)
+    /** Twitch video ids are long; a shorter bare number is more likely a channel name. */
+    const val MIN_BARE_ID_DIGITS = 9
+
+    private val idPattern = Regex("""^(v)?(\d{1,15})$""", RegexOption.IGNORE_CASE)
     private val urlPattern = Regex("""twitch\.tv/(?:[^/?#\s]+/)?videos?/(\d{1,15})""", RegexOption.IGNORE_CASE)
     private val timePattern = Regex("""[?&]t=(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?(?=&|#|$)""", RegexOption.IGNORE_CASE)
 
     /**
      * The video in [input]: a twitch.tv/videos/ID link (with an optional `t=1h2m3s` start), a
-     * v-prefixed id as shown in the player, or a bare number. Null for anything else.
+     * v-prefixed id as shown in the player, or a bare number of [MIN_BARE_ID_DIGITS] or more
+     * digits (not [ParsedVideo.certain]: try it as a channel first). Null for anything else,
+     * a short bare number included.
      */
     fun parseVideo(input: String): ParsedVideo? {
         val text = input.trim()
         if (text.isEmpty()) return null
-        idPattern.find(text)?.let { return ParsedVideo(it.groupValues[1]) }
+        idPattern.find(text)?.let { match ->
+            val prefixed = match.groupValues[1].isNotEmpty()
+            val digits = match.groupValues[2]
+            return if (prefixed || digits.length >= MIN_BARE_ID_DIGITS) ParsedVideo(digits, certain = prefixed) else null
+        }
         val id = urlPattern.find(text)?.groupValues?.get(1) ?: return null
         val time = timePattern.find(text)
         val seconds = if (time == null) 0L else {
@@ -72,6 +82,45 @@ object VodTileLogic {
     /** The target of a relative seek from [positionMs]; null while the video cannot seek yet. */
     fun seekTarget(positionMs: Long, deltaMs: Long, durationMs: Long, seekable: Boolean): Long? =
         if (!seekable || durationMs <= 0) null else clampSeek(positionMs + deltaMs, durationMs)
+
+    /**
+     * Where a reload picks up, or null when the video is at its end and should stay ended
+     * (pressing play then starts it over). Uses [lastGoodMs], the last place really seen.
+     */
+    fun reloadStartMs(lastGoodMs: Long, startMs: Long, durationMs: Long): Long? =
+        if (lastGoodMs > 0 && com.puretv.twitch.desktop.player.VodPlayback.isEnded(lastGoodMs, durationMs)) null
+        else retryStartMs(lastGoodMs, startMs, durationMs)
+
+    /** True once the clock has caught up with a seek to [targetMs], so the bar can stop showing the target. */
+    fun seekSettled(targetMs: Long, positionMs: Long): Boolean = kotlin.math.abs(positionMs - targetMs) <= SEEK_SETTLE_MS
+
+    /** How long the bar keeps showing a seek target while the clock catches up. */
+    const val SEEK_TIMEOUT_MS = 1_000L
+    private const val SEEK_SETTLE_MS = 1_500L
+
+    /**
+     * The progress entry to save for a playing video: the new place and length, and for each
+     * piece of metadata the tile's value unless it is blank, in which case the entry already
+     * saved keeps its own. A tile opened from a pasted link may not know them yet.
+     */
+    fun mergedProgress(
+        existing: WatchProgress?,
+        videoId: String,
+        title: String,
+        channelLogin: String,
+        thumbnailUrl: String,
+        positionMs: Long,
+        durationMs: Long,
+        now: Long,
+    ): WatchProgress = WatchProgress(
+        vodId = videoId,
+        positionMs = positionMs,
+        durationMs = durationMs,
+        updatedAt = now,
+        title = title.ifBlank { existing?.title.orEmpty() },
+        channelLogin = channelLogin.ifBlank { existing?.channelLogin.orEmpty() },
+        thumbnailUrl = thumbnailUrl.ifBlank { existing?.thumbnailUrl.orEmpty() },
+    )
 
     /** The slider position (0 to 1) of [positionMs] in a video of [durationMs]. */
     fun fraction(positionMs: Long, durationMs: Long): Float =

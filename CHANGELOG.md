@@ -129,8 +129,11 @@ Streams start sooner, ads get skipped more cleanly, and live streams play closer
 - **Badges and Twitch emotes before you sign in.** Chat shows Twitch's own badges and most emotes even when signed out.
 - **Show badges** can now be switched off on phone and TV, and a text chip still shows for any badge picture that did not load.
 - **7TV names stay readable.** Very dark or very light name colours are nudged so they can be read on the chat background.
+- **Volume for each multi-stream tile (Windows).** Every tile has its own volume slider and a listen-to button, and adjusting a tile's sound also makes it the one you hear.
+- **Smoother motion everywhere.** Screens slide and fade into place, lists ease in as they load, placeholders shimmer while content arrives, and buttons and cards react to presses and hover on Windows, phone and TV. It follows your system's reduce-motion setting and stays still if you turn animations off.
 
 ### Fixed
+- **Multi-stream sound could end up on the wrong tile (Windows).** Quick clicks between tiles could leave the wrong one audible or two playing at once. Audio changes are now applied one at a time, so only the tile you picked is heard.
 - **The phone app stays signed in.** It only renewed your sign-in when it
   started, so with background play, follows and chat stopped working after a
   few hours. It now renews whenever it needs to, and if Twitch signs you out,

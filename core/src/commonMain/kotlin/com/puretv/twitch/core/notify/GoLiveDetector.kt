@@ -33,8 +33,7 @@ data class GoLiveDecision(val toNotify: List<StreamInfo>, val nextState: LiveNot
  *  8. [evaluate]'s `watched` is the set of channels the viewer opted in to. Only those
  *     are ever announced, and one that was not in the previous poll's set is recorded
  *     without an announcement, so tapping the bell on a channel that is live right now
- *     does not announce the broadcast being watched. A null `watched` means every channel
- *     in `live` counts (the detector's own tests use it).
+ *     does not announce the broadcast being watched.
  */
 object GoLiveDetector {
     const val SEEN_RETENTION_MS = 30 * 60_000L
@@ -48,7 +47,7 @@ object GoLiveDetector {
         live: List<StreamInfo>,
         nowMs: Long,
         enabled: Boolean,
-        watched: Set<String>? = null,
+        watched: Set<String>,
     ): GoLiveDecision {
         val reseed = !prev.seeded || prev.userId != userId
         val base = when {
@@ -56,7 +55,7 @@ object GoLiveDetector {
             prev.userId == userId -> LiveNotifyState(userId = userId, lastNotifiedAtMs = prev.lastNotifiedAtMs)
             else -> LiveNotifyState(userId = userId)
         }
-        val watchedLower = watched?.mapTo(HashSet()) { it.lowercase() }
+        val watchedLower = watched.mapTo(HashSet()) { it.lowercase() }
         val notify = mutableListOf<StreamInfo>()
         val notified = base.lastNotifiedAtMs.toMutableMap()
         if (!reseed && enabled) {
@@ -65,11 +64,9 @@ object GoLiveDetector {
                 // Compared against every remembered stream, expired or not, so a long
                 // gap between polls never re-announces a broadcast still running.
                 if (base.seen[login]?.streamId == stream.id) continue
-                if (watchedLower != null) {
-                    if (login !in watchedLower) continue
-                    // Rule 8: a channel the viewer only just opted in to is recorded, not announced.
-                    if (login !in base.watched) continue
-                }
+                if (login !in watchedLower) continue
+                // Rule 8: a channel the viewer only just opted in to is recorded, not announced.
+                if (login !in base.watched) continue
                 val last = notified[login]
                 if (last != null && nowMs - last < RENOTIFY_COOLDOWN_MS) continue
                 val started = parseStartedAtMs(stream.startedAt)
@@ -86,7 +83,7 @@ object GoLiveDetector {
             // compared against either; the first poll with them on seeds afresh.
             seeded = enabled,
             seen = seen,
-            watched = watchedLower ?: base.watched,
+            watched = watchedLower,
             lastNotifiedAtMs = notified.filterValues { nowMs - it < NOTIFIED_RETENTION_MS },
         )
         return GoLiveDecision(notify, next)

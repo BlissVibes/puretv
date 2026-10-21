@@ -103,6 +103,19 @@ class LiveFollowsMonitorTest {
         assertTrue(h.announced.isEmpty())
     }
 
+    @Test fun aFailedFirstPollForANewBellIsRetriedAtOnce() = runTest {
+        val h = Harness(this, channels = setOf("a"))
+        h.fail = true
+        h.monitor.pollNow()
+        h.fail = false
+        h.monitor.pollNow()
+        assertEquals(2, h.fetches, "a failed poll does not start the share window")
+        val loop = launch { h.monitor.pollEvery(90_000) }
+        runCurrent()
+        assertEquals(2, h.fetches, "and a good one does")
+        loop.cancel()
+    }
+
     @Test fun concurrentPollsShareOneFetch() = runTest {
         val h = Harness(this)
         h.fetchDelayMs = 500

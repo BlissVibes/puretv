@@ -20,7 +20,7 @@ object GoLiveAlerts {
      */
     fun bellTapped(settings: AppSettings, login: String): AppSettings {
         val channels = toggled(settings.notifyChannels, login)
-        val added = channels.size > settings.notifyChannels.size
+        val added = login.isNotBlank() && !isOn(settings.notifyChannels, login)
         return settings.copy(notifyChannels = channels, liveNotifications = settings.liveNotifications || added)
     }
 

@@ -61,11 +61,11 @@ class LiveFollowsMonitor(
     private var lastAnswer: Answer? = null
     private var state: LiveNotifyState? = null
 
-    /** When [pollNow] last went to the network, successful or not; drives [pollEvery]. */
+    /** When [pollNow] last fetched successfully; drives [pollEvery] and the share window. */
     @Volatile
     private var lastPollAtMs: Long = Long.MIN_VALUE / 2
 
-    /** The opted-in logins at the last poll; a different list makes [pollEvery] poll at once. */
+    /** The opted-in logins at the last successful poll; a different list makes [pollEvery] poll at once. */
     @Volatile
     private var polledWatched: Set<String>? = null
 
@@ -147,9 +147,11 @@ class LiveFollowsMonitor(
             mutex.withLock {
                 // The worker and the in-app timer can both land here; one fetch serves both.
                 if (watched == polledWatched && clock() - lastPollAtMs < shareWindowMs) return@withLock
+                val live = fetchWatched(watched.toList())
+                // Only a successful fetch counts as polled: after a failure the list still
+                // reads as changed, so the next tick asks again instead of waiting it out.
                 lastPollAtMs = clock()
                 polledWatched = watched
-                val live = fetchWatched(watched.toList())
                 val decision = GoLiveDetector.evaluate(
                     prev = currentState(),
                     userId = "",
@@ -185,7 +187,8 @@ class LiveFollowsMonitor(
      * Polls every [intervalMs], counted from the last poll, until the calling coroutine
      * is cancelled; a changed opt-in list polls at once, so a channel added while
      * offline is already known when it goes live. A failed poll waits a full interval
-     * too, so a dead network costs one request per interval, not a retry storm.
+     * before the next try, so a dead network costs one request per interval, not a
+     * retry storm.
      */
     suspend fun pollEvery(intervalMs: Long): Nothing {
         while (true) {

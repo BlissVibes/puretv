@@ -125,7 +125,7 @@ enum class Destination(val label: String, val icon: ImageVector, val outlineIcon
     ACCOUNT("Account", ExpressiveIcons.Account, ExpressiveIcons.AccountOutlined),
 }
 
-private sealed class Route {
+internal sealed class Route {
     data object Top : Route()
     data class Category(val gameId: String, val gameName: String) : Route()
     data class Channel(val login: String) : Route()

@@ -1,10 +1,7 @@
 package com.puretv.twitch.desktop.ui.components
 
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -38,15 +35,15 @@ import com.puretv.twitch.desktop.ui.theme.PureTvTheme
  * that were duplicated across StreamCard / NavItem / WinButton.
  */
 
-/** The tactile press-in cue. Spring so it settles with a little weight. */
+/** The tactile press-in cue. A stiff, nearly critically damped spring, so it settles without wobbling. */
 fun Modifier.pressScale(
     interaction: MutableInteractionSource,
-    pressed: Float = 0.96f,
+    pressed: Float = PureTvMotion.PressScale,
 ): Modifier = composed {
     val isPressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) pressed else 1f,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium),
+        animationSpec = PureTvMotion.press(),
         label = "pressScale",
     )
     graphicsLayer { scaleX = scale; scaleY = scale }
@@ -59,8 +56,8 @@ fun Modifier.hoverLift(
     scaleTo: Float = 1.03f,
 ): Modifier = composed {
     val hovered by interaction.collectIsHoveredAsState()
-    val l by animateDpAsState(if (hovered) -lift else 0.dp, tween(PureTvMotion.Fast), label = "lift")
-    val s by animateFloatAsState(if (hovered) scaleTo else 1f, tween(PureTvMotion.Fast), label = "hoverScale")
+    val l by animateDpAsState(if (hovered) -lift else 0.dp, PureTvMotion.hover(), label = "lift")
+    val s by animateFloatAsState(if (hovered) scaleTo else 1f, PureTvMotion.press(), label = "hoverScale")
     graphicsLayer { translationY = l.toPx(); scaleX = s; scaleY = s }
 }
 
@@ -78,7 +75,7 @@ fun Modifier.focusRing(
     width: Dp = 2.dp,
 ): Modifier = composed {
     val ringColor = color ?: PureTvTheme.colors.primary
-    val alpha by animateFloatAsState(if (focused) 1f else 0f, tween(PureTvMotion.Fast), label = "focusRing")
+    val alpha by animateFloatAsState(if (focused) 1f else 0f, PureTvMotion.fade(PureTvMotion.Fast), label = "focusRing")
     drawWithContent {
         drawContent()
         if (alpha > 0f) {

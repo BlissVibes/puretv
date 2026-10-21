@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridScope
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -51,6 +52,8 @@ import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.desktop.ui.theme.StaggerLedger
+import com.puretv.twitch.desktop.ui.theme.staggerIn
 import org.koin.core.Koin
 import org.koin.core.parameter.parametersOf
 
@@ -85,6 +88,7 @@ fun CategoryContent(
     val flipOrigin = remember { koin.get<FlipOrigin>() }
     val displayName = state.gameName.ifBlank { gameName }
 
+    val stagger = remember { StaggerLedger() }
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         modifier = Modifier.fillMaxSize(),
@@ -123,9 +127,10 @@ fun CategoryContent(
                 )
             }
 
-            else -> items(state.streams, key = { it.id }) { stream ->
+            else -> itemsIndexed(state.streams, key = { _, it -> it.id }) { index, stream ->
                 CategoryStreamCard(
                     stream = stream,
+                    modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger),
                     onClick = {
                         // PageUp/PageDown in the player flip through this category.
                         flipOrigin.record(state.streams.map { it.userLogin })
@@ -220,11 +225,11 @@ private fun CategoryBoxArt(gameId: String, displayName: String) {
 
 /** A live stream card: 16:9 cover art, LIVE pill and viewer count over it, then name and title. */
 @Composable
-private fun CategoryStreamCard(stream: StreamInfo, onClick: () -> Unit) {
+private fun CategoryStreamCard(stream: StreamInfo, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
 
-    ExpressiveCard(onClick = onClick, modifier = Modifier.fillMaxWidth().prewarmStreamOnHover(stream.userLogin)) {
+    ExpressiveCard(onClick = onClick, modifier = modifier.fillMaxWidth().prewarmStreamOnHover(stream.userLogin)) {
         Column {
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(shapes.thumbShape)) {
                 val thumbUrl = stream.thumbnailUrl.replace("{width}", "440").replace("{height}", "248")

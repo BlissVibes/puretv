@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -71,6 +72,8 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
+import com.puretv.twitch.desktop.ui.theme.StaggerLedger
+import com.puretv.twitch.desktop.ui.theme.staggerIn
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import org.koin.core.Koin
 
@@ -121,6 +124,7 @@ fun HomeContent(
     val followStore = remember { koin.get<FollowStore>() }
     val followedChannels by followStore.followed.collectAsState()
 
+    val stagger = remember { StaggerLedger() }
     LazyVerticalGrid(
         columns = GridCells.Fixed(4),
         modifier = Modifier.fillMaxSize(),
@@ -247,7 +251,7 @@ fun HomeContent(
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         SectionHeading(title = "Live now", modifier = Modifier.padding(top = 20.dp))
                     }
-                    gridItems(state.topStreams, key = { "live_${it.id}" }) { stream ->
+                    gridItemsIndexed(state.topStreams, key = { _, it -> "live_${it.id}" }) { index, stream ->
                         StreamGridCard(
                             channelName = stream.userName,
                             avatarUrl = null,
@@ -261,7 +265,7 @@ fun HomeContent(
                                 flipOrigin.record(state.topStreams.map { it.userLogin })
                                 onOpenChannel(stream.userLogin)
                             },
-                            modifier = Modifier.prewarmStreamOnHover(stream.userLogin),
+                            modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin),
                         )
                     }
                 } else if (state.following.isEmpty()) {

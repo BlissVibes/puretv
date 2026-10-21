@@ -183,6 +183,7 @@ private fun EmoteTile(emote: PickableEmote, onPick: (PickableEmote) -> Unit) {
                 restRadius = 10.dp,
                 hoverRadius = 17.dp,
                 hoverColor = c.surfaceHighest,
+                pressScale = 1f,
             ),
         contentAlignment = Alignment.Center,
     ) {

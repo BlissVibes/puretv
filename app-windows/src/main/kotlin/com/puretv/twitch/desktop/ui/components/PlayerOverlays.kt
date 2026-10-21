@@ -1,10 +1,6 @@
 package com.puretv.twitch.desktop.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +18,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 
@@ -38,8 +35,8 @@ fun PlayerNoticeStrip(text: String?, modifier: Modifier = Modifier) {
     if (text != null) lastText = text
     AnimatedVisibility(
         visible = text != null,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
+        enter = PureTvMotion.panelEnter(),
+        exit = PureTvMotion.panelExit(),
         modifier = modifier,
     ) {
         val c = PureTvTheme.colors
@@ -60,8 +57,8 @@ fun PlayerNoticeStrip(text: String?, modifier: Modifier = Modifier) {
 fun ShortcutsSheet(visible: Boolean, modifier: Modifier = Modifier) {
     AnimatedVisibility(
         visible = visible,
-        enter = expandVertically() + fadeIn(),
-        exit = shrinkVertically() + fadeOut(),
+        enter = PureTvMotion.panelEnter(),
+        exit = PureTvMotion.panelExit(),
         modifier = modifier,
     ) {
         val c = PureTvTheme.colors

@@ -124,13 +124,13 @@ fun FollowedRail(
                     Text("No followed channels live", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                 }
                 // Keyed by login (live + offline are disjoint, so keys stay unique across both).
-                else -> items(state.live, key = { it.login }) { RailEntry(it) }
+                else -> items(state.live, key = { it.login }) { Box(Modifier.animateItem()) { RailEntry(it) } }
             }
 
             if (state.offline.isNotEmpty()) {
                 item { OfflineToggleRow(expanded = state.offlineExpanded, count = state.offline.size, onClick = onToggleOffline) }
                 if (state.offlineExpanded) {
-                    items(state.offline, key = { it.login }) { RailEntry(it) }
+                    items(state.offline, key = { it.login }) { Box(Modifier.animateItem()) { RailEntry(it) } }
                 }
             }
         }
@@ -173,6 +173,7 @@ private fun FollowRowItem(row: FollowRow, onClick: () -> Unit) {
                 restRadius = shapes.pill,
                 hoverRadius = shapes.pillMorph,
                 hoverColor = c.surfaceHigh,
+                pressScale = PureTvMotion.CardPressScale,
             )
             .padding(horizontal = 14.dp)
             .height(48.dp),
@@ -249,18 +250,10 @@ private fun OfflineToggleRow(expanded: Boolean, count: Int, onClick: () -> Unit)
 
 /**
  * Placeholder rows shown while the first load is in flight, so the rail visibly reads
- * as "working" rather than empty. A gentle alpha pulse signals activity.
+ * as "working" rather than empty. Same shimmer as every other loading state.
  */
 @Composable
 private fun LoadingSkeleton(rows: Int = 5) {
-    val c = PureTvTheme.colors
-    val transition = rememberInfiniteTransition(label = "followed-skeleton")
-    val alpha by transition.animateFloat(
-        initialValue = 0.3f,
-        targetValue = 0.65f,
-        animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
-        label = "skeleton-alpha",
-    )
     Column {
         repeat(rows) {
             Row(
@@ -268,11 +261,8 @@ private fun LoadingSkeleton(rows: Int = 5) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(Modifier.size(28.dp).clip(CircleShape).background(c.outlineVariant.copy(alpha = alpha)))
-                Box(
-                    Modifier.weight(1f).height(10.dp).clip(PureTvTheme.shapes.smShape)
-                        .background(c.outlineVariant.copy(alpha = alpha)),
-                )
+                Skeleton(Modifier.size(28.dp).clip(CircleShape))
+                Skeleton(Modifier.weight(1f).height(10.dp).clip(PureTvTheme.shapes.smShape))
             }
         }
     }

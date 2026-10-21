@@ -3,7 +3,6 @@ package com.puretv.twitch.desktop.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -95,7 +94,7 @@ fun Modifier.expressiveSurface(
     borderColor: Color = Color.Transparent,
     hoverBorderColor: Color = borderColor,
     lift: Dp = 0.dp,
-    pressScale: Float = 1f,
+    pressScale: Float = PureTvMotion.PressScale,
 ): Modifier = composed {
     val hovered by interaction.collectIsHoveredAsState()
     val pressed by interaction.collectIsPressedAsState()
@@ -106,27 +105,27 @@ fun Modifier.expressiveSurface(
             hovered -> hoverRadius
             else -> restRadius
         },
-        animationSpec = PureTvMotion.MorphSpring,
+        animationSpec = PureTvMotion.morph(),
         label = "morphRadius",
     )
     val fill by animateColorAsState(
         targetValue = if (hovered) hoverColor else color,
-        animationSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+        animationSpec = PureTvMotion.fade(PureTvMotion.Medium),
         label = "morphFill",
     )
     val stroke by animateColorAsState(
         targetValue = if (hovered) hoverBorderColor else borderColor,
-        animationSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+        animationSpec = PureTvMotion.fade(PureTvMotion.Medium),
         label = "morphStroke",
     )
     val rise by animateDpAsState(
         targetValue = if (hovered) -lift else 0.dp,
-        animationSpec = PureTvMotion.MorphSpring,
+        animationSpec = PureTvMotion.hover(),
         label = "morphLift",
     )
     val scale by animateFloatAsState(
         targetValue = if (pressed) pressScale else 1f,
-        animationSpec = PureTvMotion.MorphSpringFloat,
+        animationSpec = PureTvMotion.press(),
         label = "morphScale",
     )
 
@@ -163,7 +162,7 @@ fun Modifier.expressiveClickable(
     borderColor: Color = Color.Transparent,
     hoverBorderColor: Color = borderColor,
     lift: Dp = 0.dp,
-    pressScale: Float = 1f,
+    pressScale: Float = PureTvMotion.PressScale,
     enabled: Boolean = true,
 ): Modifier {
     val focused by interaction.collectIsFocusedAsState()
@@ -222,7 +221,6 @@ fun ExpressiveButton(
     val c = PureTvTheme.colors
     val shapes = PureTvTheme.shapes
     val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
 
     val fg = when (style) {
         ExpressiveButtonStyle.Filled -> c.onPrimary
@@ -244,15 +242,12 @@ fun ExpressiveButton(
     }
     val fgHover = if (style == ExpressiveButtonStyle.Tonal) c.onPrimary else fg
 
-    // Pressing squeezes the horizontal padding in. Combined with the corner morph
-    // this reads as the button physically compressing under the cursor.
-    val hPad by animateDpAsState(
-        targetValue = if (pressed) size.hPad - 4.dp else size.hPad,
-        animationSpec = PureTvMotion.MorphSpring,
-        label = "buttonPad",
-    )
+    // The press compression is the surface's scale (see expressiveSurface), which runs in a
+    // graphics layer. Squeezing the padding as well re-laid the button out, and moved its
+    // neighbours, on every frame of the press.
+    val hPad = size.hPad
     val hovered by interaction.collectIsHoveredAsState()
-    val ink by animateColorAsState(if (hovered) fgHover else fg, tween(PureTvMotion.Medium), label = "buttonInk")
+    val ink by animateColorAsState(if (hovered) fgHover else fg, PureTvMotion.fade(PureTvMotion.Medium), label = "buttonInk")
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -382,12 +377,12 @@ fun SplitButton(
 
     val leadOuter by animateDpAsState(
         if (leadHovered) shapes.pillMorph else height / 2,
-        PureTvMotion.MorphSpring,
+        PureTvMotion.morph(),
         label = "splitLead",
     )
     val trailOuter by animateDpAsState(
         if (trailHovered) shapes.pillMorph else height / 2,
-        PureTvMotion.MorphSpring,
+        PureTvMotion.morph(),
         label = "splitTrail",
     )
 
@@ -458,7 +453,7 @@ fun ExpressiveFilterChip(
     val interaction = remember { MutableInteractionSource() }
     val fg by animateColorAsState(
         if (selected) c.onSecondaryContainer else c.onSurfaceVariant,
-        tween(PureTvMotion.Medium),
+        PureTvMotion.fade(PureTvMotion.Medium),
         label = "chipFg",
     )
 
@@ -665,6 +660,7 @@ fun ExpressiveCard(
                         color = fill,
                         hoverColor = c.surfaceHigh,
                         lift = 4.dp,
+                        pressScale = PureTvMotion.CardPressScale,
                     )
                 } else {
                     Modifier.clip(shapes.cardShape).background(fill)
@@ -753,11 +749,11 @@ fun ExpressiveSwitch(
 ) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
-    val track by animateColorAsState(if (checked) c.primary else c.surfaceHighest, tween(PureTvMotion.Medium), label = "switchTrack")
+    val track by animateColorAsState(if (checked) c.primary else c.surfaceHighest, PureTvMotion.fade(PureTvMotion.Medium), label = "switchTrack")
     // Resting positions inside a 56x32 track: 4dp inset on the off side for the
     // small thumb, 28dp on the on side for the large one.
-    val thumbStart by animateDpAsState(if (checked) 28.dp else 8.dp, PureTvMotion.MorphSpring, label = "switchThumbStart")
-    val thumbSize by animateDpAsState(if (checked) 24.dp else 16.dp, PureTvMotion.MorphSpring, label = "switchThumbSize")
+    val thumbStart by animateDpAsState(if (checked) 28.dp else 8.dp, PureTvMotion.morph(), label = "switchThumbStart")
+    val thumbSize by animateDpAsState(if (checked) 24.dp else 16.dp, PureTvMotion.morph(), label = "switchThumbSize")
 
     Box(
         modifier

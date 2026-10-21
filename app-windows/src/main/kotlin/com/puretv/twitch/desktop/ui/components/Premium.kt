@@ -1,13 +1,7 @@
 package com.puretv.twitch.desktop.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +36,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -50,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import com.puretv.twitch.core.model.StreamInfo
+import com.puretv.twitch.desktop.ui.theme.LocalQuietMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
@@ -137,26 +140,51 @@ fun SectionHeader(title: String, onSeeAll: (() -> Unit)? = null, modifier: Modif
 
 // ── Skeleton shimmer ───────────────────────────────────────────────────────────
 
+/**
+ * Loading placeholder: the resting surface colour with a soft highlight band sweeping
+ * across it. The band is drawn in the draw phase, so a frame costs one rect draw and
+ * no recomposition. The sweep is driven from the frame clock's time, not from a
+ * per-instance animation, so every skeleton on screen sweeps in step.
+ *
+ * Only for lists and cards that are loading. Never put one on the player screen: the
+ * frame clock it holds awake would run for as long as the video does.
+ */
 @Composable
 fun Skeleton(modifier: Modifier = Modifier) {
     val c = PureTvTheme.colors
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateX by transition.animateFloat(
-        initialValue = -1f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1_200, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Restart,
-        ),
-        label = "shimmerX",
+    val highlight by rememberUpdatedState(c.surfaceHighest)
+    // Still while animations are off, and while a video is playing (the rail skeleton).
+    val reduced = PureTvMotion.reduced || LocalQuietMotion.current
+    var phase by remember { mutableFloatStateOf(0f) }
+    if (!reduced) {
+        LaunchedEffect(Unit) {
+            while (true) {
+                withFrameNanos { phase = (it / 1_000_000L % SHIMMER_PERIOD_MS).toFloat() / SHIMMER_PERIOD_MS }
+            }
+        }
+    }
+    Box(
+        modifier
+            .clipToBounds()
+            .background(c.surfaceLow)
+            .drawWithCache {
+                val band = size.width * 0.6f
+                val brush = Brush.horizontalGradient(
+                    colors = listOf(Color.Transparent, highlight, Color.Transparent),
+                    startX = 0f,
+                    endX = band,
+                )
+                onDrawBehind {
+                    if (!reduced) {
+                        val x = PureTvMotion.Decelerate.transform(phase) * (size.width + band) - band
+                        translate(left = x) { drawRect(brush, size = Size(band, size.height)) }
+                    }
+                }
+            },
     )
-    val shimmerBrush = Brush.linearGradient(
-        colors = listOf(c.surfaceLow, c.surfaceHighest, c.surfaceLow),
-        start = Offset(translateX * 600f, 0f),
-        end = Offset(translateX * 600f + 600f, 0f),
-    )
-    Box(modifier = modifier.background(shimmerBrush))
 }
+
+private const val SHIMMER_PERIOD_MS = 1_400L
 
 @Composable
 fun StreamCardSkeleton(modifier: Modifier = Modifier) {

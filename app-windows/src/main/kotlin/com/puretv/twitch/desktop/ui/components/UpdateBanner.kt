@@ -1,5 +1,12 @@
 package com.puretv.twitch.desktop.ui.components
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,6 +24,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,6 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.puretv.twitch.desktop.update.UpdateState
 import com.puretv.twitch.desktop.update.resolveReleaseUrl
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 
@@ -38,6 +50,35 @@ import com.puretv.twitch.desktop.ui.theme.PureTvType
  */
 @Composable
 fun UpdateBanner(
+    state: UpdateState,
+    onUpdate: () -> Unit,
+    onOpenReleasePage: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    // The last real state stays on screen while the banner leaves, instead of an empty strip.
+    var shown by remember { mutableStateOf(state) }
+    if (state != UpdateState.Idle) shown = state
+    AnimatedVisibility(
+        visible = state != UpdateState.Idle,
+        enter = PureTvMotion.panelEnter(),
+        exit = PureTvMotion.panelExit(),
+    ) {
+        // Keyed by the kind of state, so download progress ticks update in place and only
+        // a change of kind (Available, Downloading, Error) cross-fades.
+        AnimatedContent(
+            targetState = shown,
+            contentKey = { it::class },
+            transitionSpec = {
+                fadeIn(PureTvMotion.fade(PureTvMotion.Fast)) togetherWith fadeOut(PureTvMotion.fade(PureTvMotion.Fast)) using
+                    SizeTransform { _, _ -> snap() }
+            },
+            label = "updateBanner",
+        ) { s -> UpdateBannerBody(s, onUpdate, onOpenReleasePage, onDismiss) }
+    }
+}
+
+@Composable
+private fun UpdateBannerBody(
     state: UpdateState,
     onUpdate: () -> Unit,
     onOpenReleasePage: (String) -> Unit,

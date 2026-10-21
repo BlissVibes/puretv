@@ -49,6 +49,7 @@ import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import org.koin.core.Koin
@@ -297,6 +298,7 @@ private fun LiveListRow(row: FollowRow, onClick: () -> Unit) {
                 restRadius = shapes.sm,
                 hoverRadius = shapes.md,
                 hoverColor = c.surfaceHigh,
+                pressScale = PureTvMotion.CardPressScale,
             )
             .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
@@ -357,6 +359,7 @@ private fun OfflineRow(row: FollowRow, onClick: () -> Unit) {
                 restRadius = 0.dp,
                 hoverRadius = 0.dp,
                 hoverColor = c.surfaceHigh,
+                pressScale = PureTvMotion.CardPressScale,
             )
             .padding(horizontal = 20.dp, vertical = 14.dp),
     ) {

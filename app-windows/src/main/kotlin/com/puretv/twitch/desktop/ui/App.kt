@@ -1,6 +1,8 @@
 package com.puretv.twitch.desktop.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -30,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -69,6 +72,7 @@ import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteFrameCache
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.platform.openInBrowser
+import com.puretv.twitch.desktop.platform.SystemAnimations
 import com.puretv.twitch.desktop.update.UpdateManager
 import com.puretv.twitch.desktop.update.UpdateState
 import com.puretv.twitch.desktop.ui.components.CountBadge
@@ -91,7 +95,11 @@ import com.puretv.twitch.desktop.ui.screens.SettingsContent
 import com.puretv.twitch.desktop.ui.screens.StreamContent
 import com.puretv.twitch.desktop.ui.screens.VodPlayerContent
 import com.puretv.twitch.desktop.ui.theme.PureTvDesktopTheme
+import com.puretv.twitch.desktop.ui.theme.LocalQuietMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
+import com.puretv.twitch.desktop.ui.theme.RouteDepth
+import com.puretv.twitch.desktop.ui.theme.RouteTransition
+import com.puretv.twitch.desktop.ui.theme.routeDirection
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import com.puretv.twitch.desktop.ui.theme.ShapeIntensity
@@ -164,7 +172,7 @@ fun App(
             // by default). One instance app-wide (see DesktopModule), shared with the
             // animated-emote decoder.
             .diskCache { koin.get<DiskCache>() }
-            .crossfade(true)
+            .crossfade(PureTvMotion.Medium)
             .build()
     }
 
@@ -185,6 +193,12 @@ fun App(
     val showTrayHint = isTraySupported && signedIn && settings.liveNotifications &&
         !settings.closeToTray && !settings.trayHintShown
 
+    // The Windows animation-effects switch decides whether things move. Read at start and again
+    // whenever the window regains focus, which is when someone who just flipped it comes back.
+    val windowFocused = LocalWindowInfo.current.isWindowFocused
+    LaunchedEffect(windowFocused) { if (windowFocused) PureTvMotion.reduced = !SystemAnimations.enabled() }
+
+    var route by remember { mutableStateOf<Route>(Route.Top) }
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
         val streamPrewarm = remember {
@@ -197,9 +211,10 @@ fun App(
             LocalEmoteAnimation provides settings.animateEmotes,
             LocalEmoteFrameCache provides emoteFrameCache,
             LocalStreamPrewarm provides streamPrewarm,
+            // Decoration that loops (the LIVE pulse) stops while a video is playing.
+            LocalQuietMotion provides (route is Route.Stream || route is Route.Multi || route is Route.Vod),
         ) {
             var destination by remember { mutableStateOf(Destination.HOME) }
-            var route by remember { mutableStateOf<Route>(Route.Top) }
             var railExpanded by remember { mutableStateOf(true) }
             val c = PureTvTheme.colors
             val shapes = PureTvTheme.shapes
@@ -247,19 +262,21 @@ fun App(
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (shell.playerMode != PlayerMode.FULLSCREEN && shell.playerMode != PlayerMode.MINI) {
                         CustomTitleBar(shell = shell, onClose = onClose, awtWindow = awtWindow)
-                        if (!updateDismissed) {
-                            UpdateBanner(
-                                state = updateState,
-                                onUpdate = {
-                                    val s = updateState
-                                    if (s is UpdateState.Available) updateManager.downloadAndInstall(s.info, onQuit)
-                                    else updateManager.checkForUpdates(force = true)
-                                },
-                                onOpenReleasePage = { url -> openInBrowser(url) },
-                                onDismiss = { updateDismissed = true },
-                            )
-                        }
-                        if (showTrayHint) {
+                        UpdateBanner(
+                            state = if (updateDismissed) UpdateState.Idle else updateState,
+                            onUpdate = {
+                                val s = updateState
+                                if (s is UpdateState.Available) updateManager.downloadAndInstall(s.info, onQuit)
+                                else updateManager.checkForUpdates(force = true)
+                            },
+                            onOpenReleasePage = { url -> openInBrowser(url) },
+                            onDismiss = { updateDismissed = true },
+                        )
+                        AnimatedVisibility(
+                            visible = showTrayHint,
+                            enter = PureTvMotion.panelEnter(),
+                            exit = PureTvMotion.panelExit(),
+                        ) {
                             TrayHintBanner(
                                 onKeepInTray = { settingsStore.updateSettings { it.copy(closeToTray = true, trayHintShown = true) } },
                                 onDismiss = { settingsStore.updateSettings { it.copy(trayHintShown = true) } },
@@ -275,12 +292,12 @@ fun App(
                     // Modifier.padding and Arrangement.spacedBy both reject at layout time.
                     val gutter by animateDpAsState(
                         targetValue = if (shell.isImmersive) 0.dp else 8.dp,
-                        animationSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
                         label = "shellGutter",
                     )
                     val paneCorner by animateDpAsState(
                         targetValue = if (shell.isImmersive) 0.dp else shapes.pane,
-                        animationSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
                         label = "paneCorner",
                     )
 
@@ -293,8 +310,10 @@ fun App(
                     ) {
                         AnimatedVisibility(
                             visible = !shell.isImmersive,
-                            enter = slideInHorizontally { -it },
-                            exit = slideOutHorizontally { -it },
+                            enter = if (PureTvMotion.reduced) fadeIn(tween(PureTvMotion.Fast)) else
+                                slideInHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Decelerate)) { -it },
+                            exit = if (PureTvMotion.reduced) fadeOut(tween(PureTvMotion.Fast)) else
+                                slideOutHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Accelerate)) { -it },
                         ) {
                             NavigationRail(
                                 koin = koin,
@@ -317,12 +336,27 @@ fun App(
                             )
                         }
 
+                        // Which way the next screen travels: deeper (+1) comes in from the right, back
+                        // (-1) from the left, a sideways move (another top-level tab) rises in place.
+                        val depth = when (route) {
+                            Route.Top -> RouteDepth.Top
+                            is Route.Category, is Route.Channel -> RouteDepth.Detail
+                            else -> RouteDepth.Player
+                        }
+                        val previousDepth = remember { arrayOf(depth) }
+                        val routeKey: Any = if (route == Route.Top) destination else route
+                        val direction = remember(routeKey) { routeDirection(previousDepth[0], depth) }
+                        SideEffect { previousDepth[0] = depth }
+
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(paneCorner.coerceAtLeast(0.dp)))
                                 .background(c.surface),
                         ) {
+                            // The three player screens host the native video surface and swap
+                            // instantly: nothing is faded or moved around it. Every other screen
+                            // eases in (see RouteTransition).
                             when (val r = route) {
                                 is Route.Stream -> StreamContent(
                                     koin = koin,
@@ -356,21 +390,25 @@ fun App(
                                     launch = r.launch,
                                     onBack = { route = Route.Channel(r.launch.channelLogin) },
                                 )
-                                is Route.Channel -> ChannelContent(
-                                    koin = koin,
-                                    channelLogin = r.login,
-                                    onWatch = { route = Route.Stream(r.login) },
-                                    onPlayVod = { launch -> route = Route.Vod(launch) },
-                                    onBack = { route = Route.Top },
-                                )
-                                is Route.Category -> CategoryContent(
-                                    koin = koin,
-                                    gameId = r.gameId,
-                                    gameName = r.gameName,
-                                    onOpenChannel = { login -> route = Route.Channel(login) },
-                                    onBack = { route = Route.Top },
-                                )
-                                Route.Top -> when (destination) {
+                                is Route.Channel -> RouteTransition(routeKey, direction) {
+                                    ChannelContent(
+                                        koin = koin,
+                                        channelLogin = r.login,
+                                        onWatch = { route = Route.Stream(r.login) },
+                                        onPlayVod = { launch -> route = Route.Vod(launch) },
+                                        onBack = { route = Route.Top },
+                                    )
+                                }
+                                is Route.Category -> RouteTransition(routeKey, direction) {
+                                    CategoryContent(
+                                        koin = koin,
+                                        gameId = r.gameId,
+                                        gameName = r.gameName,
+                                        onOpenChannel = { login -> route = Route.Channel(login) },
+                                        onBack = { route = Route.Top },
+                                    )
+                                }
+                                Route.Top -> RouteTransition(routeKey, direction) { when (destination) {
                                     Destination.HOME -> HomeContent(
                                         koin = koin,
                                         onOpenChannel = { login -> route = Route.Channel(login) },
@@ -397,7 +435,7 @@ fun App(
                                     )
                                     Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
-                                }
+                                } }
                             }
                         }
                     }
@@ -549,7 +587,7 @@ private fun AppMark(
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val radius by animateDpAsState(if (hovered) size / 2 else corner, PureTvMotion.MorphSpring, label = "appMark")
+    val radius by animateDpAsState(if (hovered) size / 2 else corner, PureTvMotion.morph(), label = "appMark")
 
     Box(
         modifier = Modifier
@@ -672,7 +710,8 @@ private fun NavigationRail(
     val windowInfo = LocalWindowInfo.current
     val width by animateDpAsState(
         targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
-        animationSpec = PureTvMotion.MorphSpring,
+        // Structural: it feeds layout, so no overshoot (see PureTvMotion.MorphSpring).
+        animationSpec = PureTvMotion.move(),
         label = "railWidth",
     )
 

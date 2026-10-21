@@ -45,7 +45,7 @@ class WindowRegistryTest {
         assertIs<OpenResult.Refused>(refused)
         assertEquals(3, r.windows.value.size)
         assertEquals(refused.message, r.notice.value)
-        assertFalse(refused.message.contains("—"))
+        assertFalse(refused.message.any { it.code == 0x2013 || it.code == 0x2014 })
     }
 
     @Test fun slotsAreReusedButIdsAreNot() {

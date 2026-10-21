@@ -111,6 +111,7 @@ import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.MiniControlStrip
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
+import com.puretv.twitch.desktop.ui.PoppedWindows
 import com.puretv.twitch.desktop.ui.ShortcutAction
 import com.puretv.twitch.desktop.ui.SleepSession
 import com.puretv.twitch.desktop.ui.StreamViewModel
@@ -386,6 +387,8 @@ fun StreamContent(
     val latestViewModel = rememberUpdatedState(viewModel)
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
+            // A key pressed in a popped-out multi-stream window is that window's.
+            if (PoppedWindows.isActive()) return@KeyEventDispatcher false
             // Any key press is the viewer being there (sleep timer), typing in chat included.
             if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
             if (latestChatFocused.value) {

@@ -196,3 +196,52 @@ object MultiShortcuts {
     /** The one-line hint under the grid, from the same table the keys use. */
     const val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   Ctrl + Left / Right move the selected channel"
 }
+
+/** What a keyboard shortcut does in a popped-out stream window. */
+enum class PopoutShortcutAction {
+    VolumeUp,
+    VolumeDown,
+    ToggleMute,
+    ToggleFullscreen,
+    ExitFullscreen,
+    CloseTile,
+    Dock,
+}
+
+/**
+ * The keyboard table of a popped-out stream window. Up/Down and M act on that window's
+ * stream, F toggles borderless fullscreen on the monitor the window is on, Esc only leaves
+ * fullscreen (it never closes anything), Ctrl+W closes the stream and D puts it back in the
+ * multi-stream grid. Like the other tables it does nothing while a text box has focus.
+ */
+object PopoutShortcuts {
+    fun actionFor(
+        keyCode: Int,
+        ctrl: Boolean,
+        alt: Boolean,
+        fullscreen: Boolean,
+        textInputFocused: Boolean = false,
+        isRepeat: Boolean = false,
+    ): PopoutShortcutAction? {
+        if (textInputFocused || alt) return null
+        val action = if (ctrl) {
+            if (keyCode == KeyEvent.VK_W) PopoutShortcutAction.CloseTile else null
+        } else {
+            when (keyCode) {
+                KeyEvent.VK_UP -> PopoutShortcutAction.VolumeUp
+                KeyEvent.VK_DOWN -> PopoutShortcutAction.VolumeDown
+                KeyEvent.VK_M -> PopoutShortcutAction.ToggleMute
+                KeyEvent.VK_F -> PopoutShortcutAction.ToggleFullscreen
+                KeyEvent.VK_ESCAPE -> if (fullscreen) PopoutShortcutAction.ExitFullscreen else null
+                KeyEvent.VK_D -> PopoutShortcutAction.Dock
+                else -> null
+            }
+        } ?: return null
+        val volume = action == PopoutShortcutAction.VolumeUp || action == PopoutShortcutAction.VolumeDown
+        if (isRepeat && !volume) return null
+        return action
+    }
+
+    /** The one-line hint in a popped-out window, from the same table the keys use. */
+    const val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   Ctrl + W close"
+}

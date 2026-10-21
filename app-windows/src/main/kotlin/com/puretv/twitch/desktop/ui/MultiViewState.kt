@@ -5,6 +5,16 @@ import com.puretv.twitch.desktop.player.DEFAULT_VOLUME
 import com.puretv.twitch.desktop.player.TileQuality
 
 /**
+ * What a tile plays. Only [Live] exists today. The extension point for past broadcasts and
+ * highlights is a `Vod(videoId, startPositionMs)` case here: the runtime that starts a tile
+ * (MultiViewViewModel.openRuntime), its strip (Tile and PoppedStreamWindow) and the chat
+ * follow-the-selected-tile rule are the places that switch on the source.
+ */
+sealed interface TileSource {
+    data class Live(val login: String) : TileSource
+}
+
+/**
  * One stream on the multi-stream screen. [id] stays with the tile for as long as it is
  * open. Each tile has its own [volume] (0 to 100) and [muted] flag, so one stream can be
  * loud while another is quiet.
@@ -14,6 +24,7 @@ data class MultiTile(
     val login: String,
     val volume: Int = DEFAULT_VOLUME,
     val muted: Boolean = false,
+    val source: TileSource = TileSource.Live(login),
 ) {
     /** True when this tile makes no sound by its own settings, whatever is selected. */
     val silent: Boolean get() = muted || volume <= 0
@@ -36,9 +47,22 @@ data class MultiViewState(
      * plays at its own volume. Either way no stream reloads, only the sound changes.
      */
     val listenAll: Boolean = false,
+    /**
+     * Tiles that live in a window of their own (see [PopoutLayout]) instead of the grid.
+     * They stay in [tiles], so their sound, selection and quality count as before.
+     */
+    val poppedIds: Set<Int> = emptySet(),
 ) {
     val count: Int get() = tiles.size
     val canAdd: Boolean get() = tiles.size < MAX_TILES
+
+    /** The tiles shown in the grid, in grid order. */
+    val docked: List<MultiTile> get() = tiles.filter { it.id !in poppedIds }
+
+    /** The tiles that have their own window. */
+    val popped: List<MultiTile> get() = tiles.filter { it.id in poppedIds }
+
+    fun isPopped(id: Int): Boolean = id in poppedIds
     val active: MultiTile? get() = tiles.firstOrNull { it.id == activeId }
 
     fun contains(login: String): Boolean = tiles.any { it.login.equals(login, ignoreCase = true) }
@@ -69,8 +93,23 @@ data class MultiViewState(
             rest.isEmpty() -> null
             else -> rest[index.coerceAtMost(rest.lastIndex)].id
         }
-        return copy(tiles = rest, activeId = nextActive)
+        return copy(tiles = rest, activeId = nextActive, poppedIds = poppedIds - id)
     }
+
+    /** The state with tile [id] moved out of the grid into a window of its own. */
+    fun popOut(id: Int): MultiViewState =
+        if (tiles.any { it.id == id } && id !in poppedIds) copy(poppedIds = poppedIds + id) else this
+
+    /** The state with tile [id] back in the grid. */
+    fun dock(id: Int): MultiViewState = if (id in poppedIds) copy(poppedIds = poppedIds - id) else this
+
+    fun popOutAll(): MultiViewState =
+        if (poppedIds.size == tiles.size) this else copy(poppedIds = tiles.mapTo(HashSet()) { it.id })
+
+    fun dockAll(): MultiViewState = if (poppedIds.isEmpty()) this else copy(poppedIds = emptySet())
+
+    /** The state after leaving the grid: only the tiles in their own windows are left. */
+    fun withoutDocked(): MultiViewState = docked.fold(this) { state, tile -> state.remove(tile.id) }
 
     fun setActive(id: Int): MultiViewState =
         if (tiles.any { it.id == id } && id != activeId) copy(activeId = id) else this
@@ -134,12 +173,14 @@ data class MultiViewState(
     /**
      * The state with tile [id] moved [delta] places along the grid order (-1 is one
      * earlier). The tile it passes takes its old place. Nothing moves past either end.
+     * Tiles in their own windows are not in the grid, so they are never passed.
      */
     fun move(id: Int, delta: Int): MultiViewState {
-        val i = tiles.indexOfFirst { it.id == id }
+        val grid = docked
+        val i = grid.indexOfFirst { it.id == id }
         val j = i + delta
-        if (i < 0 || j !in tiles.indices) return this
-        return swap(id, tiles[j].id)
+        if (i < 0 || j !in grid.indices) return this
+        return swap(id, grid[j].id)
     }
 
     /** The best quality any tile may play right now (see [TileQuality.capFor]). */

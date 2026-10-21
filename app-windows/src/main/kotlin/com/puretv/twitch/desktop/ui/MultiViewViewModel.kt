@@ -54,7 +54,9 @@ data class MultiViewUiState(
 )
 
 /**
- * The multi-stream screen: up to four live channels at once, one of them active.
+ * The multi-stream session: up to four live channels at once, one of them active. It is
+ * owned by [MultiStreamSession], not by the screen, so tiles that were popped out into
+ * their own windows keep playing when the screen is left.
  *
  * Every tile is its own [VlcPlayer] made from the shared [VlcEngine], never the
  * single-stream player, so leaving the normal stream screen can never stop a tile
@@ -83,7 +85,7 @@ class MultiViewViewModel(
     apiClient: TwitchApiClient,
     private val players: DesktopPlayerProvider,
     private val notifier: DesktopLiveNotifier,
-) : DesktopViewModel() {
+) : DesktopViewModel(), MultiTileHost {
 
     // New tiles start at the volume the viewer last had on the normal stream screen, when
     // that player exists and is not at zero; the settings hold no volume of their own.
@@ -98,7 +100,7 @@ class MultiViewViewModel(
             layout = MultiViewState(listenAll = rememberedListenAll).add(initialLogin, startVolume),
         ),
     )
-    val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
+    override val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
 
     // One chat connection for the whole screen, following the active tile.
     private val chat = MultiChatSession(
@@ -186,7 +188,7 @@ class MultiViewViewModel(
     // ---- Tiles ------------------------------------------------------------------
 
     /** Adds [login] as a tile; false when it is already shown, blank, or the screen is full. */
-    fun addChannel(login: String): Boolean {
+    override fun addChannel(login: String): Boolean {
         val before = _state.value.layout
         val after = before.add(login, startVolume)
         if (after === before) return false
@@ -199,13 +201,39 @@ class MultiViewViewModel(
     }
 
     /** Closes tile [id], stopping and freeing its player. The tiles left are returned. */
-    fun closeTile(id: Int): List<MultiTile> {
+    override fun closeTile(id: Int): List<MultiTile> {
         val after = _state.value.layout.remove(id)
         _state.update { it.copy(layout = after, info = it.info - id) }
         closeRuntime(id)
         retargetQuality()
         applyAudio()
         return after.tiles
+    }
+
+    /** Moves tile [id] out of the grid into a window of its own. Only the video surface moves. */
+    override fun popOut(id: Int) = changeTiles { it.popOut(id) }
+
+    /** Puts tile [id] back in the grid. */
+    override fun dock(id: Int) = changeTiles { it.dock(id) }
+
+    override fun popOutAll() = changeTiles { it.popOutAll() }
+
+    override fun dockAll() = changeTiles { it.dockAll() }
+
+    /**
+     * Leaving the multi-stream screen: closes the tiles shown in the grid and leaves the
+     * ones in their own windows playing. Returns the tiles left.
+     */
+    override fun closeDocked(): List<MultiTile> {
+        _state.value.layout.docked.forEach { closeTile(it.id) }
+        return _state.value.layout.tiles
+    }
+
+    private fun changeTiles(change: (MultiViewState) -> MultiViewState) {
+        _state.update { s ->
+            val after = change(s.layout)
+            if (after === s.layout) s else s.copy(layout = after)
+        }
     }
 
     /** Selects tile [id]: the one you hear (unless listening to all) and the keys act on. Nothing reloads. */
@@ -224,6 +252,9 @@ class MultiViewViewModel(
 
     /** Up or Down on the keyboard: volume for the selected tile, as on the normal stream screen. */
     fun nudgeVolume(up: Boolean) = changeLayout { l -> l.activeId?.let { l.nudge(it, up) } ?: l }
+
+    /** Up or Down on the keyboard in the window of tile [id]. */
+    fun nudgeVolume(id: Int, up: Boolean) = changeLayout { it.selecting(id).nudge(id, up) }
 
     /** The volume bar of tile [id]. */
     fun setVolume(id: Int, volume: Int) = changeLayout { it.selecting(id).withVolume(id, volume) }
@@ -256,7 +287,7 @@ class MultiViewViewModel(
         _state.update { it.copy(info = it.info + (tile.id to TileInfo(displayName = tile.login))) }
         val setup = scope.launch {
             // libVLC is built on first use and its plugin scan is slow: not on the UI thread.
-            val player = VlcPlayer(engine, audioOutput = TILE_AUDIO_OUTPUT)
+            val player = VlcPlayer(engine, audioOutput = TILE_AUDIO_OUTPUT, replayOnNewSurface = true)
             if (rt.closed) {
                 rt.freeOnce(player)
                 return@launch
@@ -406,6 +437,8 @@ class MultiViewViewModel(
         rt.player?.let { rt.freeOnce(it) }
         adBlockEngine.forgetChannel(rt.login)
     }
+
+    override fun shutDown() = dispose()
 
     /** Stops and frees every tile, so leaving the screen leaves nothing playing or decoding. */
     override fun onCleared() {

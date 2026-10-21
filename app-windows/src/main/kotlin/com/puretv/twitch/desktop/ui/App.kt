@@ -238,9 +238,24 @@ fun App(
             }
             // One sleep timer for watching: it carries from a stream into multi-stream and back,
             // and is off again once PureTV is on any other screen.
-            val sleep = remember { SleepSession() }
-            val watching = route is Route.Stream || route is Route.Multi
+            val multiSession = remember { koin.get<MultiSession>() }
+            val sleep = multiSession.sleep
+            val multiRunning by multiSession.current.collectAsState()
+            // Streams in their own windows are being watched too, wherever the main window is.
+            val watching = route is Route.Stream || route is Route.Multi || multiRunning != null
             LaunchedEffect(watching) { if (!watching) sleep.set(0) }
+            // This window's place on the desktop, for the windows popped out of multi-stream to open elsewhere.
+            LaunchedEffect(multiSession, awtWindow) {
+                multiSession.mainBounds = { MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height) }
+            }
+            // A popped-out window asked for the multi-stream screen (chat, add a channel, dock back).
+            LaunchedEffect(multiSession) {
+                multiSession.openGrid.collect {
+                    shell.exitImmersive()
+                    if (route !is Route.Multi) route = Route.Multi("")
+                    koin.get<NavigationRequests>().requestShow()
+                }
+            }
             // The mini player is only ever a stream's: any other screen, and any request to bring
             // PureTV forward, puts the normal window back, so it can never be left stuck small.
             LaunchedEffect(route) { if (route !is Route.Stream) shell.exitMini() }
@@ -377,7 +392,7 @@ fun App(
                                 is Route.Multi -> MultiViewContent(
                                     koin = koin,
                                     initialLogin = r.login,
-                                    onBack = { route = Route.Channel(r.login) },
+                                    onBack = { route = if (r.login.isBlank()) Route.Top else Route.Channel(r.login) },
                                     onWatchSingle = { login -> route = Route.Stream(login) },
                                     sleep = sleep,
                                     onRequestSignIn = {

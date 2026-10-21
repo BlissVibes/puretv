@@ -40,6 +40,7 @@ import com.puretv.twitch.desktop.ui.ChannelViewModel
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
 import com.puretv.twitch.desktop.ui.HomeViewModel
 import com.puretv.twitch.desktop.ui.LoginViewModel
+import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiViewViewModel
 import com.puretv.twitch.desktop.ui.SearchViewModel
 import com.puretv.twitch.desktop.ui.SettingsViewModel
@@ -189,6 +190,11 @@ val desktopModule = module {
     }
     factory { (channelLogin: String) ->
         MultiViewViewModel(channelLogin, get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get(), get())
+    }
+    // The multi-stream session outlives the screen: tiles popped out into their own windows keep playing.
+    single {
+        val koin = getKoin()
+        MultiSession(create = { login -> koin.get<MultiViewViewModel> { parametersOf(login) } })
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }

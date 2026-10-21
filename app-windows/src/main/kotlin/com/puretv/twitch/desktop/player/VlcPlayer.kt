@@ -38,6 +38,11 @@ class VlcPlayer(
     // A named libVLC audio output for this player alone, or null for VLC's default.
     // See [TILE_AUDIO_OUTPUT]: the default output shares one volume across players.
     audioOutput: String? = null,
+    // True for a multi-stream tile, whose video can move to another window (see
+    // PoppedStreamWindow). libVLC binds its surface when playback starts, so a surface set
+    // while playing is ignored: the same stream is started again on the same player
+    // instead, which costs a second or two of rebuffering and nothing else.
+    private val replayOnNewSurface: Boolean = false,
 ) : DesktopPlayer {
 
     private val mediaPlayer: EmbeddedMediaPlayer? = engine.newEmbeddedPlayer()?.also { mp ->
@@ -132,6 +137,7 @@ class VlcPlayer(
     // is benign in VLCJ, but tracking the bound component lets us short-circuit
     // and avoid spurious libvlc churn.
     @Volatile private var attachedComponent: Component? = null
+    private var hadSurface = false
 
     override fun attachToPanel(panel: Component) {
         check(SwingUtilities.isEventDispatchThread()) { "attachToPanel must be called on the Swing EDT" }
@@ -149,11 +155,14 @@ class VlcPlayer(
         if (!panel.isDisplayable) return
         mp.videoSurface().set(engine.newVideoSurface(panel))
         attachedComponent = panel
+        val moved = hadSurface && replayOnNewSurface
+        hadSurface = true
         // Drain any URL that was queued by `play()` before we had a surface to
         // render into — common on first stream open, where ViewModel.init
         // calls play() one EDT-tick before SwingPanel's HierarchyListener fires.
         currentUrl?.let { url ->
-            if (mp.status().state() != State.PLAYING) {
+            if (moved || mp.status().state() != State.PLAYING) {
+                if (moved) _status.update { it.copy(isBuffering = true) }
                 runCatching { mp.media().play(url, *currentOptions) }
                     .onFailure { e -> _status.update { it.copy(error = "Player attach race: ${e.message}") } }
             }

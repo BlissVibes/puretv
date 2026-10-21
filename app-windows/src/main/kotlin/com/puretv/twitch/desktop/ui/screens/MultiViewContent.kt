@@ -67,7 +67,9 @@ import com.puretv.twitch.desktop.ui.components.LocalBadgeIndex
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.FollowedRailViewModel
+import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiShortcutAction
+import com.puretv.twitch.desktop.ui.PoppedWindows
 import com.puretv.twitch.desktop.ui.MultiShortcuts
 import com.puretv.twitch.desktop.ui.MultiTile
 import com.puretv.twitch.desktop.ui.MultiViewLayout
@@ -91,7 +93,6 @@ import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import kotlinx.coroutines.delay
 import org.koin.core.Koin
-import org.koin.core.parameter.parametersOf
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
 import java.awt.event.KeyEvent
@@ -123,8 +124,17 @@ fun MultiViewContent(
     // Owned by App, so the timer started on the stream screen carries on here.
     sleep: SleepSession = remember { SleepSession() },
 ) {
-    val viewModel = rememberDesktopViewModel(initialLogin) {
-        koin.get<MultiViewViewModel> { parametersOf(initialLogin) }
+    // The session belongs to the app, not to this screen: tiles popped out into their own
+    // windows keep playing when this screen is left, and only the tiles shown here stop.
+    val session = remember { koin.get<MultiSession>() }
+    val viewModel = remember(initialLogin) { session.open(initialLogin) }
+    DisposableEffect(session) { onDispose { session.leaveGrid() } }
+    // Ended while this screen is up (the sleep timer ran out in a popped-out window): leave.
+    val running by session.current.collectAsState()
+    if (running == null) {
+        val leave by rememberUpdatedState(onBack)
+        LaunchedEffect(Unit) { leave() }
+        return
     }
     val state by viewModel.state.collectAsState()
     val layout = state.layout
@@ -134,10 +144,12 @@ fun MultiViewContent(
     var pickerOpen by remember { mutableStateOf(layout.count < 2) }
 
     fun closeTile(id: Int) {
-        val left = viewModel.closeTile(id)
-        when (left.size) {
-            0 -> onBack()
-            1 -> onWatchSingle(left.first().login)
+        val left = session.closeTile(id)
+        val sole = left.singleOrNull()
+        when {
+            left.isEmpty() -> onBack()
+            // One tile still in the grid is a stream like any other; one in its own window stays there.
+            sole != null && !viewModel.state.value.layout.isPopped(sole.id) -> onWatchSingle(sole.login)
         }
     }
 
@@ -167,6 +179,8 @@ fun MultiViewContent(
     DisposableEffect(Unit) {
         var heldKey = 0
         val dispatcher = KeyEventDispatcher { e ->
+            // A key pressed in a popped-out window is that window's (see PoppedStreamWindow).
+            if (PoppedWindows.isActive()) return@KeyEventDispatcher false
             // Any key press is the viewer being there (sleep timer), typing in chat included.
             if (e.id == KeyEvent.KEY_PRESSED) sleep.onActivity()
             if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == heldKey) heldKey = 0
@@ -204,6 +218,8 @@ fun MultiViewContent(
             delay(1_000)
             if (sleep.tick().expired) {
                 shell.exitImmersive()
+                // Every tile stops, the ones in their own windows too.
+                session.end()
                 latestOnBack()
             }
         }
@@ -246,6 +262,12 @@ fun MultiViewContent(
                 sleepLabel = sleep.ui.label,
                 sleepRunning = sleep.ui.running,
                 onCycleSleep = sleep::cycle,
+                onPopOutAll = {
+                    // The streams move to their own windows and the main window is free to browse.
+                    session.popOutAll()
+                    onBack()
+                },
+                onDockAll = session::dockAll,
             )
 
             // The timer's last-minute warning sits in the column like the stream screen's
@@ -276,11 +298,20 @@ fun MultiViewContent(
                         modifier = Modifier.padding(24.dp),
                     )
                 }
+            } else if (layout.docked.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxWidth().background(Color.Black), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (layout.popped.isEmpty()) "Add a channel to start." else "Your streams are in their own windows. Dock them back to see them here.",
+                        color = c.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(24.dp),
+                    )
+                }
             } else {
-                TileGrid(count = layout.count, modifier = Modifier.weight(1f).fillMaxWidth()) {
+                TileGrid(count = layout.docked.size, modifier = Modifier.weight(1f).fillMaxWidth()) {
                     // Keyed by tile id so a tile keeps its video surface when the grid is
                     // rearranged: moving a surface to a new parent would destroy its window.
-                    layout.tiles.forEach { tile ->
+                    layout.docked.forEach { tile ->
                         key(tile.id) {
                             val info = state.info[tile.id]
                             if (info != null) {
@@ -293,8 +324,9 @@ fun MultiViewContent(
                                     onVolume = { viewModel.setVolume(tile.id, it) },
                                     onToggleMute = { viewModel.toggleMute(tile.id) },
                                     onClose = { closeTile(tile.id) },
-                                    canMoveEarlier = tile.id != layout.tiles.first().id,
-                                    canMoveLater = tile.id != layout.tiles.last().id,
+                                    canMoveEarlier = tile.id != layout.docked.first().id,
+                                    canMoveLater = tile.id != layout.docked.last().id,
+                                    onPopOut = { session.popOut(tile.id) },
                                     onMoveEarlier = { viewModel.move(tile.id, -1) },
                                     onMoveLater = { viewModel.move(tile.id, 1) },
                                 )
@@ -454,6 +486,7 @@ private fun Tile(
     canMoveLater: Boolean,
     onMoveEarlier: () -> Unit,
     onMoveLater: () -> Unit,
+    onPopOut: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     Column(modifier = Modifier.fillMaxSize()) {
@@ -555,6 +588,13 @@ private fun Tile(
                 )
             }
             ExpressiveIconButton(
+                icon = ExpressiveIcons.OpenInNew,
+                contentDescription = "Pop out ${info.displayName} into its own window",
+                onClick = onPopOut,
+                boxSize = 36.dp,
+                iconSize = 18.dp,
+            )
+            ExpressiveIconButton(
                 icon = ExpressiveIcons.Close,
                 contentDescription = "Close ${info.displayName}",
                 onClick = onClose,
@@ -577,6 +617,8 @@ private fun MultiTopBar(
     sleepLabel: String,
     sleepRunning: Boolean,
     onCycleSleep: () -> Unit,
+    onPopOutAll: () -> Unit,
+    onDockAll: () -> Unit,
 ) {
     val c = PureTvTheme.colors
     val layout = state.layout
@@ -619,6 +661,24 @@ private fun MultiTopBar(
             style = if (sleepRunning) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
             size = ExpressiveButtonSize.Medium,
         )
+        if (layout.docked.isNotEmpty()) {
+            ExpressiveButton(
+                text = "Pop out all",
+                onClick = onPopOutAll,
+                style = ExpressiveButtonStyle.Text,
+                size = ExpressiveButtonSize.Medium,
+                icon = ExpressiveIcons.OpenInNew,
+            )
+        }
+        if (layout.popped.isNotEmpty()) {
+            ExpressiveButton(
+                text = "Dock all",
+                onClick = onDockAll,
+                style = ExpressiveButtonStyle.Text,
+                size = ExpressiveButtonSize.Medium,
+                icon = ExpressiveIcons.Grid,
+            )
+        }
         ExpressiveButton(
             text = if (pickerOpen) "Hide" else "Add channel",
             onClick = onTogglePicker,

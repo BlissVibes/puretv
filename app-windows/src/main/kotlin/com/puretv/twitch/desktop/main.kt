@@ -35,6 +35,7 @@ import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.ui.App
 import com.puretv.twitch.desktop.ui.NavigationRequests
+import com.puretv.twitch.desktop.ui.PoppedStreamWindows
 import io.ktor.client.HttpClient
 import java.awt.Frame
 import java.io.File
@@ -248,6 +249,14 @@ fun main(args: Array<String>) {
                 frontRequests = frontRequests,
             )
         }
+
+        // Streams popped out of multi-stream live in windows of their own, beside the main one.
+        PoppedStreamWindows(
+            koin = koinApp.koin,
+            visible = windowVisible,
+            frontRequests = frontRequests,
+            icon = appIcon,
+        )
     }
 
     // No more answering a relaunch (a no-op if quit() already stopped it): the slow

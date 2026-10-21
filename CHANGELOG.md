@@ -16,6 +16,16 @@ release notes automatically.
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.
 
 ### New
+- **Pop multi-stream out onto other monitors (Windows).** Every channel in
+  multi-stream has a Pop out button that moves it into its own PureTV window.
+  Drag that window to any monitor, resize it, or press F (or double click the
+  video) for fullscreen on the monitor it is on, Esc to come back. "Pop out
+  all" spreads every channel over your monitors and leaves the main window
+  free to browse while they keep playing; "Dock all" brings them back. Each
+  window has its own volume, mute and an Add another channel button, Up, Down
+  and M work in the window you are in, D docks it back and Ctrl + W closes it.
+  Sound and the selected channel are shared, and windows reopen where you left
+  them. A stream rebuffers for a second or two when it moves.
 - **Know when the channels you pick go live.** Open any channel, followed or
   not, and tap the bell. PureTV then tells you when that channel starts
   streaming: a Windows notification from the tray, a phone notification you

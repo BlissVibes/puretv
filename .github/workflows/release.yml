@@ -64,6 +64,9 @@ jobs:
           if ($LASTEXITCODE -eq 0 -and $isDraft -eq "false") {
             throw "Release $tag is already published. Bump appVersion and tag a new version instead of rebuilding $tag."
           }
+          # gh exits 1 when the release does not exist yet, which is the normal case for a new tag.
+          # PowerShell would return that leftover code as this step's result and fail every new release.
+          exit 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0

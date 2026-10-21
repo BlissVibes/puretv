@@ -39,6 +39,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import coil3.transition.CrossfadeTransition
+import coil3.transition.Transition
 import com.puretv.twitch.core.motion.MotionTokens
 
 /**
@@ -128,7 +130,7 @@ object PureTvMotion {
      * screen keeps the top of the stack while the one beneath fades in and would
      * hide it for the whole transition before vanishing.
      */
-    fun playerExit(): ExitTransition = fadeOut(tween(Fast))
+    fun playerExit(reduced: Boolean): ExitTransition = fadeOut(tween(if (reduced) 0 else Fast))
 
     // ---- Chrome ----
 
@@ -205,3 +207,19 @@ fun animatorDurationScale(context: Context): Float =
         .getOrDefault(1f)
 
 private fun readReducedMotion(context: Context): Boolean = MotionTokens.isReducedMotion(animatorDurationScale(context))
+
+/** For lists that refresh on a timer: items fade in and out, but a reorder never makes rows slide. */
+fun LazyItemScope.itemFade(): Modifier = Modifier.animateItem(
+    fadeInSpec = tween(PureTvMotion.Medium, easing = PureTvMotion.Standard),
+    placementSpec = null,
+    fadeOutSpec = tween(PureTvMotion.Fast),
+)
+
+/**
+ * Coil's crossfade, re-reading the system animator scale for every image so the
+ * "remove animations" setting takes effect without a restart.
+ */
+fun crossfadeFactory(context: Context, baseMs: Int = PureTvMotion.Medium): Transition.Factory = Transition.Factory { target, result ->
+    val ms = MotionTokens.scaledDurationMs(baseMs, animatorDurationScale(context))
+    if (ms == 0) Transition.Factory.NONE.create(target, result) else CrossfadeTransition.Factory(ms).create(target, result)
+}

@@ -421,6 +421,7 @@ private fun PlayerArea(
                             LivePill(
                                 trailing = formatViewerCount(info.viewerCount.toLong()),
                                 pulse = false,
+                                rollCount = true,
                                 modifier = Modifier.align(Alignment.BottomStart).padding(6.dp),
                             )
                         }

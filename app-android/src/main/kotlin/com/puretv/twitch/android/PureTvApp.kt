@@ -31,10 +31,8 @@ import org.koin.core.context.startKoin
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
-import coil3.request.crossfade
-import com.puretv.twitch.android.ui.theme.PureTvMotion
-import com.puretv.twitch.android.ui.theme.animatorDurationScale
-import com.puretv.twitch.core.motion.MotionTokens
+import coil3.request.transitionFactory
+import com.puretv.twitch.android.ui.theme.crossfadeFactory
 
 /**
  * SECTION 11: wires `coreModule` (shared) + `androidModule` (phone/tablet
@@ -61,7 +59,7 @@ class PureTvApp : Application(), SingletonImageLoader.Factory {
      */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
-            .crossfade(MotionTokens.scaledDurationMs(PureTvMotion.Medium, animatorDurationScale(applicationContext)))
+            .transitionFactory(crossfadeFactory(applicationContext))
             .build()
 
     @OptIn(UnstableApi::class)

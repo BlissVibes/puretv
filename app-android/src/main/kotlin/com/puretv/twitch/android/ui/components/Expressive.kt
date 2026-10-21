@@ -446,6 +446,7 @@ fun LivePill(
     trailing: String? = null,
     height: Dp = 24.dp,
     pulse: Boolean = true,
+    rollCount: Boolean = false,
 ) {
     val c = PureTvTheme.colors
     Row(
@@ -458,16 +459,22 @@ fun LivePill(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         LiveDot(size = 6.dp, color = c.onLive, pulse = pulse)
-        // A viewer count that ticks rolls up or down instead of snapping.
-        AnimatedContent(
-            targetState = if (trailing != null) "LIVE · $trailing" else "LIVE",
-            transitionSpec = {
-                (fadeIn(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) +
-                    slideInVertically(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) { it / 2 }) togetherWith
-                    (fadeOut(tween(PureTvMotion.Fast)) + slideOutVertically(tween(PureTvMotion.Fast)) { -it / 2 })
-            },
-            label = "liveLabel",
-        ) { label ->
+        val label = if (trailing != null) "LIVE · $trailing" else "LIVE"
+        if (rollCount) {
+            // Only where there is a single pill (the player): a ticking count rolls
+            // instead of snapping. Cards keep plain text, which costs nothing per item.
+            AnimatedContent(
+                targetState = label,
+                transitionSpec = {
+                    (fadeIn(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) +
+                        slideInVertically(tween(PureTvMotion.Medium, easing = PureTvMotion.Standard)) { it / 2 }) togetherWith
+                        (fadeOut(tween(PureTvMotion.Fast)) + slideOutVertically(tween(PureTvMotion.Fast)) { -it / 2 })
+                },
+                label = "liveLabel",
+            ) { shown ->
+                Text(shown, style = PureTvType.badge, color = c.onLive, maxLines = 1)
+            }
+        } else {
             Text(label, style = PureTvType.badge, color = c.onLive, maxLines = 1)
         }
     }

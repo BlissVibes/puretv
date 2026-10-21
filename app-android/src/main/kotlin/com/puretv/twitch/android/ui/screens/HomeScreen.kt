@@ -61,7 +61,7 @@ import com.puretv.twitch.android.ui.components.formatViewerCount
 import com.puretv.twitch.android.ui.components.streamThumbUrl
 import com.puretv.twitch.android.ui.theme.PureTvMotion
 import com.puretv.twitch.android.ui.theme.PureTvTheme
-import com.puretv.twitch.android.ui.theme.itemMotion
+import com.puretv.twitch.android.ui.theme.itemFade
 import com.puretv.twitch.android.ui.theme.PureTvType
 import com.puretv.twitch.android.update.AndroidUpdateManager
 import com.puretv.twitch.android.update.AndroidUpdateState
@@ -240,7 +240,7 @@ fun HomeScreen(
                     if (state.topStreams.isNotEmpty()) {
                         item { SectionHeading(title = "Top streams") }
                         items(state.topStreams, key = { it.userLogin }) { s ->
-                            StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.fillMaxWidth().then(itemMotion()))
+                            StreamCard(stream = s, onClick = { onOpenStream(s.userLogin) }, modifier = Modifier.fillMaxWidth().then(itemFade()))
                         }
                     }
                 }

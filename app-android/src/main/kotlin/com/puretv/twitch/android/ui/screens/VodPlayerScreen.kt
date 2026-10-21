@@ -5,9 +5,6 @@ import android.content.res.Configuration
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
@@ -336,6 +333,8 @@ private fun VodPlayerArea(
         // Held so the label does not change to 0:00 while the offer animates away.
         val lastOffer = remember { LongArray(1) }
         if (offer != null) lastOffer[0] = offer
+        // The buttons stay on screen while they animate away; a second tap must do nothing.
+        var answered by remember(offer) { mutableStateOf(false) }
         AnimatedVisibility(
             visible = !isInPip && offer != null && state.error == null,
             enter = PureTvMotion.BannerEnter,
@@ -347,13 +346,13 @@ private fun VodPlayerArea(
             ) {
                 ExpressiveButton(
                     text = "Resume from ${VodFormat.timecode(lastOffer[0])}",
-                    onClick = onResume,
+                    onClick = { if (!answered) { answered = true; onResume() } },
                     style = ExpressiveButtonStyle.Filled,
                     size = ExpressiveButtonSize.Small,
                 )
                 ExpressiveButton(
                     text = "Start over",
-                    onClick = onStartOver,
+                    onClick = { if (!answered) { answered = true; onStartOver() } },
                     style = ExpressiveButtonStyle.Tonal,
                     size = ExpressiveButtonSize.Small,
                 )
@@ -436,8 +435,7 @@ private fun VodPlayerArea(
                     }
                     VodSeekBar(
                         positionMs = scrubMs ?: positionMs,
-                        scrubbing = scrubMs != null,
-                        durationMs = durationMs,
+                                        durationMs = durationMs,
                         onScrub = { scrubMs = it },
                         onScrubDone = {
                             scrubMs?.let { target ->
@@ -459,25 +457,16 @@ private fun VodPlayerArea(
 @Composable
 private fun VodSeekBar(
     positionMs: Long,
-    scrubbing: Boolean,
     durationMs: Long,
     onScrub: (Long) -> Unit,
     onScrubDone: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = PureTvTheme.colors
-    // Position arrives every half second; gliding between samples at the same rate
-    // makes the bar travel continuously. A drag follows the finger exactly.
-    val target = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() else 0f
-    val shown by animateFloatAsState(
-        targetValue = target,
-        animationSpec = if (scrubbing) snap() else tween(POSITION_POLL_MS.toInt(), easing = LinearEasing),
-        label = "vodSeek",
-    )
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(VodFormat.timecode(positionMs), style = PureTvType.dataSmall, color = Color.White)
         Slider(
-            value = shown,
+            value = if (durationMs > 0) positionMs.coerceIn(0L, durationMs).toFloat() else 0f,
             onValueChange = { onScrub(it.toLong()) },
             onValueChangeFinished = onScrubDone,
             valueRange = 0f..(durationMs.coerceAtLeast(1L).toFloat()),

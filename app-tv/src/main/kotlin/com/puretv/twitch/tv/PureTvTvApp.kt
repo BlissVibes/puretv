@@ -25,10 +25,8 @@ import org.koin.core.context.startKoin
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
-import coil3.request.crossfade
-import com.puretv.twitch.core.motion.MotionTokens
-import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
-import com.puretv.twitch.tv.ui.theme.animatorDurationScale
+import coil3.request.transitionFactory
+import com.puretv.twitch.tv.ui.theme.crossfadeFactory
 
 /**
  * SECTION 11 / 12.2, wires the shared `coreModule` (API client, OAuth,
@@ -59,7 +57,7 @@ class PureTvTvApp : Application(), SingletonImageLoader.Factory {
     /** Artwork fades in from its placeholder; Coil skips the fade for images already in memory. */
     override fun newImageLoader(context: PlatformContext): ImageLoader =
         ImageLoader.Builder(context)
-            .crossfade(MotionTokens.scaledDurationMs(PureTvTvMotion.Medium, animatorDurationScale(applicationContext)))
+            .transitionFactory(crossfadeFactory(applicationContext))
             .build()
 
     @OptIn(UnstableApi::class)

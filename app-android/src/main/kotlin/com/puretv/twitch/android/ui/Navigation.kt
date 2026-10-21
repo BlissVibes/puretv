@@ -281,7 +281,8 @@ fun PureTvNavHost(navController: NavHostController, modifier: Modifier = Modifie
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
-        modifier = modifier,
+        // Opaque, so two screens fading across each other never show the root behind them.
+        modifier = modifier.background(PureTvTheme.colors.surfaceLowest),
         // Tabs swap with a fade-through; a detail screen pushes in from the right and
         // pops back out to it. Any move to or from a player route is a plain fade.
         enterTransition = {
@@ -306,7 +307,7 @@ fun PureTvNavHost(navController: NavHostController, modifier: Modifier = Modifie
             if (initialState.destination.route.hostsPlayer()) PureTvMotion.tabEnter(reduced) else PureTvMotion.popEnter(reduced)
         },
         popExitTransition = {
-            if (initialState.destination.route.hostsPlayer()) PureTvMotion.playerExit() else PureTvMotion.popExit(reduced)
+            if (initialState.destination.route.hostsPlayer()) PureTvMotion.playerExit(reduced) else PureTvMotion.popExit(reduced)
         },
     ) {
         composable(Routes.HOME) {

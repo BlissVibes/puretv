@@ -55,7 +55,7 @@ class MotionTokensTest {
     @Test
     fun anOversizedChildAlignsItsLeadingEdge() {
         assertEquals(40f, MotionTokens.centredScrollDistance(40f, 1200f, 1000f))
-        assertEquals(40f, MotionTokens.bandedScrollDistance(40f, 1200f, 1000f, 0.18f))
+        assertEquals(0f, MotionTokens.bandedScrollDistance(40f, 1200f, 1000f, 0.18f))
     }
 
     @Test

@@ -65,7 +65,8 @@ object MotionTokens {
      * still while focus moves around comfortably inside it.
      */
     fun bandedScrollDistance(offset: Float, size: Float, containerSize: Float, bandFraction: Float): Float {
-        if (size >= containerSize) return offset
+        // Like Compose's default, leave a child that fills the viewport where it is.
+        if (size >= containerSize) return 0f
         val margin = containerSize * bandFraction
         val inside = offset >= margin && offset + size <= containerSize - margin
         return if (inside) 0f else centredScrollDistance(offset, size, containerSize)

@@ -31,6 +31,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
+import coil3.transition.CrossfadeTransition
+import coil3.transition.Transition
 import com.puretv.twitch.core.motion.MotionTokens
 
 /**
@@ -179,3 +181,9 @@ fun rememberReducedMotion(): Boolean {
 fun animatorDurationScale(context: Context): Float =
     runCatching { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) }
         .getOrDefault(1f)
+
+/** Coil's crossfade, re-reading the animator scale per image so "remove animations" applies live. */
+fun crossfadeFactory(context: Context, baseMs: Int = PureTvTvMotion.Medium): Transition.Factory = Transition.Factory { target, result ->
+    val ms = MotionTokens.scaledDurationMs(baseMs, animatorDurationScale(context))
+    if (ms == 0) Transition.Factory.NONE.create(target, result) else CrossfadeTransition.Factory(ms).create(target, result)
+}

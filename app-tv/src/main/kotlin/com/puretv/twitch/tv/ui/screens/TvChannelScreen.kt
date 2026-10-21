@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.screens
 
+import com.puretv.twitch.tv.ui.theme.TvShelfScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.aspectRatio
@@ -208,39 +209,41 @@ private fun PastBroadcastsRow(
             pendingFrom = null
             landingIndex = null
         }
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            // A More card that has gone takes the focus with it, but by then the page has
-            // loaded; leaving mid-load means the viewer went elsewhere, so let the hand-off go.
-            modifier = Modifier.onFocusChanged { if (!it.hasFocus && stillLoading) pendingFrom = null },
-        ) {
-            itemsIndexed(videos, key = { _, v -> v.id }) { index, video ->
-                TvVideoCard(
-                    modifier = (if (index == landingIndex) Modifier.focusRequester(landing) else Modifier)
-                        .onFocusChanged { if (it.hasFocus) pendingFrom = null },
-                    video = video,
-                    now = now,
-                    onClick = {
-                        onOpen(
-                            VodLaunch(
-                                vodId = video.id,
-                                channelLogin = video.userLogin,
-                                title = video.title,
-                                thumbnailUrl = VodFormat.thumbnail(video.thumbnailUrl),
-                            ),
-                        )
-                    },
-                )
-            }
-            if (hasMore || loading) {
-                item(key = "more") {
-                    TvMoreCard(
-                        loading = loading,
+        TvShelfScroll {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                // A More card that has gone takes the focus with it, but by then the page has
+                // loaded; leaving mid-load means the viewer went elsewhere, so let the hand-off go.
+                modifier = Modifier.onFocusChanged { if (!it.hasFocus && stillLoading) pendingFrom = null },
+            ) {
+                itemsIndexed(videos, key = { _, v -> v.id }) { index, video ->
+                    TvVideoCard(
+                        modifier = (if (index == landingIndex) Modifier.focusRequester(landing) else Modifier)
+                            .onFocusChanged { if (it.hasFocus) pendingFrom = null },
+                        video = video,
+                        now = now,
                         onClick = {
-                            pendingFrom = videos.size
-                            onMore()
+                            onOpen(
+                                VodLaunch(
+                                    vodId = video.id,
+                                    channelLogin = video.userLogin,
+                                    title = video.title,
+                                    thumbnailUrl = VodFormat.thumbnail(video.thumbnailUrl),
+                                ),
+                            )
                         },
                     )
+                }
+                if (hasMore || loading) {
+                    item(key = "more") {
+                        TvMoreCard(
+                            loading = loading,
+                            onClick = {
+                                pendingFrom = videos.size
+                                onMore()
+                            },
+                        )
+                    }
                 }
             }
         }

@@ -1,5 +1,7 @@
 package com.puretv.twitch.tv.ui.components
 
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
+import androidx.compose.animation.core.tween
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -104,8 +106,8 @@ fun TvChatOverlay(
 
     AnimatedVisibility(
         visible = visible,
-        enter = if (beside) fadeIn() else slideInHorizontally(initialOffsetX = { it }),
-        exit = if (beside) fadeOut() else slideOutHorizontally(targetOffsetX = { it }),
+        enter = if (beside) PureTvTvMotion.ControlsEnter else slideInHorizontally(tween(PureTvTvMotion.Medium, easing = PureTvTvMotion.Standard), initialOffsetX = { it }),
+        exit = if (beside) PureTvTvMotion.ControlsExit else slideOutHorizontally(tween(PureTvTvMotion.Exit, easing = PureTvTvMotion.Accelerate), targetOffsetX = { it }),
         modifier = modifier,
     ) {
         // AnimatedVisibility's content scope is not a BoxScope, so alignment can't

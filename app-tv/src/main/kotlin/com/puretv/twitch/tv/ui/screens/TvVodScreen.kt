@@ -71,6 +71,7 @@ import com.puretv.twitch.tv.ui.components.StoryboardPreview
 import com.puretv.twitch.tv.ui.components.TvChatOverlay
 import com.puretv.twitch.tv.ui.components.TvButtonStyle
 import com.puretv.twitch.tv.ui.components.TvExpressiveButton
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
 import kotlinx.coroutines.delay
@@ -346,8 +347,8 @@ fun TvVodScreen(
 
         AnimatedVisibility(
             visible = error == null && (controlsVisible || pendingMs != null),
-            enter = fadeIn(),
-            exit = fadeOut(),
+            enter = PureTvTvMotion.ControlsEnter,
+            exit = PureTvTvMotion.ControlsExit,
             modifier = Modifier.fillMaxSize(),
         ) {
             VodBar(

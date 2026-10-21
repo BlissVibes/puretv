@@ -1,5 +1,9 @@
 package com.puretv.twitch.tv.ui
 
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.runtime.CompositionLocalProvider
+import com.puretv.twitch.tv.ui.theme.LocalReducedMotion
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
@@ -61,97 +65,110 @@ object Routes {
 }
 
 @Composable
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 fun PureTvTvNavHost(navController: NavHostController = rememberNavController()) {
     val flipOrigin = koinInject<FlipOrigin>()
-    NavHost(navController = navController, startDestination = Routes.HOME) {
-        composable(Routes.HOME) {
-            TvHomeScreen(
-                onOpenStream = { navController.navigate(Routes.stream(it)) },
-                onOpenChannel = { navController.navigate(Routes.channel(it)) },
-                onOpenVod = { navController.navigate(Routes.vod(it)) },
-                onOpenFollowing = { navController.navigate(Routes.FOLLOWING) },
-                onOpenBrowse = { navController.navigate(Routes.BROWSE) },
-                onOpenSearch = { navController.navigate(Routes.SEARCH) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onOpenLogin = { navController.navigate(Routes.LOGIN) },
-            )
-        }
-        composable(Routes.FOLLOWING) {
-            TvFollowingScreen(
-                onOpenChannel = { navController.navigate(Routes.channel(it)) },
-                onOpenHome = navController::popBackStack,
-                onOpenBrowse = { navController.navigate(Routes.BROWSE) },
-                onOpenSearch = { navController.navigate(Routes.SEARCH) },
-                onOpenSettings = { navController.navigate(Routes.SETTINGS) },
-                onOpenLogin = { navController.navigate(Routes.LOGIN) },
-            )
-        }
-        composable(Routes.BROWSE) {
-            TvBrowseScreen(onOpenCategory = { navController.navigate(Routes.category(it)) }, onBack = navController::popBackStack)
-        }
-        composable(Routes.CATEGORY) { backStackEntry ->
-            val gameId = backStackEntry.arguments?.getString("gameId").orEmpty()
-            TvCategoryScreen(
-                gameId = gameId,
-                onOpenStream = { navController.navigate(Routes.stream(it)) },
-                onBack = navController::popBackStack,
-            )
-        }
-        composable(Routes.SEARCH) {
-            TvSearchScreen(
-                onOpenChannel = { navController.navigate(Routes.channel(it)) },
-                onBack = navController::popBackStack,
-            )
-        }
-        composable(Routes.SETTINGS) {
-            TvSettingsScreen(onBack = navController::popBackStack)
-        }
-        composable(Routes.LOGIN) {
-            TvLoginScreen(onLoggedIn = { navController.popBackStack() }, onBack = navController::popBackStack)
-        }
-        composable(Routes.STREAM) { backStackEntry ->
-            val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
-            TvStreamScreen(
-                channelLogin = channelLogin,
-                onBack = navController::popBackStack,
-                // The sleep timer ran out: back to Home, not to whichever screen opened the stream.
-                onSleepExpired = {
-                    if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
-                        navController.navigate(Routes.HOME) { popUpTo(0) }
-                    }
-                },
-            )
-        }
-        composable(Routes.CHANNEL) { backStackEntry ->
-            val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
-            TvChannelScreen(
-                channelLogin = channelLogin,
-                onWatch = {
-                    // A channel page is not a row: flips use the live follows, not an older row.
-                    flipOrigin.record(emptyList())
-                    navController.navigate(Routes.stream(channelLogin))
-                },
-                onOpenVod = { navController.navigate(Routes.vod(it)) },
-                onBack = navController::popBackStack,
-            )
-        }
-        composable(
-            Routes.VOD,
-            arguments = listOf(
-                navArgument("vodId") { type = NavType.StringType },
-                navArgument("login") { type = NavType.StringType; defaultValue = "" },
-                navArgument("title") { type = NavType.StringType; defaultValue = "" },
-                navArgument("thumb") { type = NavType.StringType; defaultValue = "" },
-            ),
-        ) { backStackEntry ->
-            val args = backStackEntry.arguments
-            val launch = VodLaunch(
-                vodId = args?.getString("vodId").orEmpty(),
-                channelLogin = args?.getString("login").orEmpty(),
-                title = args?.getString("title").orEmpty(),
-                thumbnailUrl = args?.getString("thumb").orEmpty(),
-            )
-            TvVodScreen(launch = launch, onBack = navController::popBackStack)
+    val reduced = LocalReducedMotion.current
+    // One short fade for every screen change. The library default on TV is a 700 ms
+    // fade, which reads as the app stalling; the remote's focus ring carries direction.
+    CompositionLocalProvider(LocalBringIntoViewSpec provides PureTvTvMotion.PageScroll) {
+        NavHost(
+            navController = navController,
+            startDestination = Routes.HOME,
+            enterTransition = { PureTvTvMotion.screenEnter(reduced) },
+            exitTransition = { PureTvTvMotion.screenExit(reduced) },
+            popEnterTransition = { PureTvTvMotion.screenEnter(reduced) },
+            popExitTransition = { PureTvTvMotion.screenExit(reduced) },
+        ) {
+            composable(Routes.HOME) {
+                TvHomeScreen(
+                    onOpenStream = { navController.navigate(Routes.stream(it)) },
+                    onOpenChannel = { navController.navigate(Routes.channel(it)) },
+                    onOpenVod = { navController.navigate(Routes.vod(it)) },
+                    onOpenFollowing = { navController.navigate(Routes.FOLLOWING) },
+                    onOpenBrowse = { navController.navigate(Routes.BROWSE) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenLogin = { navController.navigate(Routes.LOGIN) },
+                )
+            }
+            composable(Routes.FOLLOWING) {
+                TvFollowingScreen(
+                    onOpenChannel = { navController.navigate(Routes.channel(it)) },
+                    onOpenHome = navController::popBackStack,
+                    onOpenBrowse = { navController.navigate(Routes.BROWSE) },
+                    onOpenSearch = { navController.navigate(Routes.SEARCH) },
+                    onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                    onOpenLogin = { navController.navigate(Routes.LOGIN) },
+                )
+            }
+            composable(Routes.BROWSE) {
+                TvBrowseScreen(onOpenCategory = { navController.navigate(Routes.category(it)) }, onBack = navController::popBackStack)
+            }
+            composable(Routes.CATEGORY) { backStackEntry ->
+                val gameId = backStackEntry.arguments?.getString("gameId").orEmpty()
+                TvCategoryScreen(
+                    gameId = gameId,
+                    onOpenStream = { navController.navigate(Routes.stream(it)) },
+                    onBack = navController::popBackStack,
+                )
+            }
+            composable(Routes.SEARCH) {
+                TvSearchScreen(
+                    onOpenChannel = { navController.navigate(Routes.channel(it)) },
+                    onBack = navController::popBackStack,
+                )
+            }
+            composable(Routes.SETTINGS) {
+                TvSettingsScreen(onBack = navController::popBackStack)
+            }
+            composable(Routes.LOGIN) {
+                TvLoginScreen(onLoggedIn = { navController.popBackStack() }, onBack = navController::popBackStack)
+            }
+            composable(Routes.STREAM) { backStackEntry ->
+                val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
+                TvStreamScreen(
+                    channelLogin = channelLogin,
+                    onBack = navController::popBackStack,
+                    // The sleep timer ran out: back to Home, not to whichever screen opened the stream.
+                    onSleepExpired = {
+                        if (!navController.popBackStack(Routes.HOME, inclusive = false)) {
+                            navController.navigate(Routes.HOME) { popUpTo(0) }
+                        }
+                    },
+                )
+            }
+            composable(Routes.CHANNEL) { backStackEntry ->
+                val channelLogin = backStackEntry.arguments?.getString("channelLogin").orEmpty()
+                TvChannelScreen(
+                    channelLogin = channelLogin,
+                    onWatch = {
+                        // A channel page is not a row: flips use the live follows, not an older row.
+                        flipOrigin.record(emptyList())
+                        navController.navigate(Routes.stream(channelLogin))
+                    },
+                    onOpenVod = { navController.navigate(Routes.vod(it)) },
+                    onBack = navController::popBackStack,
+                )
+            }
+            composable(
+                Routes.VOD,
+                arguments = listOf(
+                    navArgument("vodId") { type = NavType.StringType },
+                    navArgument("login") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("title") { type = NavType.StringType; defaultValue = "" },
+                    navArgument("thumb") { type = NavType.StringType; defaultValue = "" },
+                ),
+            ) { backStackEntry ->
+                val args = backStackEntry.arguments
+                val launch = VodLaunch(
+                    vodId = args?.getString("vodId").orEmpty(),
+                    channelLogin = args?.getString("login").orEmpty(),
+                    title = args?.getString("title").orEmpty(),
+                    thumbnailUrl = args?.getString("thumb").orEmpty(),
+                )
+                TvVodScreen(launch = launch, onBack = navController::popBackStack)
+            }
         }
     }
 }

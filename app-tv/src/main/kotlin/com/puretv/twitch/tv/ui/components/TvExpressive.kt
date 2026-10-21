@@ -30,6 +30,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -42,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.puretv.twitch.tv.ui.theme.LocalReducedMotion
 import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
@@ -91,37 +98,64 @@ fun Modifier.tvFocusSurface(
     val focused by interaction.collectIsFocusedAsState()
     val accent = ringColor ?: PureTvTvTheme.colors.focusRing
 
-    val radius by animateDpAsState(
-        targetValue = if (focused) focusRadius else restRadius,
-        animationSpec = PureTvTvMotion.MorphSpring,
-        label = "tvMorphRadius",
+    // One progress value (0 resting, 1 focused) drives every cue, and it is read
+    // only inside the layer and draw lambdas, so a focus change animates without
+    // recomposing the card or anything under it on any frame.
+    val progress = animateFloatAsState(
+        targetValue = if (focused) 1f else 0f,
+        animationSpec = PureTvTvMotion.FocusSpring,
+        label = "tvFocus",
     )
-    val fill by animateColorAsState(
-        targetValue = if (focused) focusColor else color,
-        animationSpec = tween(PureTvTvMotion.Medium, easing = PureTvTvMotion.Standard),
-        label = "tvMorphFill",
-    )
-    val grow by animateFloatAsState(
-        targetValue = if (focused) scale else 1f,
-        animationSpec = PureTvTvMotion.MorphSpringFloat,
-        label = "tvMorphScale",
-    )
-    val stroke by animateColorAsState(
-        targetValue = if (focused && ring) accent else idleBorderColor,
-        animationSpec = tween(PureTvTvMotion.Fast),
-        label = "tvFocusRing",
-    )
-
-    // An overshooting spring can drive the radius below zero, and
-    // RoundedCornerShape rejects negatives, so clamp before it reaches the shape.
-    val shape = RoundedCornerShape(radius.coerceAtLeast(0.dp))
 
     this
-        .graphicsLayer { scaleX = grow; scaleY = grow }
-        .clip(shape)
-        .background(fill)
-        .border(ringWidth, stroke, shape)
+        // Outer layer: scale only, unclipped, so the halo can draw outside the card.
+        .graphicsLayer {
+            val grow = 1f + (scale - 1f) * progress.value
+            scaleX = grow
+            scaleY = grow
+        }
+        .drawBehind {
+            val p = progress.value.coerceIn(0f, 1f)
+            if (ring && p > 0f) {
+                // A soft halo: one wide, faint stroke just outside the ring. Cheaper
+                // than a blurred shadow, which a Fire TV stick would pay for per frame.
+                val halo = 6.dp.toPx()
+                val r = (lerpDp(restRadius, focusRadius, p).toPx() + halo / 2f).coerceAtLeast(0f)
+                drawRoundRect(
+                    color = accent.copy(alpha = PureTvTvMotion.HaloAlpha * p),
+                    topLeft = Offset(-halo / 2f, -halo / 2f),
+                    size = Size(size.width + halo, size.height + halo),
+                    cornerRadius = CornerRadius(r, r),
+                    style = Stroke(halo),
+                )
+            }
+        }
+        .graphicsLayer {
+            // An overshooting spring can drive the radius below zero, and
+            // RoundedCornerShape rejects negatives, so clamp before the shape.
+            shape = RoundedCornerShape(lerpDp(restRadius, focusRadius, progress.value).coerceAtLeast(0.dp))
+            clip = true
+        }
+        .drawBehind {
+            val p = progress.value
+            drawRect(lerp(color, focusColor, p.coerceIn(0f, 1f)))
+            val stroke = lerp(idleBorderColor, if (ring) accent else idleBorderColor, p.coerceIn(0f, 1f))
+            if (stroke.alpha > 0f) {
+                // Inset by half the width so the whole line sits inside the clip.
+                val w = ringWidth.toPx()
+                val r = (lerpDp(restRadius, focusRadius, p).toPx() - w / 2f).coerceAtLeast(0f)
+                drawRoundRect(
+                    color = stroke,
+                    topLeft = Offset(w / 2f, w / 2f),
+                    size = Size(size.width - w, size.height - w),
+                    cornerRadius = CornerRadius(r, r),
+                    style = Stroke(w),
+                )
+            }
+        }
 }
+
+private fun lerpDp(from: Dp, to: Dp, fraction: Float): Dp = from + (to - from) * fraction
 
 /**
  * The whole remote-driven package: [tvFocusSurface] plus `focusable` and a click
@@ -347,6 +381,7 @@ fun TvLivePill(
     modifier: Modifier = Modifier,
     trailing: String? = null,
     height: Dp = 34.dp,
+    pulse: Boolean = true,
 ) {
     val c = PureTvTvTheme.colors
     Row(
@@ -358,7 +393,7 @@ fun TvLivePill(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        TvLiveDot(size = 9.dp, color = c.onLive)
+        TvLiveDot(size = 9.dp, color = c.onLive, pulse = pulse)
         Text(
             if (trailing != null) "LIVE · $trailing" else "LIVE",
             style = PureTvTvType.badge,
@@ -399,19 +434,23 @@ fun TvShieldPill(
  * because red-on-dark is the one place where a single hue carries the meaning.
  */
 @Composable
-fun TvLiveDot(modifier: Modifier = Modifier, size: Dp = 9.dp, color: Color? = null) {
+fun TvLiveDot(modifier: Modifier = Modifier, size: Dp = 9.dp, color: Color? = null, pulse: Boolean = true) {
     val c = PureTvTvTheme.colors
-    val transition = rememberInfiniteTransition(label = "tvLiveDot")
-    val alpha by transition.animateFloat(
-        initialValue = 1f,
-        targetValue = 0.35f,
-        animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
-        label = "tvLiveDotAlpha",
-    )
+    // Still when motion is off, and wherever live video plays: nothing loops over the picture.
+    val alpha = if (pulse && !LocalReducedMotion.current) {
+        rememberInfiniteTransition(label = "tvLiveDot").animateFloat(
+            initialValue = 1f,
+            targetValue = 0.35f,
+            animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse),
+            label = "tvLiveDotAlpha",
+        )
+    } else {
+        null
+    }
     Box(
         modifier
             .size(size)
-            .graphicsLayer { this.alpha = alpha }
+            .graphicsLayer { this.alpha = alpha?.value ?: 1f }
             .clip(CircleShape)
             .background(color ?: c.live),
     )

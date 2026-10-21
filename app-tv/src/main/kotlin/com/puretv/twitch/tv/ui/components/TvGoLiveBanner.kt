@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.components
 
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -63,8 +64,7 @@ fun TvGoLiveBanner(queue: GoLiveBannerQueue, modifier: Modifier = Modifier) {
     AnimatedContent(
         targetState = current,
         transitionSpec = {
-            (fadeIn(tween(220)) + slideInVertically(tween(220)) { -it / 2 }) togetherWith
-                (fadeOut(tween(180)) + slideOutVertically(tween(180)) { -it / 2 })
+            PureTvTvMotion.HeaderEnter togetherWith PureTvTvMotion.HeaderExit
         },
         contentKey = { it?.key },
         modifier = modifier,

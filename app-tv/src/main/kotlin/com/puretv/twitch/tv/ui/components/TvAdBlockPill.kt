@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Text
 import com.puretv.twitch.core.adblock.AdBlockStatus
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 import com.puretv.twitch.tv.ui.theme.PureTvTvType
 import kotlinx.coroutines.delay
@@ -52,7 +53,7 @@ fun TvAdBlockPill(status: AdBlockStatus, modifier: Modifier = Modifier) {
         visible = false
     }
 
-    AnimatedVisibility(visible = visible, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+    AnimatedVisibility(visible = visible, enter = PureTvTvMotion.BannerEnter, exit = PureTvTvMotion.BannerExit, modifier = modifier) {
         val c = PureTvTvTheme.colors
         val label = when (status) {
             AdBlockStatus.AD_BLOCKED -> "AD BLOCKED"

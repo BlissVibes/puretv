@@ -1,5 +1,6 @@
 package com.puretv.twitch.tv.ui.screens
 
+import com.puretv.twitch.tv.ui.theme.TvShelfScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -440,22 +441,24 @@ private fun ContinueRow(
     if (row.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         TvSectionHeading("Continue watching")
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            items(
-                row,
-                key = { item ->
+        TvShelfScroll {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = PaddingValues(vertical = 8.dp),
+            ) {
+                items(
+                    row,
+                    key = { item ->
+                        when (item) {
+                            is ContinueItem.Channel -> "channel:${item.login}"
+                            is ContinueItem.Vod -> "vod:${item.progress.vodId}"
+                        }
+                    },
+                ) { item ->
                     when (item) {
-                        is ContinueItem.Channel -> "channel:${item.login}"
-                        is ContinueItem.Vod -> "vod:${item.progress.vodId}"
+                        is ContinueItem.Channel -> TvRecentChannelCard(item, onClick = { onOpenChannel(item) })
+                        is ContinueItem.Vod -> TvVodResumeCard(item, onClick = { onOpenVod(item.progress) })
                     }
-                },
-            ) { item ->
-                when (item) {
-                    is ContinueItem.Channel -> TvRecentChannelCard(item, onClick = { onOpenChannel(item) })
-                    is ContinueItem.Vod -> TvVodResumeCard(item, onClick = { onOpenVod(item.progress) })
                 }
             }
         }
@@ -472,20 +475,22 @@ private fun ContentRow(
     if (streams.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         TvSectionHeading(title)
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(24.dp),
-            contentPadding = PaddingValues(vertical = 8.dp),
-        ) {
-            itemsIndexed(streams, key = { _, s -> s.id }) { index, stream ->
-                TvStreamCard(
-                    stream = stream,
-                    onClick = { onOpenStream(stream.userLogin) },
-                    modifier = if (index == 0 && firstCardFocusRequester != null) {
-                        Modifier.focusRequester(firstCardFocusRequester)
-                    } else {
-                        Modifier
-                    },
-                )
+        TvShelfScroll {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                contentPadding = PaddingValues(vertical = 8.dp),
+            ) {
+                itemsIndexed(streams, key = { _, s -> s.id }) { index, stream ->
+                    TvStreamCard(
+                        stream = stream,
+                        onClick = { onOpenStream(stream.userLogin) },
+                        modifier = if (index == 0 && firstCardFocusRequester != null) {
+                            Modifier.focusRequester(firstCardFocusRequester)
+                        } else {
+                            Modifier
+                        },
+                    )
+                }
             }
         }
     }

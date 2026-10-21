@@ -21,6 +21,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.puretv.twitch.tv.ui.theme.PureTvTvMotion
 import com.puretv.twitch.tv.ui.theme.PureTvTvTheme
 
 /**
@@ -33,7 +34,7 @@ fun TvSleepBanner(text: String?, modifier: Modifier = Modifier) {
     // The last words stay while the banner fades out, instead of an empty box.
     var lastText by remember { mutableStateOf("") }
     if (text != null) lastText = text
-    AnimatedVisibility(visible = text != null, enter = fadeIn(), exit = fadeOut(), modifier = modifier) {
+    AnimatedVisibility(visible = text != null, enter = PureTvTvMotion.BannerEnter, exit = PureTvTvMotion.BannerExit, modifier = modifier) {
         val c = PureTvTvTheme.colors
         val shape = RoundedCornerShape(20.dp)
         Text(

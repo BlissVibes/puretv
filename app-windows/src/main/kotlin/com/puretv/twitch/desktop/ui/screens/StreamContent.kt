@@ -109,6 +109,7 @@ import com.puretv.twitch.desktop.player.VlcPlayerView
 import com.puretv.twitch.desktop.ui.DoubleClickDetector
 import com.puretv.twitch.desktop.ui.LocalAppShell
 import com.puretv.twitch.desktop.ui.MiniControlStrip
+import com.puretv.twitch.desktop.ui.miniWindowDrag
 import com.puretv.twitch.desktop.ui.PlayerMode
 import com.puretv.twitch.desktop.ui.PlayerShortcuts
 import com.puretv.twitch.desktop.ui.ShortcutAction
@@ -522,7 +523,8 @@ fun StreamContent(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .background(Color.Black),
+                            .background(Color.Black)
+                            .then(if (mini) Modifier.miniWindowDrag(shell) { shell.setPlayerMode(PlayerMode.DEFAULT) } else Modifier),
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
@@ -557,6 +559,10 @@ fun StreamContent(
                                 // Mini player: a double click on the video goes back to the full window.
                                 onClick = if (mini) {
                                     { if (miniDoubleClick.click(System.currentTimeMillis())) shell.setPlayerMode(PlayerMode.DEFAULT) }
+                                } else null,
+                                // ...and dragging it moves the window, wherever on the desktop.
+                                onDragWindow = if (mini) {
+                                    { shell.dragMiniWindow() }
                                 } else null,
                             )
                             else -> Text(

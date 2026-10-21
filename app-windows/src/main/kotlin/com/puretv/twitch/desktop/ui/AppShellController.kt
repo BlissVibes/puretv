@@ -10,6 +10,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.WindowPlacement
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.WindowState
+import com.puretv.twitch.desktop.platform.WindowsNative
 import java.awt.Frame
 import java.awt.GraphicsConfiguration
 import java.awt.GraphicsEnvironment
@@ -119,12 +120,27 @@ class AppShellController(
         if (playerModeState == PlayerMode.MINI) setPlayerMode(PlayerMode.DEFAULT)
     }
 
-    /** The mini strip moves the window by hand: where it is now, and a place to put it. */
+    /**
+     * Hands a held press on the mini player to Windows' own window move, which follows the
+     * pointer across every monitor and DPI. Returns when the button is released. False when
+     * the OS drag is unavailable, and the caller then moves the window by hand.
+     */
+    fun dragMiniWindow(): Boolean {
+        val t0 = System.nanoTime()
+        val b0 = "${window.x},${window.y}"
+        if (!WindowsNative.startWindowDrag(window)) return false
+        println("DBG drag ms=${(System.nanoTime() - t0) / 1_000_000} from=$b0 to=${window.x},${window.y}")
+        miniPlayer.settle()
+        println("DBG after settle ${window.x},${window.y}")
+        return true
+    }
+
+    /** The by-hand fallback: where the window is now, and a place to put it. */
     val windowX: Int get() = window.x
     val windowY: Int get() = window.y
     fun moveWindowTo(x: Int, y: Int) = window.setLocation(x, y)
 
-    /** A drag of the mini player ended: keep it on screen. */
+    /** A by-hand drag of the mini player ended: keep it reachable. */
     fun settleMini() = miniPlayer.settle()
 
     private fun enterFullscreen() {

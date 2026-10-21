@@ -115,11 +115,67 @@ class MiniPlayerGeometryTest {
         assertEquals(MiniPlayerGeometry.heightFor(640), b.height)
     }
 
-    @Test fun aResizeThatWouldLeaveTheScreenIsPulledBack() {
-        val prev = MiniRect(1700, 700, 200, MiniPlayerGeometry.heightFor(320))
+    @Test fun aResizeThatLeavesTheWindowLostIsPulledBack() {
+        val prev = MiniRect(1900, 1030, 200, MiniPlayerGeometry.heightFor(320))
         val now = prev.copy(width = 640, height = MiniPlayerGeometry.heightFor(640))
         val b = MiniPlayerGeometry.resizeAnchored(prev, now, work)
-        assertTrue(b.x + b.width <= 1920 && b.y + b.height <= 1040)
+        assertTrue(MiniPlayerGeometry.isReachable(b, listOf(work)))
+    }
+
+    // Three monitors: the main one, one to its left and one above it (negative coordinates).
+    private val left = MiniRect(-1920, 0, 1920, 1040)
+    private val above = MiniRect(0, -1080, 1920, 1040)
+    private val all = listOf(work, left, above)
+
+    @Test fun aWindowDroppedOnAnotherMonitorStaysThere() {
+        val onLeft = MiniRect(-1500, 300, 480, 314)
+        assertEquals(onLeft, MiniPlayerGeometry.rescueIfOffscreen(onLeft, all))
+        val onTop = MiniRect(400, -900, 480, 314)
+        assertEquals(onTop, MiniPlayerGeometry.rescueIfOffscreen(onTop, all))
+    }
+
+    @Test fun aWindowStraddlingTwoMonitorsIsNotSnappedToOne() {
+        val straddle = MiniRect(-240, 300, 480, 314)
+        assertEquals(straddle, MiniPlayerGeometry.rescueIfOffscreen(straddle, all))
+    }
+
+    @Test fun aWindowMostlyHangingOffAnEdgeIsStillReachable() {
+        val hanging = MiniRect(1920 - 70, 500, 480, 314)
+        assertTrue(MiniPlayerGeometry.isReachable(hanging, all))
+        assertEquals(hanging, MiniPlayerGeometry.rescueIfOffscreen(hanging, all))
+    }
+
+    @Test fun aLostWindowIsBroughtBackOntoTheNearestMonitor() {
+        val lost = MiniRect(-5000, 300, 480, 314)
+        assertEquals(MiniRect(-1920, 300, 480, 314), MiniPlayerGeometry.rescueIfOffscreen(lost, all))
+        val lostAbove = MiniRect(300, -4000, 480, 314)
+        assertEquals(MiniRect(300, -1080, 480, 314), MiniPlayerGeometry.rescueIfOffscreen(lostAbove, all))
+    }
+
+    @Test fun aSliverOnAScreenIsNotReachable() {
+        assertFalse(MiniPlayerGeometry.isReachable(MiniRect(1920 - 20, 500, 480, 314), listOf(work)))
+        assertFalse(MiniPlayerGeometry.isReachable(MiniRect(500, 1040 - 30, 480, 314), listOf(work)))
+    }
+
+    @Test fun aRememberedSpotOnASecondMonitorIsKept() {
+        val saved = MiniRect(-1500, 300, 640, MiniPlayerGeometry.heightFor(640))
+        assertEquals(saved, MiniPlayerGeometry.initialBounds(saved, all, work))
+    }
+
+    @Test fun aRememberedSpotOnAnUnpluggedMonitorFallsBackToTheCurrentOne() {
+        val saved = MiniRect(-1500, 300, 640, MiniPlayerGeometry.heightFor(640))
+        assertEquals(MiniPlayerGeometry.defaultBounds(work), MiniPlayerGeometry.initialBounds(saved, listOf(work), work))
+    }
+
+    @Test fun aRememberedSpotWithNegativeCoordinatesSurvivesTheStore() {
+        val dir = kotlin.io.path.createTempDirectory("mini").toFile()
+        try {
+            val store = MiniBoundsStore(File(dir, "mini-player.txt"))
+            store.save(MiniRect(-1500, -700, 480, 0))
+            assertEquals(MiniRect(-1500, -700, 480, MiniPlayerGeometry.heightFor(480)), store.load())
+        } finally {
+            dir.deleteRecursively()
+        }
     }
 
     @Test fun twoQuickClicksAreADoubleClick() {

@@ -17,6 +17,15 @@ data class MiniRect(val x: Int, val y: Int, val width: Int, val height: Int) {
     val centerX: Int get() = x + width / 2
     val centerY: Int get() = y + height / 2
     fun contains(px: Int, py: Int): Boolean = px >= x && px < x + width && py >= y && py < y + height
+
+    /** The part of this rectangle that lies inside [other], or null when they do not touch. */
+    fun intersect(other: MiniRect): MiniRect? {
+        val left = maxOf(x, other.x)
+        val top = maxOf(y, other.y)
+        val right = minOf(x + width, other.x + other.width)
+        val bottom = minOf(y + height, other.y + other.height)
+        return if (right > left && bottom > top) MiniRect(left, top, right - left, bottom - top) else null
+    }
 }
 
 /**
@@ -35,6 +44,9 @@ object MiniPlayerGeometry {
 
     /** Gap kept to the screen edge when the window is first placed in the corner. */
     const val MARGIN = 16
+
+    /** How much of the window must stay on some screen, each way, for it to be reachable. */
+    const val MIN_VISIBLE = 64
 
     /** The window height that gives a 16:9 video above the strip. */
     fun heightFor(width: Int): Int = (width * 9 / 16.0).roundToInt() + STRIP_HEIGHT
@@ -68,15 +80,41 @@ object MiniPlayerGeometry {
     }
 
     /**
-     * Where the window opens: the remembered [saved] spot when its centre is still on a
-     * screen in [works] (kept inside that screen), otherwise the corner of [current].
+     * True when enough of [bounds] shows on some screen in [works] (the work areas of every
+     * monitor, in virtual desktop coordinates) for the viewer to grab it and drag it back.
+     */
+    fun isReachable(bounds: MiniRect, works: List<MiniRect>): Boolean =
+        works.any { work ->
+            val visible = bounds.intersect(work)
+            visible != null && visible.width >= MIN_VISIBLE && visible.height >= MIN_VISIBLE
+        }
+
+    /**
+     * Leaves [bounds] alone wherever it sits across the monitors, and only when it has been
+     * lost (not [isReachable]) moves it fully onto the nearest screen. Never resizes.
+     */
+    fun rescueIfOffscreen(bounds: MiniRect, works: List<MiniRect>): MiniRect {
+        if (works.isEmpty() || isReachable(bounds, works)) return bounds
+        val nearest = works.minBy { work ->
+            val dx = (work.centerX - bounds.centerX).toLong()
+            val dy = (work.centerY - bounds.centerY).toLong()
+            dx * dx + dy * dy
+        }
+        return clampToWork(bounds, nearest)
+    }
+
+    /**
+     * Where the window opens: the remembered [saved] spot when it still shows on a screen in
+     * [works] (on whichever monitor it was left, and rescued if that monitor shrank away),
+     * otherwise the corner of [current].
      */
     fun initialBounds(saved: MiniRect?, works: List<MiniRect>, current: MiniRect): MiniRect {
         if (saved != null) {
-            val work = works.firstOrNull { it.contains(saved.centerX, saved.centerY) }
-            if (work != null) {
-                val w = clampWidth(saved.width, work)
-                return clampToWork(MiniRect(saved.x, saved.y, w, heightFor(w)), work)
+            val host = works.firstOrNull { it.contains(saved.centerX, saved.centerY) }
+                ?: works.firstOrNull { saved.intersect(it) != null }
+            if (host != null) {
+                val w = clampWidth(saved.width, host)
+                return rescueIfOffscreen(MiniRect(saved.x, saved.y, w, heightFor(w)), works)
             }
         }
         return defaultBounds(current)
@@ -95,15 +133,16 @@ object MiniPlayerGeometry {
 
     /**
      * The window to settle on after the viewer dragged an edge, from [prev] to [now]. Sized
-     * by [fitSize]; an edge that did not move stays where it was, so dragging the left or top
-     * edge keeps the right or bottom edge still instead of the window creeping away. The
-     * result is kept on [work].
+     * by [fitSize] against [work], the screen it is on; an edge that did not move stays where
+     * it was, so dragging the left or top edge keeps the right or bottom edge still instead
+     * of the window creeping away. The result is only rescued onto a screen in [works] if
+     * it was lost, so a window left across two monitors stays there.
      */
-    fun resizeAnchored(prev: MiniRect, now: MiniRect, work: MiniRect): MiniRect {
+    fun resizeAnchored(prev: MiniRect, now: MiniRect, work: MiniRect, works: List<MiniRect> = listOf(work)): MiniRect {
         val (w, h) = fitSize(now.width, now.height, prev.width, prev.height, work)
         val x = if (now.x != prev.x) prev.x + prev.width - w else now.x
         val y = if (now.y != prev.y) prev.y + prev.height - h else now.y
-        return clampToWork(MiniRect(x, y, w, h), work)
+        return rescueIfOffscreen(MiniRect(x, y, w, h), works)
     }
 }
 
@@ -164,7 +203,7 @@ class MiniPlayerController(
         override fun componentResized(e: ComponentEvent) {
             if (settling) return
             val work = workAreaOf(window) ?: return
-            val fixed = MiniPlayerGeometry.resizeAnchored(last, bounds(), work)
+            val fixed = MiniPlayerGeometry.resizeAnchored(last, bounds(), work, allWorkAreas())
             settling = true
             try {
                 if (fixed != bounds()) window.setBounds(fixed.x, fixed.y, fixed.width, fixed.height)
@@ -220,12 +259,15 @@ class MiniPlayerController(
         window.minimumSize = previousMinimum
     }
 
-    /** After a drag: keeps the whole window on a screen so it can never be lost off the edge. */
+    /**
+     * After a drag: the window stays wherever it was dropped, on any monitor, and is only
+     * moved when it was dropped where it can no longer be reached. The spot is remembered.
+     */
     fun settle() {
-        val work = workAreaOf(window) ?: return
-        val fixed = MiniPlayerGeometry.clampToWork(bounds(), work)
+        val fixed = MiniPlayerGeometry.rescueIfOffscreen(bounds(), allWorkAreas())
         if (fixed != bounds()) window.setLocation(fixed.x, fixed.y)
         last = bounds()
+        if (active) store.save(last)
     }
 
     private fun allWorkAreas(): List<MiniRect> =

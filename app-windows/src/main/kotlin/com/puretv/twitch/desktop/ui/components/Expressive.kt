@@ -858,7 +858,9 @@ fun ExpressiveSlider(
         // The thumb reads as a separate object because the track is cut away
         // around it. Drawing a border on a 6dp thumb instead would consume the
         // whole thumb and leave nothing but the outline.
-        val thumbCentre = (width * fraction).coerceIn(thumbWidth / 2, width - thumbWidth / 2)
+        // A slider squeezed to nothing (a strip narrower than its controls while the window is
+        // still resizing) must not throw out of layout, which would freeze the whole window.
+        val thumbCentre = (width * fraction).coerceIn(thumbWidth / 2, maxOf(thumbWidth / 2, width - thumbWidth / 2))
         Box(
             Modifier
                 .padding(start = (thumbCentre - gapWidth / 2).coerceAtLeast(0.dp))

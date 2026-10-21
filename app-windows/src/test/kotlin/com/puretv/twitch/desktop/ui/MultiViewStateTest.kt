@@ -151,4 +151,104 @@ class MultiViewStateTest {
         assertEquals(listOf("c", "b", "a"), s.tiles.map { it.login })
         assertEquals(GridCell(0, 1, columnSpan = 2), MultiViewLayout.cell(s.tiles.indexOfFirst { it.login == "a" }, s.count))
     }
+
+    // ---- Per-tile sound ----
+
+    @Test fun onlyTheSelectedTileIsAudibleByDefault() {
+        val s = stateOf("a", "b", "c")
+        assertEquals(listOf(true, false, false), s.tiles.map { s.isAudible(it.id) })
+        val b = s.setActive(2)
+        assertEquals(listOf(false, true, false), b.tiles.map { b.isAudible(it.id) })
+    }
+
+    @Test fun listeningToAllPlaysEveryUnmutedTileAtItsOwnVolume() {
+        val s = stateOf("a", "b", "c").withVolume(1, 30).withVolume(2, 80).toggleMute(3).withListenAll(true)
+        assertEquals(listOf(true, true, false), s.tiles.map { s.isAudible(it.id) })
+        assertEquals(listOf(30, 80), s.tiles.take(2).map { it.volume })
+    }
+
+    @Test fun eachTileKeepsItsOwnVolume() {
+        val s = stateOf("a", "b").withVolume(1, 20).withVolume(2, 90)
+        assertEquals(20, s.tiles[0].volume)
+        assertEquals(90, s.tiles[1].volume)
+        assertEquals(100, s.withVolume(1, 400).tiles[0].volume)
+        assertEquals(0, s.withVolume(1, -3).tiles[0].volume)
+    }
+
+    @Test fun switchingTheSelectionKeepsEveryTilesSettings() {
+        val s = stateOf("a", "b").withVolume(2, 15).toggleMute(1)
+        val moved = s.setActive(2)
+        assertEquals(s.tiles, moved.tiles)
+        assertEquals(true, moved.isAudible(2))
+        assertEquals(false, moved.isAudible(1))
+    }
+
+    @Test fun movingTheVolumeOfAMutedTileBringsItsSoundBack() {
+        val s = stateOf("a").toggleMute(1)
+        assertEquals(true, s.tiles[0].muted)
+        assertEquals(false, s.isAudible(1))
+        val back = s.withVolume(1, 40)
+        assertEquals(false, back.tiles[0].muted)
+        assertEquals(true, back.isAudible(1))
+    }
+
+    @Test fun muteButtonNeverLeavesATileSilentForGood() {
+        val s = stateOf("a").withVolume(1, 0)
+        assertEquals(false, s.isAudible(1))
+        val on = s.toggleMute(1)
+        assertEquals(true, on.isAudible(1))
+        assertEquals(com.puretv.twitch.desktop.player.DEFAULT_VOLUME, on.tiles[0].volume)
+        // A muted tile unmutes at the volume it had.
+        val quiet = stateOf("a").withVolume(1, 35).toggleMute(1).toggleMute(1)
+        assertEquals(35, quiet.tiles[0].volume)
+        assertEquals(true, quiet.isAudible(1))
+    }
+
+    @Test fun nudgeActsOnOneTileOnly() {
+        val s = stateOf("a", "b").withVolume(1, 40).withVolume(2, 40)
+        val up = s.nudge(2, up = true)
+        assertEquals(40, up.tiles[0].volume)
+        assertEquals(45, up.tiles[1].volume)
+        val unmuted = s.toggleMute(1).nudge(1, up = true)
+        assertEquals(false, unmuted.tiles[0].muted)
+        assertEquals(40, unmuted.tiles[0].volume)
+    }
+
+    @Test fun newTilesStartAudibleVolumeNeverZero() {
+        val s = MultiViewState().add("a", volume = 0).add("b", volume = 70)
+        assertEquals(true, s.tiles[0].volume > 0)
+        assertEquals(70, s.tiles[1].volume)
+        assertEquals(false, s.tiles[1].silent)
+    }
+
+    @Test fun addingAndRemovingNeverChangesOtherTilesSound() {
+        val s = stateOf("a", "b").withVolume(1, 25).toggleMute(2)
+        val more = s.add("c", 60)
+        assertEquals(s.tiles, more.tiles.take(2))
+        val less = more.remove(3)
+        assertEquals(s.tiles, less.tiles)
+    }
+
+    @Test fun closingTheSelectedTileMovesSelectionAndKeepsItAudible() {
+        val s = stateOf("a", "b").withVolume(2, 55).remove(1)
+        assertEquals(true, s.isAudible(2))
+        assertEquals(55, s.tiles[0].volume)
+    }
+
+    @Test fun missingTileIsNotAudibleAndChangesNothing() {
+        val s = stateOf("a")
+        assertEquals(false, s.isAudible(9))
+        assertSame(s, s.withVolume(9, 10))
+        assertSame(s, s.toggleMute(9))
+        assertSame(s, s.withListenAll(false))
+    }
+
+    @Test fun adjustingAnotherTileSelectsItOnlyWhenListeningToSelected() {
+        val s = stateOf("a", "b")
+        val picked = s.selecting(2)
+        assertEquals(2, picked.activeId)
+        assertEquals(true, picked.isAudible(2))
+        val all = s.withListenAll(true)
+        assertSame(all, all.selecting(2))
+    }
 }

@@ -49,9 +49,6 @@ data class TileInfo(
 data class MultiViewUiState(
     val layout: MultiViewState = MultiViewState(),
     val info: Map<Int, TileInfo> = emptyMap(),
-    /** The viewer's volume for the active tile, 0 to 100. */
-    val volume: Int = DEFAULT_VOLUME,
-    val soundOff: Boolean = false,
     /** Set when the local proxy cannot start, which no tile can work around. */
     val fatalError: String? = null,
 )
@@ -61,8 +58,10 @@ data class MultiViewUiState(
  *
  * Every tile is its own [VlcPlayer] made from the shared [VlcEngine], never the
  * single-stream player, so leaving the normal stream screen can never stop a tile
- * (and the mpv engine is not involved). All tiles keep playing; only the active one
- * is unmuted, so moving the sound never reloads a stream. A tile's quality depends
+ * (and the mpv engine is not involved). All tiles keep playing, each with its own
+ * volume and mute. By default only the active tile is heard; the viewer can choose to
+ * hear every unmuted tile instead. Either way only the players' volume changes, so
+ * moving the sound never reloads a stream. A tile's quality depends
  * on how many tiles there are (see [TileQuality]); when that changes, only the tiles
  * whose target changed reload.
  *
@@ -86,20 +85,19 @@ class MultiViewViewModel(
     private val notifier: DesktopLiveNotifier,
 ) : DesktopViewModel() {
 
-    // Start at the volume the viewer last had on the normal stream screen, when that
-    // player exists and is not at zero; the settings hold no volume of their own.
-    private val _state = MutableStateFlow(
-        MultiViewUiState(
-            layout = MultiViewState().add(initialLogin),
-            volume = initialVolume(),
-        ),
-    )
-
-    private fun initialVolume(): Int {
+    // New tiles start at the volume the viewer last had on the normal stream screen, when
+    // that player exists and is not at zero; the settings hold no volume of their own.
+    private val startVolume: Int = run {
         var volume = DEFAULT_VOLUME
         players.ifCreated { p -> p.status.value.volume.takeIf { it > 0 }?.let { volume = it } }
-        return volume
+        volume
     }
+
+    private val _state = MutableStateFlow(
+        MultiViewUiState(
+            layout = MultiViewState(listenAll = rememberedListenAll).add(initialLogin, startVolume),
+        ),
+    )
     val state: StateFlow<MultiViewUiState> = _state.asStateFlow()
 
     // One chat connection for the whole screen, following the active tile.
@@ -133,6 +131,7 @@ class MultiViewViewModel(
     }
 
     private val lock = Any()
+    private val audioLock = Any()
     // Guards the go-live skip list so a late update cannot land after the screen closed.
     private val watchLock = Any()
     private var cleared = false
@@ -189,7 +188,7 @@ class MultiViewViewModel(
     /** Adds [login] as a tile; false when it is already shown, blank, or the screen is full. */
     fun addChannel(login: String): Boolean {
         val before = _state.value.layout
-        val after = before.add(login)
+        val after = before.add(login, startVolume)
         if (after === before) return false
         _state.update { it.copy(layout = after) }
         val tile = after.tiles.last()
@@ -209,7 +208,7 @@ class MultiViewViewModel(
         return after.tiles
     }
 
-    /** Makes tile [id] the one you hear. Nothing reloads: the others are only muted. */
+    /** Selects tile [id]: the one you hear (unless listening to all) and the keys act on. Nothing reloads. */
     fun setActive(id: Int) {
         val before = _state.value.layout
         val after = before.setActive(id)
@@ -223,22 +222,29 @@ class MultiViewViewModel(
     /** Moves tile [id] one place earlier (-1) or later (1) in the grid. Only the order changes: no player is touched. */
     fun move(id: Int, delta: Int) = _state.update { it.copy(layout = it.layout.move(id, delta)) }
 
-    /** Up or Down on the keyboard: volume for the active tile, as on the normal stream screen. */
-    fun nudgeVolume(up: Boolean) {
-        val s = _state.value
-        val (volume, off) = MultiShortcuts.nudged(s.volume, s.soundOff, up)
-        if (off == s.soundOff && volume == s.volume) return
-        _state.update { it.copy(volume = volume, soundOff = off) }
-        applyAudio()
+    /** Up or Down on the keyboard: volume for the selected tile, as on the normal stream screen. */
+    fun nudgeVolume(up: Boolean) = changeLayout { l -> l.activeId?.let { l.nudge(it, up) } ?: l }
+
+    /** The volume bar of tile [id]. */
+    fun setVolume(id: Int, volume: Int) = changeLayout { it.selecting(id).withVolume(id, volume) }
+
+    /** The speaker button of tile [id]. */
+    fun toggleMute(id: Int) = changeLayout { it.selecting(id).toggleMute(id) }
+
+    /** M on the keyboard: mutes or unmutes the selected tile. */
+    fun toggleActiveMute() = changeLayout { l -> l.activeId?.let { l.toggleMute(it) } ?: l }
+
+    /** "Listen to": only the selected tile, or every tile at its own volume. Remembered for this session. */
+    fun setListenAll(all: Boolean) {
+        rememberedListenAll = all
+        changeLayout { it.withListenAll(all) }
     }
 
-    fun setVolume(volume: Int) {
-        _state.update { it.copy(volume = volume.coerceIn(0, 100), soundOff = false) }
-        applyAudio()
-    }
-
-    fun toggleMute() {
-        _state.update { it.copy(soundOff = !it.soundOff) }
+    private fun changeLayout(change: (MultiViewState) -> MultiViewState) {
+        val before = _state.value.layout
+        val after = change(before)
+        if (after === before) return
+        _state.update { it.copy(layout = after) }
         applyAudio()
     }
 
@@ -341,6 +347,7 @@ class MultiViewViewModel(
             rt.playingHeight = height
             player.play(LocalStreamProxy.tileStreamUrl(rt.login, height), lowLatency = lowLatency)
         }
+        applyAudio()
     }
 
     private fun targetHeight(): Int {
@@ -358,16 +365,28 @@ class MultiViewViewModel(
         }
     }
 
-    /** Only the active tile is unmuted, and only while the sound is on. */
+    /**
+     * Gives every tile's player the sound its tile asks for: an audible tile plays at its
+     * own volume, every other one is muted. Safe to repeat: the player keeps the setting
+     * across reloads and re-asserts it once its audio output exists (see VlcPlayer).
+     */
     private fun applyAudio() {
-        val s = _state.value
-        val players = synchronized(lock) { runtimes.values.mapNotNull { rt -> rt.player?.let { rt.id to it } } }
-        for ((id, player) in players) {
-            if (id == s.layout.activeId && !s.soundOff) {
-                player.setMuted(false)
-                player.setVolume(s.volume)
-            } else {
-                player.setMuted(true)
+        // One pass at a time, reading the layout inside it, so overlapping calls from the
+        // UI and the tile coroutines always end on the newest layout.
+        synchronized(audioLock) {
+            val layout = _state.value.layout
+            val players = synchronized(lock) {
+                runtimes.values.filterNot { it.closed }.mapNotNull { rt -> rt.player?.let { rt.id to it } }
+            }
+            for ((id, player) in players) {
+                val tile = layout.tiles.firstOrNull { it.id == id } ?: continue
+                if (layout.isAudible(id)) {
+                    // Volume first: it also lifts the mute, so there is no blip at the old level.
+                    player.setVolume(tile.volume)
+                    player.setMuted(false)
+                } else {
+                    player.setMuted(true)
+                }
             }
         }
     }
@@ -401,5 +420,8 @@ class MultiViewViewModel(
 
     private companion object {
         const val STALL_CHECK_MS = 2_000L
+
+        // The "Listen to" choice outlives one visit to the screen, but not the app.
+        @Volatile var rememberedListenAll = false
     }
 }

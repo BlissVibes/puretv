@@ -194,5 +194,5 @@ object MultiShortcuts {
     }
 
     /** The one-line hint under the grid, from the same table the keys use. */
-    const val HINT = "Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move the active channel"
+    const val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   Ctrl + Left / Right move the selected channel"
 }

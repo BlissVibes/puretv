@@ -18,7 +18,6 @@ import java.awt.event.MouseEvent
 import java.awt.event.MouseMotionAdapter
 import javax.swing.JPanel
 import javax.swing.SwingUtilities
-import kotlin.math.abs
 
 /**
  * SECTION 08.4 [CRITICAL] — bridges VLCJ's AWT-based video surface into
@@ -60,19 +59,13 @@ import kotlin.math.abs
  * @param onClick invoked when the video surface is clicked. The heavyweight surface
  *   swallows mouse clicks before Compose sees them, so multi-stream uses this to make
  *   a tile active.
- * @param onDragWindow invoked once when the pointer is dragged with the button held on the
- *   video surface (the mini player uses it to hand the press to the OS window move).
  */
-/** Pointer travel, in screen pixels, before a press on the video counts as a drag. */
-private const val DRAG_SLOP = 6
-
 @Composable
 fun VlcPlayerView(
     vlcPlayer: DesktopPlayer,
     modifier: Modifier = Modifier,
     onUserActivity: () -> Unit = {},
     onClick: (() -> Unit)? = null,
-    onDragWindow: (() -> Unit)? = null,
 ) {
     // Override removeNotify so the backend releases this surface BEFORE the native
     // peer (HWND) is destroyed. mpv binds its `wid` once and keeps rendering into
@@ -136,34 +129,6 @@ fun VlcPlayerView(
         }
         canvas.addMouseListener(clickListener)
         onDispose { canvas.removeMouseListener(clickListener) }
-    }
-
-    val currentDrag by rememberUpdatedState(onDragWindow)
-    DisposableEffect(canvas, onDragWindow != null) {
-        if (onDragWindow == null) return@DisposableEffect onDispose {}
-        var pressX = 0
-        var pressY = 0
-        var handedOff = false
-        val dragListener = object : MouseAdapter() {
-            override fun mousePressed(e: MouseEvent) {
-                pressX = e.xOnScreen
-                pressY = e.yOnScreen
-                handedOff = false
-            }
-
-            override fun mouseDragged(e: MouseEvent) {
-                if (handedOff) return
-                if (abs(e.xOnScreen - pressX) + abs(e.yOnScreen - pressY) <= DRAG_SLOP) return
-                handedOff = true
-                currentDrag?.invoke()
-            }
-        }
-        canvas.addMouseListener(dragListener)
-        canvas.addMouseMotionListener(dragListener)
-        onDispose {
-            canvas.removeMouseListener(dragListener)
-            canvas.removeMouseMotionListener(dragListener)
-        }
     }
 
     DisposableEffect(vlcPlayer, canvas) {

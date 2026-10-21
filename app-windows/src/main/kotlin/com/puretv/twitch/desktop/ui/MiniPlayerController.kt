@@ -1,15 +1,22 @@
 package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.desktop.data.AtomicFile
+import java.awt.Color
 import java.awt.Dimension
 import java.awt.Frame
 import java.awt.GraphicsConfiguration
+import java.awt.Graphics
 import java.awt.GraphicsEnvironment
 import java.awt.Toolkit
 import java.awt.Window
 import java.awt.event.ComponentAdapter
 import java.awt.event.ComponentEvent
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 import java.io.File
+import javax.swing.JPanel
+import javax.swing.JWindow
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** A rectangle in AWT screen units (the same units as window bounds and screen insets). */
@@ -189,12 +196,19 @@ class MiniPlayerController(
     private val store: MiniBoundsStore = MiniBoundsStore(),
     /** Called when the window gets maximized or snapped full while in the mini player. */
     private val onMaximized: () -> Unit = {},
+    /** Called when the video is double clicked. */
+    private val onVideoDoubleClick: () -> Unit = {},
 ) {
     private var active = false
     private var wasAlwaysOnTop = false
     private var previousMinimum: Dimension? = null
     private var last = MiniRect(0, 0, 0, 0)
     private var settling = false
+    private var glass: VideoGlass? = null
+    private var dragWindowX = 0
+    private var dragWindowY = 0
+    private var dragPointerX = 0
+    private var dragPointerY = 0
 
     private fun bounds() = MiniRect(window.x, window.y, window.width, window.height)
 
@@ -246,18 +260,37 @@ class MiniPlayerController(
         last = target
         window.addComponentListener(keepAspect)
         (window as? Frame)?.addWindowStateListener(watchMaximize)
+        glass = VideoGlass(window, this, onVideoDoubleClick).also { it.show() }
     }
 
     /** Leaves the mini window where it is on screen; the shell restores the old geometry. */
     fun exit() {
         if (!active) return
         active = false
+        glass?.dispose()
+        glass = null
         window.removeComponentListener(keepAspect)
         (window as? Frame)?.removeWindowStateListener(watchMaximize)
         if ((window as? Frame)?.extendedState?.and(Frame.MAXIMIZED_BOTH) == 0) store.save(bounds())
         window.isAlwaysOnTop = wasAlwaysOnTop
         window.minimumSize = previousMinimum
     }
+
+    /** A drag begins with the pointer at [pointerX], [pointerY] on screen. */
+    fun startDrag(pointerX: Int, pointerY: Int) {
+        dragWindowX = window.x
+        dragWindowY = window.y
+        dragPointerX = pointerX
+        dragPointerY = pointerY
+    }
+
+    /**
+     * The window follows the pointer, which is read in screen units: those are the same on
+     * every monitor and DPI, and unlike deltas inside the window they do not drift while the
+     * window moves under the pointer.
+     */
+    fun dragTo(pointerX: Int, pointerY: Int) =
+        window.setLocation(dragWindowX + pointerX - dragPointerX, dragWindowY + pointerY - dragPointerY)
 
     /**
      * After a drag: the window stays wherever it was dropped, on any monitor, and is only
@@ -284,5 +317,94 @@ class MiniPlayerController(
         val b = gc.bounds
         val i = Toolkit.getDefaultToolkit().getScreenInsets(gc)
         return MiniRect(b.x + i.left, b.y + i.top, b.width - i.left - i.right, b.height - i.top - i.bottom)
+    }
+}
+
+/**
+ * A see-through window laid over the mini player's video. The video is a native window
+ * (the player draws into its own child window) that takes the mouse before anything else
+ * sees it, so the video itself can neither be dragged nor clicked. This sits above it,
+ * nearly invisible but still hit by the mouse, and turns a press-drag into moving the mini
+ * window and a double click into [onDoubleClick]. A margin is left clear so the edges keep
+ * resizing, and the control strip is not covered.
+ */
+private class VideoGlass(
+    private val mini: Window,
+    private val controller: MiniPlayerController,
+    private val onDoubleClick: () -> Unit,
+) {
+    private val glass = JWindow(mini).apply {
+        focusableWindowState = false
+        background = Color(0, 0, 0, 1)
+        contentPane = object : JPanel() {
+            override fun paintComponent(g: Graphics) {
+                g.color = Color(0, 0, 0, 1)
+                g.fillRect(0, 0, width, height)
+            }
+        }.apply { isOpaque = false }
+        isAlwaysOnTop = true
+    }
+    private val doubleClick = DoubleClickDetector()
+    private var pressX = 0
+    private var pressY = 0
+    private var dragging = false
+
+    private val follow = object : ComponentAdapter() {
+        override fun componentMoved(e: ComponentEvent) = place()
+        override fun componentResized(e: ComponentEvent) = place()
+    }
+
+    private val mouse = object : MouseAdapter() {
+        override fun mousePressed(e: MouseEvent) {
+            pressX = e.xOnScreen
+            pressY = e.yOnScreen
+            dragging = false
+            controller.startDrag(pressX, pressY)
+        }
+
+        override fun mouseDragged(e: MouseEvent) {
+            if (!dragging && abs(e.xOnScreen - pressX) + abs(e.yOnScreen - pressY) <= DRAG_SLOP) return
+            dragging = true
+            controller.dragTo(e.xOnScreen, e.yOnScreen)
+        }
+
+        override fun mouseReleased(e: MouseEvent) {
+            if (dragging) controller.settle() else if (doubleClick.click(System.currentTimeMillis())) onDoubleClick()
+            dragging = false
+        }
+    }
+
+    init {
+        glass.addMouseListener(mouse)
+        glass.addMouseMotionListener(mouse)
+    }
+
+    /** Covers the video, minus the resize margin, and follows the mini window from here on. */
+    fun show() {
+        place()
+        glass.isVisible = true
+        mini.addComponentListener(follow)
+    }
+
+    fun dispose() {
+        mini.removeComponentListener(follow)
+        glass.dispose()
+    }
+
+    private fun place() {
+        glass.setBounds(
+            mini.x + EDGE,
+            mini.y + EDGE,
+            (mini.width - 2 * EDGE).coerceAtLeast(1),
+            (mini.height - MiniPlayerGeometry.STRIP_HEIGHT - EDGE).coerceAtLeast(1),
+        )
+    }
+
+    private companion object {
+        /** Margin left to the window edges, so they still resize. */
+        const val EDGE = 8
+
+        /** Pointer travel, in screen units, before a press counts as a drag. */
+        const val DRAG_SLOP = 4
     }
 }

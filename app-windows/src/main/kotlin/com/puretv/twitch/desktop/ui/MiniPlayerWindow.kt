@@ -110,11 +110,10 @@ fun MiniControlStrip(
 
 /**
  * Drags the whole window while the pointer is held on this element, and a double click on
- * it calls [onDoubleClick]. Windows moves the window itself (so it follows the pointer
- * across monitors and DPI), taking over once the pointer travels past the touch slop so a
- * plain click never stalls. Without the OS move the window follows the screen distance the
- * pointer travelled by hand (read from the OS, because the window moving under the pointer
- * would make Compose's own deltas drift). Presses a button already took are left alone.
+ * it calls [onDoubleClick]. The window follows the screen position of the pointer (read
+ * from the OS, because the window moving under the pointer would make Compose's own deltas
+ * drift) once it travels past the touch slop, so a plain click never moves it. Presses a
+ * button already took are left alone.
  */
 fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit): Modifier = composed {
     val doubleClick = remember { DoubleClickDetector() }
@@ -122,30 +121,23 @@ fun Modifier.miniWindowDrag(shell: AppShellController, onDoubleClick: () -> Unit
     pointerInput(shell) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = true)
-            println("DBG down")
             if (doubleClick.click(System.currentTimeMillis())) latestDoubleClick()
             val start = MouseInfo.getPointerInfo().location
-            val x0 = shell.windowX
-            val y0 = shell.windowY
+            shell.startMiniDrag(start.x, start.y)
             var dragging = false
             while (true) {
                 val event = awaitPointerEvent()
                 if (event.changes.none { it.pressed }) break
-                if (!dragging) {
-                    val moved = event.changes.first().position - down.position
-                    if (moved.getDistance() <= viewConfiguration.touchSlop) continue
+                if (!dragging && (event.changes.first().position - down.position).getDistance() > viewConfiguration.touchSlop) {
                     dragging = true
-                    println("DBG slop exceeded")
-                    event.changes.forEach { it.consume() }
-                    val ok = shell.dragMiniWindow()
-                    println("DBG native=$ok")
-                    if (ok) break
                 }
-                val now = MouseInfo.getPointerInfo().location
-                shell.moveWindowTo(x0 + now.x - start.x, y0 + now.y - start.y)
-                event.changes.forEach { it.consume() }
+                if (dragging) {
+                    val now = MouseInfo.getPointerInfo().location
+                    shell.dragMiniTo(now.x, now.y)
+                    event.changes.forEach { it.consume() }
+                }
             }
-            if (dragging) shell.settleMini()
+            if (dragging) shell.endMiniDrag()
         }
     }
 }

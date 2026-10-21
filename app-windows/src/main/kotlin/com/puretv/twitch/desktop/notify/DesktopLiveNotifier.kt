@@ -46,8 +46,16 @@ class DesktopLiveNotifier(
     /** More channels on screen at once (multi-stream tiles, lower case); never toasted either. */
     @Volatile var alsoWatching: Set<String> = emptySet()
 
+    // The stream open in each window other than the main one (window id to lower case login).
+    private val watchingInWindows = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
+    /** [login] is open in window [windowId] (null when it no longer is); never toasted while it is. */
+    fun watchingIn(windowId: Int, login: String?) {
+        if (login == null) watchingInWindows.remove(windowId) else watchingInWindows[windowId] = login.lowercase()
+    }
+
     private fun notWatched(streams: List<StreamInfo>): List<StreamInfo> {
-        val also = alsoWatching
+        val also = alsoWatching + watchingInWindows.values
         return if (also.isEmpty()) streams else streams.filterNot { it.userLogin.lowercase() in also }
     }
 

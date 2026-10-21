@@ -51,11 +51,14 @@ import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import androidx.compose.runtime.LaunchedEffect
 import org.koin.core.Koin
 
 @Composable
-fun SearchContent(koin: Koin, onOpenChannel: (String) -> Unit) {
+fun SearchContent(koin: Koin, onOpenChannel: (String) -> Unit, initialQuery: String? = null) {
     val viewModel = rememberDesktopViewModel { koin.get<SearchViewModel>() }
+    // A window opened on a search starts with its words already typed.
+    LaunchedEffect(initialQuery) { initialQuery?.let { viewModel.onQueryChange(it) } }
     val state by viewModel.state.collectAsState()
     val c = PureTvTheme.colors
 

@@ -33,7 +33,15 @@ import com.puretv.twitch.desktop.platform.WindowsStartup
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.VlcEngine
+import androidx.compose.runtime.DisposableEffect
 import com.puretv.twitch.desktop.ui.App
+import com.puretv.twitch.desktop.ui.AppWindows
+import com.puretv.twitch.desktop.ui.CloseAction
+import com.puretv.twitch.desktop.ui.PRIMARY_WINDOW_TITLE
+import com.puretv.twitch.desktop.ui.SecondaryWindows
+import com.puretv.twitch.desktop.ui.WindowDestination
+import com.puretv.twitch.desktop.ui.WindowRegistry
+import com.puretv.twitch.desktop.ui.openInNewWindow
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.NavigationRequests
 import com.puretv.twitch.desktop.ui.PoppedStreamWindows
@@ -62,7 +70,7 @@ fun main(args: Array<String>) {
     // of the tray) and exits.
     val guard = SingleInstance(
         lockFile = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/instance.lock"),
-        focusExistingWindow = { SingleInstance.focusWindowTitled(WINDOW_TITLE) },
+        focusExistingWindow = { SingleInstance.focusWindowTitled(PRIMARY_WINDOW_TITLE) },
     )
     if (!guard.acquire()) exitProcess(0)
     instanceGuard = guard
@@ -72,6 +80,8 @@ fun main(args: Array<String>) {
     startKoin(koinApp)
 
     val navRequests = koinApp.koin.get<NavigationRequests>()
+    // Also installs the registry that openInNewWindow() uses.
+    val registry = koinApp.koin.get<WindowRegistry>()
     guard.listenForActivation { navRequests.requestShow() }
 
     val settingsStore = koinApp.koin.get<DesktopSettingsStore>()
@@ -157,24 +167,44 @@ fun main(args: Array<String>) {
         // returns after Compose has disposed, and a launch arriving in between would
         // have its show request answered (deleted) by a copy that is about to exit.
         val quit: () -> Unit = {
-            // Players are stopped and released before the engine goes (see below).
+            // Players are stopped and released before the engine goes (see below); the
+            // players of the other windows go as their windows leave composition.
             runCatching { koinApp.koin.get<MultiSession>().end() }
             guard.stopListening()
             exitApplication()
         }
         val closeWindow: () -> Unit = {
-            if (windowVisible && settings.closeToTray && isTraySupported) {
-                windowVisible = false
-            } else {
-                quit()
+            // Hiding to the tray hides every window; each stops what it plays.
+            when (registry.closeAction(WindowRegistry.PRIMARY_ID, windowVisible, settings.closeToTray, isTraySupported)) {
+                CloseAction.HIDE_ALL -> windowVisible = false
+                else -> quit()
             }
         }
+        val windows by registry.windows.collectAsState()
+        val mainTitle = windows.firstOrNull()?.title?.ifBlank { null } ?: PRIMARY_WINDOW_TITLE
 
         LaunchedEffect(Unit) {
             navRequests.showWindow.collect {
                 windowVisible = true
                 windowState.isMinimized = false
                 frontRequests++
+            }
+        }
+        // A click on a go-live notification opens that stream in the window used last.
+        LaunchedEffect(Unit) {
+            navRequests.openStream.collect { login ->
+                // The window may not have started listening yet (a start in the tray).
+                repeat(50) {
+                    if (registry.navigate(WindowDestination.Stream(login))) return@collect
+                    delay(100)
+                }
+            }
+        }
+        // A popped-out tile asked for the multi-stream grid (chat, add a channel, dock back).
+        LaunchedEffect(Unit) {
+            koinApp.koin.get<MultiSession>().openGrid.collect {
+                registry.openMultiGrid()
+                navRequests.requestShow()
             }
         }
 
@@ -195,6 +225,7 @@ fun main(args: Array<String>) {
                 },
                 menu = {
                     Item("Open PureTV", onClick = { navRequests.requestShow() })
+                    Item("New window", onClick = { navRequests.requestShow(); openInNewWindow(WindowDestination.Home) })
                     CheckboxItem(
                         "Go-live alerts",
                         checked = settings.liveNotifications,
@@ -210,10 +241,14 @@ fun main(args: Array<String>) {
             onCloseRequest = closeWindow,
             visible = windowVisible,
             state = windowState,
-            title = WINDOW_TITLE,
+            title = mainTitle,
             icon = appIcon,
             undecorated = true,
         ) {
+            DisposableEffect(window) {
+                AppWindows.add(window)
+                onDispose { AppWindows.remove(window) }
+            }
             // Re-enable Windows-native window management (Aero Snap, Snap Layouts,
             // Win+Arrow, edge-resize) on our undecorated frame. Runs once the
             // window is first shown (a start in the tray waits until then, since a
@@ -253,6 +288,15 @@ fun main(args: Array<String>) {
             )
         }
 
+        // Windows opened with "New window": whole PureTV windows with their own screens and player.
+        SecondaryWindows(
+            koin = koinApp.koin,
+            visible = windowVisible,
+            frontRequests = frontRequests,
+            icon = appIcon,
+            onQuit = quit,
+        )
+
         // Streams popped out of multi-stream live in windows of their own, beside the main one.
         PoppedStreamWindows(
             koin = koinApp.koin,
@@ -283,8 +327,7 @@ fun main(args: Array<String>) {
     exitProcess(0)
 }
 
-/** The main window's title; a second launch finds the running copy by it. */
-private const val WINDOW_TITLE = "PureTV for Twitch"
+private const val WINDOW_TITLE = PRIMARY_WINDOW_TITLE
 
 /**
  * Held for the life of the process. The lock lives in a file channel, and an

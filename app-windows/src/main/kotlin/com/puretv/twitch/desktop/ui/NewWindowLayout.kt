@@ -89,6 +89,9 @@ object AppWindows {
         windows.remove(window)
     }
 
+    /** The PureTV windows (main and secondary) that exist now. */
+    fun all(): List<Window> = windows.toList()
+
     /**
      * True when a key pressed now is for [mine], a PureTV window. With no window to compare
      * ([mine] null) it only stands down for a popped-out window, as before there were many.

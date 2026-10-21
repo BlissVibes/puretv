@@ -45,6 +45,7 @@ import com.puretv.twitch.desktop.ui.LoginViewModel
 import com.puretv.twitch.desktop.ui.MultiSession
 import com.puretv.twitch.desktop.ui.MultiViewViewModel
 import com.puretv.twitch.desktop.ui.SearchViewModel
+import com.puretv.twitch.desktop.ui.WindowRegistry
 import com.puretv.twitch.desktop.ui.SettingsViewModel
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
 import com.puretv.twitch.desktop.ui.StreamViewModel
@@ -206,6 +207,12 @@ val desktopModule = module {
     single {
         val koin = getKoin()
         MultiSession(create = { login -> koin.get<MultiViewViewModel> { parametersOf(login) } })
+    }
+    // Every PureTV window and the limits between them. Tiles count toward the player cap.
+    single {
+        val koin = getKoin()
+        WindowRegistry(tiles = { koin.get<MultiSession>().current.value?.state?.value?.layout?.tiles?.size ?: 0 })
+            .also { WindowRegistry.instance = it }
     }
     factory { (channelLogin: String) -> ChannelViewModel(channelLogin, get(), get(), get()) }
     factory { (channelLogin: String) -> ChannelStatsViewModel(channelLogin, get(), get()) }

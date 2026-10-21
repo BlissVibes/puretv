@@ -31,6 +31,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
@@ -105,7 +106,14 @@ import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import com.puretv.twitch.desktop.ui.theme.ShapeIntensity
 import com.puretv.twitch.desktop.ui.theme.ThemeVariant
+import com.puretv.twitch.desktop.player.WindowPlayback
+import java.awt.Frame
+import java.awt.KeyEventDispatcher
+import androidx.compose.ui.input.pointer.isCtrlPressed
+import java.awt.KeyboardFocusManager
 import java.awt.MouseInfo
+import java.awt.event.KeyEvent
+import javax.swing.SwingUtilities
 import java.awt.Window as AwtWindow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.drop
@@ -157,7 +165,15 @@ fun App(
     windowVisible: Boolean = true,
     // Counts requests to bring the window forward (the tray's Open PureTV, a second launch).
     frontRequests: Int = 0,
+    // Which window this is (see WindowRegistry). The defaults are the main window.
+    windowId: Int = WindowRegistry.PRIMARY_ID,
+    slot: Int = 0,
+    start: WindowDestination = WindowDestination.Home,
+    // The player of a window other than the main one; null uses the app-wide player.
+    playback: WindowPlayback? = null,
 ) {
+    val isPrimary = windowId == WindowRegistry.PRIMARY_ID
+    val registry = remember { koin.get<WindowRegistry>() }
     // coil3's setSingletonImageLoaderFactory is itself @Composable and internally
     // memoizes the singleton, so calling it here in the composable body (idempotent
     // factory swap) is the intended usage; it can't be hoisted into remember{}.
@@ -186,19 +202,33 @@ fun App(
     val updateManager = remember { koin.get<UpdateManager>() }
     val updateState by updateManager.state.collectAsState()
     var updateDismissed by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { updateManager.checkForUpdates() }
+    LaunchedEffect(Unit) { if (isPrimary) updateManager.checkForUpdates() }
 
     // The one-time tray offer (closing still quits by default): only to someone with
     // alerts on for at least one channel, since that is who loses alerts by closing the window.
-    val showTrayHint = isTraySupported && settings.liveNotifications && settings.notifyChannels.isNotEmpty() &&
+    val showTrayHint = isPrimary && isTraySupported && settings.liveNotifications && settings.notifyChannels.isNotEmpty() &&
         !settings.closeToTray && !settings.trayHintShown
 
     // The Windows animation-effects switch decides whether things move. Read at start and again
     // whenever the window regains focus, which is when someone who just flipped it comes back.
     val windowFocused = LocalWindowInfo.current.isWindowFocused
-    LaunchedEffect(windowFocused) { if (windowFocused) PureTvMotion.reduced = !SystemAnimations.enabled() }
+    LaunchedEffect(windowFocused) {
+        if (windowFocused) {
+            PureTvMotion.reduced = !SystemAnimations.enabled()
+            registry.focused(windowId)
+        }
+    }
 
-    var route by remember { mutableStateOf<Route>(Route.Top) }
+    val startScreen = remember { start.toStartScreen() }
+    var route by remember { mutableStateOf(startScreen.route) }
+    // Text for the search box when a window opens on a search (see WindowDestination.Search).
+    var searchSeed by remember { mutableStateOf(startScreen.searchQuery) }
+    val windowNotice by registry.notice.collectAsState()
+    LaunchedEffect(windowNotice) {
+        val shown = windowNotice ?: return@LaunchedEffect
+        delay(NOTICE_MS)
+        registry.clearNotice(shown)
+    }
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
         val streamPrewarm = remember {
@@ -208,13 +238,15 @@ fun App(
         }
         CompositionLocalProvider(
             LocalAppShell provides shell,
+            LocalAwtWindow provides awtWindow,
+            LocalWindowPlayback provides playback,
             LocalEmoteAnimation provides settings.animateEmotes,
             LocalEmoteFrameCache provides emoteFrameCache,
             LocalStreamPrewarm provides streamPrewarm,
             // Decoration that loops (the LIVE pulse) stops while a video is playing.
             LocalQuietMotion provides (route is Route.Stream || route is Route.Multi || route is Route.Vod),
         ) {
-            var destination by remember { mutableStateOf(Destination.HOME) }
+            var destination by remember { mutableStateOf(startScreen.tab) }
             var railExpanded by remember { mutableStateOf(true) }
             val c = PureTvTheme.colors
             val shapes = PureTvTheme.shapes
@@ -222,14 +254,68 @@ fun App(
             // points that are not a row (rail, search, following, notifications) clear it.
             val flipOrigin = remember { koin.get<FlipOrigin>() }
 
-            // A click on a go-live notification opens that stream.
-            LaunchedEffect(Unit) {
-                koin.get<NavigationRequests>().openStream.collect { login ->
-                    shell.exitImmersive()
-                    flipOrigin.record(emptyList()) // opened from a notification, not from a row
-                    route = Route.Stream(login)
-                }
+            // What the rest of the app can ask of this window: a go-live toast opening a stream, a
+            // card opening a screen, coming forward, showing the multi-stream grid.
+            val showTab: (Destination) -> Unit = { destination = it }
+            // The OS title names the screen, so Alt+Tab tells the windows apart.
+            LaunchedEffect(route, destination) { registry.setTitle(windowId, windowTitle(slot, screenName(route, destination))) }
+            // Ctrl held while a card is clicked opens it in a new window instead of here.
+            val windowInfo = LocalWindowInfo.current
+            fun ctrlHeld() = windowInfo.keyboardModifiers.isCtrlPressed
+            fun openChannel(login: String) {
+                if (ctrlHeld()) openInNewWindow(WindowDestination.Channel(login)) else route = Route.Channel(login)
             }
+            fun openCategory(gameId: String, gameName: String) {
+                if (ctrlHeld()) openInNewWindow(WindowDestination.Category(gameId, gameName)) else route = Route.Category(gameId, gameName)
+            }
+            DisposableEffect(registry, windowId) {
+                fun front() {
+                    (awtWindow as? Frame)?.let { f ->
+                        if (f.extendedState and Frame.ICONIFIED != 0) f.extendedState = f.extendedState and Frame.ICONIFIED.inv()
+                    }
+                    awtWindow.toFront()
+                    awtWindow.requestFocus()
+                }
+                val host = object : WindowHost {
+                    override fun navigate(destination: WindowDestination) = onUiThread {
+                        val where = destination
+                        val target = where.toStartScreen()
+                        shell.exitImmersive()
+                        flipOrigin.record(emptyList()) // opened from a notification or menu, not from a row
+                        route = target.route
+                        // A screen opened on top of a tab keeps the tab; a tab destination switches to it.
+                        if (where is WindowDestination.Home || where is WindowDestination.Search || where is WindowDestination.Category) {
+                            showTab(target.tab)
+                        }
+                        if (where is WindowDestination.Search) searchSeed = target.searchQuery
+                    }
+                    override fun bringToFront() = onUiThread { front() }
+                    override fun openMultiGrid() = onUiThread {
+                        if (!registry.claimMultiGrid(windowId)) return@onUiThread
+                        shell.exitImmersive()
+                        if (route !is Route.Multi) route = Route.Multi("")
+                        front()
+                    }
+                }
+                registry.attach(windowId, host)
+                onDispose { registry.detach(windowId, host) }
+            }
+            // Ctrl+N opens another window. Only the window that has the keyboard answers.
+            DisposableEffect(awtWindow) {
+                val dispatcher = KeyEventDispatcher { e ->
+                    if (e.id != KeyEvent.KEY_PRESSED || e.keyCode != KeyEvent.VK_N || !e.isControlDown || e.isAltDown || e.isShiftDown) {
+                        return@KeyEventDispatcher false
+                    }
+                    if (!AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false
+                    openInNewWindow(WindowDestination.Home)
+                    true
+                }
+                val kfm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+                kfm.addKeyEventDispatcher(dispatcher)
+                onDispose { kfm.removeKeyEventDispatcher(dispatcher) }
+            }
+            // Closing a window other than the main one leaves no mini player or fullscreen behind.
+            DisposableEffect(shell) { onDispose { if (!isPrimary) shell.exitImmersive() } }
             // Go-live toasts skip the channel that is open on screen. Multi-stream tells the
             // notifier about its own tiles (and clears them when it closes).
             LaunchedEffect(route, windowVisible) {
@@ -241,21 +327,39 @@ fun App(
             val multiSession = remember { koin.get<MultiSession>() }
             val sleep = multiSession.sleep
             val multiRunning by multiSession.current.collectAsState()
-            // Streams in their own windows are being watched too, wherever the main window is.
-            val watching = route is Route.Stream || route is Route.Multi || multiRunning != null
-            LaunchedEffect(watching) { if (!watching) sleep.set(0) }
-            // This window's place on the desktop, for the windows popped out of multi-stream to open elsewhere.
-            LaunchedEffect(multiSession, awtWindow) {
-                multiSession.mainBounds = { MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height) }
+            // Streams in their own windows are being watched too, wherever the main window is, and so
+            // is a stream in any other PureTV window: the timer stays while any of them watches.
+            LaunchedEffect(route) {
+                registry.setActivity(
+                    windowId,
+                    playing = route is Route.Stream || route is Route.Vod,
+                    watching = route is Route.Stream || route is Route.Multi,
+                )
             }
-            // A popped-out window asked for the multi-stream screen (chat, add a channel, dock back).
-            LaunchedEffect(multiSession) {
-                multiSession.openGrid.collect {
-                    shell.exitImmersive()
-                    if (route !is Route.Multi) route = Route.Multi("")
-                    koin.get<NavigationRequests>().requestShow()
+            val allWindows by registry.windows.collectAsState()
+            val watching = allWindows.any { it.watching } || multiRunning != null
+            LaunchedEffect(watching) { if (!watching) sleep.set(0) }
+            // The timer ran out: whatever this window plays stops, wherever the timer was started.
+            val sleepExpired = sleep.ui.expired
+            LaunchedEffect(sleepExpired) {
+                if (!sleepExpired) return@LaunchedEffect
+                shell.exitImmersive()
+                when (val r = route) {
+                    is Route.Stream -> route = Route.Channel(r.login)
+                    is Route.Vod -> route = Route.Channel(r.launch.channelLogin)
+                    is Route.Multi -> {
+                        multiSession.end()
+                        route = if (r.login.isBlank()) Route.Top else Route.Channel(r.login)
+                    }
+                    else -> Unit
                 }
             }
+            // This window's place on the desktop, for the windows popped out of multi-stream to open elsewhere.
+            LaunchedEffect(multiSession, awtWindow) {
+                if (isPrimary) multiSession.mainBounds = { MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height) }
+            }
+            // Multi-stream is one session for the app: only one window shows its grid at a time.
+            LaunchedEffect(route is Route.Multi) { if (route !is Route.Multi) registry.releaseMultiGrid(windowId) }
             // The mini player is only ever a stream's: any other screen, and any request to bring
             // PureTV forward, puts the normal window back, so it can never be left stuck small.
             LaunchedEffect(route) { if (route !is Route.Stream) shell.exitMini() }
@@ -264,7 +368,7 @@ fun App(
             // leaving the stream (or VOD) route disposes its player and chat.
             LaunchedEffect(windowVisible) {
                 // Streams in their own windows stop too: the session ends and its windows close.
-                if (!windowVisible) multiSession.end()
+                if (!windowVisible && isPrimary) multiSession.end()
                 if (!windowVisible && (route is Route.Stream || route is Route.Multi || route is Route.Vod)) {
                     shell.exitImmersive()
                     route = Route.Top
@@ -278,7 +382,13 @@ fun App(
             Surface(modifier = Modifier.fillMaxSize(), color = c.surfaceLowest) {
                 Column(modifier = Modifier.fillMaxSize()) {
                     if (shell.playerMode != PlayerMode.FULLSCREEN && shell.playerMode != PlayerMode.MINI) {
-                        CustomTitleBar(shell = shell, onClose = onClose, awtWindow = awtWindow)
+                        CustomTitleBar(
+                            shell = shell,
+                            onClose = onClose,
+                            awtWindow = awtWindow,
+                            notice = windowNotice,
+                            onNewWindow = { openInNewWindow(WindowDestination.Home) },
+                        )
                         UpdateBanner(
                             state = if (updateDismissed) UpdateState.Idle else updateState,
                             onUpdate = {
@@ -343,7 +453,7 @@ fun App(
                                 },
                                 onOpenChannel = { login ->
                                     flipOrigin.record(emptyList()) // the rail has no row to flip through
-                                    route = Route.Channel(login)
+                                    openChannel(login)
                                 },
                                 onResumeVod = { launch -> route = Route.Vod(launch) },
                                 onSignIn = {
@@ -387,7 +497,13 @@ fun App(
                                     onFlip = { login -> route = Route.Stream(login) },
                                     onOpenMultiView = {
                                         shell.exitImmersive()
-                                        route = Route.Multi(r.login)
+                                        if (registry.claimMultiGrid(windowId)) {
+                                            route = Route.Multi(r.login)
+                                        } else {
+                                            // Multi-stream is one session: it is open in another window.
+                                            registry.postNotice("Multi-stream is open in another window.")
+                                            registry.showMultiGridHolder(except = windowId)
+                                        }
                                     },
                                     sleep = sleep,
                                 )
@@ -421,16 +537,16 @@ fun App(
                                         koin = koin,
                                         gameId = r.gameId,
                                         gameName = r.gameName,
-                                        onOpenChannel = { login -> route = Route.Channel(login) },
+                                        onOpenChannel = { login -> openChannel(login) },
                                         onBack = { route = Route.Top },
                                     )
                                 }
                                 Route.Top -> RouteTransition(routeKey, direction) { when (destination) {
                                     Destination.HOME -> HomeContent(
                                         koin = koin,
-                                        onOpenChannel = { login -> route = Route.Channel(login) },
+                                        onOpenChannel = { login -> openChannel(login) },
                                         onResumeVod = { launch -> route = Route.Vod(launch) },
-                                        onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) },
+                                        onOpenCategory = { gameId, gameName -> openCategory(gameId, gameName) },
                                         onOpenBrowse = { destination = Destination.BROWSE },
                                         onSignIn = { destination = Destination.ACCOUNT },
                                     )
@@ -438,17 +554,18 @@ fun App(
                                         koin = koin,
                                         onOpenChannel = { login ->
                                             flipOrigin.record(emptyList()) // flips use the live follows
-                                            route = Route.Channel(login)
+                                            openChannel(login)
                                         },
                                         onSignIn = { destination = Destination.ACCOUNT },
                                     )
-                                    Destination.BROWSE -> BrowseContent(koin = koin, onOpenCategory = { gameId, gameName -> route = Route.Category(gameId, gameName) })
+                                    Destination.BROWSE -> BrowseContent(koin = koin, onOpenCategory = { gameId, gameName -> openCategory(gameId, gameName) })
                                     Destination.SEARCH -> SearchContent(
                                         koin = koin,
                                         onOpenChannel = { login ->
                                             flipOrigin.record(emptyList()) // search results are not a row to flip through
-                                            route = Route.Channel(login)
+                                            openChannel(login)
                                         },
+                                        initialQuery = searchSeed,
                                     )
                                     Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
@@ -462,10 +579,21 @@ fun App(
     }
 }
 
+/** Runs [block] on the UI thread: windows are asked to move from threads of all kinds. */
+private fun onUiThread(block: () -> Unit) {
+    if (SwingUtilities.isEventDispatchThread()) block() else SwingUtilities.invokeLater(block)
+}
+
 // ── Custom title bar ───────────────────────────────────────────────────────────
 
 @Composable
-private fun CustomTitleBar(shell: AppShellController, onClose: () -> Unit, awtWindow: AwtWindow) {
+private fun CustomTitleBar(
+    shell: AppShellController,
+    onClose: () -> Unit,
+    awtWindow: AwtWindow,
+    notice: String?,
+    onNewWindow: () -> Unit,
+) {
     val c = PureTvTheme.colors
 
     Row(
@@ -578,9 +706,20 @@ private fun CustomTitleBar(shell: AppShellController, onClose: () -> Unit, awtWi
                 color = c.onSurfaceVariant,
                 style = MaterialTheme.typography.labelMedium,
             )
+            if (notice != null) {
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    notice,
+                    color = c.primary,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
 
         // Window control buttons, outside the drag zone so clicks are not swallowed
+        WinButton(onClick = onNewWindow) { NewWindowIcon() }
         WinButton(onClick = { shell.minimize() }) { MinimizeIcon() }
         WinButton(onClick = { shell.toggleMaximize() }) { MaximizeIcon(shell.isMaximized) }
         WinButton(onClick = onClose, isClose = true) {
@@ -631,6 +770,9 @@ private fun AppMark(
  */
 private const val DRAG_THRESHOLD = 4
 
+/** How long a message in the title bar (why a window did not open) stays. */
+private const val NOTICE_MS = 5_000L
+
 /**
  * Snaps the window when a title-bar drag is released at a screen edge. Requires
  * real movement from the [pressX]/[pressY] button-down point (screen coords) so a
@@ -666,6 +808,19 @@ private fun WinButton(onClick: () -> Unit, isClose: Boolean = false, content: @C
             ),
         contentAlignment = Alignment.Center,
     ) { content() }
+}
+
+/** A plus: open another PureTV window (Ctrl+N). */
+@Composable
+private fun NewWindowIcon() {
+    val color = PureTvTheme.colors.onSurfaceVariant
+    Box(
+        Modifier.size(14.dp).drawBehind {
+            val w = 1.5.dp.toPx()
+            drawLine(color, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), strokeWidth = w)
+            drawLine(color, Offset(size.width / 2, 0f), Offset(size.width / 2, size.height), strokeWidth = w)
+        },
+    )
 }
 
 @Composable

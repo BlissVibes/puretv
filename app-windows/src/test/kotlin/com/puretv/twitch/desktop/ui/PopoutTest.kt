@@ -202,7 +202,11 @@ class MultiStreamSessionTest {
     }
 
     private fun session(): MultiStreamSession<FakeHost> =
-        MultiStreamSession(create = { FakeHost(it) }, boundsStore = PopoutBoundsStore(File.createTempFile("popout-bounds", ".txt").also { it.delete() }))
+        MultiStreamSession(
+            create = { FakeHost(it) },
+            boundsStore = PopoutBoundsStore(File.createTempFile("popout-bounds", ".txt").also { it.delete() }),
+            screens = { listOf(MiniRect(0, 0, 2560, 1400)) },
+        )
 
     @Test fun openingTwiceKeepsOneSessionAndAddsTheChannel() {
         val s = session()

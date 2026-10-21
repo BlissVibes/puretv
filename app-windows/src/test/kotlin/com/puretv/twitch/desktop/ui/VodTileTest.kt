@@ -374,6 +374,7 @@ class VodSessionTest {
         create = { FakeHost(TileSource.Live(it)) },
         boundsStore = PopoutBoundsStore(File.createTempFile("popout-bounds", ".txt").also { it.delete() }),
         createVod = { FakeHost(it) },
+        screens = { listOf(MiniRect(0, 0, 2560, 1400)) },
     )
 
     @Test fun aVideoStartsASessionAndJoinsARunningOne() {

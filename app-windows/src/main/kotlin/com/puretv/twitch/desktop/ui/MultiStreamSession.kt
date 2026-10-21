@@ -59,6 +59,8 @@ class MultiStreamSession<T : MultiTileHost>(
     private val createVod: ((TileSource.Vod) -> T)? = null,
     // Asked before a session starts on a past video: false when PureTV is already playing all it allows.
     private val admit: () -> Boolean = { true },
+    // The usable area of every monitor. A supplier so a machine without a screen (a CI runner) can answer.
+    private val screens: () -> List<MiniRect> = PopoutLayout::screenWorkAreas,
 ) {
     private val _current = MutableStateFlow<T?>(null)
 
@@ -154,7 +156,7 @@ class MultiStreamSession<T : MultiTileHost>(
         // Only the tiles still in the grid get a new window; the ones already out stay where they are.
         val tiles = running.state.value.layout.docked
         if (tiles.isEmpty()) return
-        val works = PopoutLayout.screenWorkAreas()
+        val works = screens()
         val main = mainBounds()
         val open = PoppedWindows.all.filter { it.isShowing }.map { MiniRect(it.x, it.y, it.width, it.height) }
         val places = PopoutLayout.assign(tiles.size, works, main?.let { PopoutLayout.monitorOf(it, works) }, open)
@@ -172,7 +174,7 @@ class MultiStreamSession<T : MultiTileHost>(
 
     /** Where the window for tile [id] ([login]) opens: what "Pop out all" planned, else where it was left, else a fresh spot. */
     fun placementFor(id: Int, login: String, openCount: Int): MiniRect? {
-        val works = PopoutLayout.screenWorkAreas()
+        val works = screens()
         planned.remove(id)?.let { return it }
         val main = mainBounds()
         val fresh = PopoutLayout.placeOne(works, main?.let { PopoutLayout.monitorOf(it, works) }, openCount) ?: return null

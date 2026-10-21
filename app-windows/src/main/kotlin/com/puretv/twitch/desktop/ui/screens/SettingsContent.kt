@@ -135,8 +135,6 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
         NotificationsPanel(
             liveAlerts = state.settings.liveNotifications,
             onLiveAlerts = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
-            closeToTray = state.settings.closeToTray,
-            onCloseToTray = { on -> settingsStore.updateSettings { it.copy(closeToTray = on, trayHintShown = true) } },
             startWithWindows = state.settings.startWithWindows,
             onStartWithWindows = { on ->
                 if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
@@ -429,8 +427,6 @@ private fun ChatPanel(
 private fun NotificationsPanel(
     liveAlerts: Boolean,
     onLiveAlerts: (Boolean) -> Unit,
-    closeToTray: Boolean,
-    onCloseToTray: (Boolean) -> Unit,
     startWithWindows: Boolean,
     onStartWithWindows: (Boolean) -> Unit,
     showNote: Boolean,
@@ -467,16 +463,9 @@ private fun NotificationsPanel(
             }
             SettingsRow(
                 label = "Go-live alerts",
-                description = "Tell me when the channels I picked go live. Open a channel and tap the bell to pick it. Checks about every 90 seconds while PureTV is running.",
+                description = "Tell me when the channels I picked go live. Open a channel and tap the bell to pick it. Alerts appear from the tray icon, and minimizing PureTV keeps it in the tray. Checks about every 90 seconds while PureTV is running.",
             ) {
                 ExpressiveSwitch(checked = liveAlerts, onCheckedChange = onLiveAlerts)
-            }
-            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
-            SettingsRow(
-                label = "Keep running in the tray",
-                description = "Closing the window keeps PureTV in the tray, so alerts still arrive. Quit from the tray icon.",
-            ) {
-                ExpressiveSwitch(checked = closeToTray, onCheckedChange = onCloseToTray)
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(

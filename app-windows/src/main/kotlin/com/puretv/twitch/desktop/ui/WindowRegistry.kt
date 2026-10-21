@@ -55,6 +55,15 @@ enum class CloseAction {
     QUIT,
 }
 
+/** What minimizing a window means, see [WindowRegistry.minimizeAction]. */
+enum class MinimizeAction {
+    /** The ordinary minimize to the taskbar. */
+    MINIMIZE_ONLY,
+
+    /** Every window hides in the tray and anything playing stops. */
+    HIDE_ALL,
+}
+
 /**
  * Every PureTV window of this run and the rules between them: how many may be open, how
  * many players may run at once, which window was used last, what closing each one means,
@@ -157,14 +166,23 @@ class WindowRegistry(
 
     /**
      * What closing window [id] (its X button, Alt+F4) does. A secondary window just closes.
-     * The main window quits, unless PureTV is [visible], the viewer chose to keep it in the
-     * tray ([closeToTray]) and there is a tray: then everything hides. A close that arrives
-     * while already hidden (Windows signing out, an installer) always quits.
+     * The main window always quits, with or without a tray, visible or hidden (a close that
+     * arrives while hidden is Windows signing out or an installer). The tray is for minimizing,
+     * see [minimizeAction].
      */
-    fun closeAction(id: Int, visible: Boolean, closeToTray: Boolean, trayAvailable: Boolean): CloseAction {
+    fun closeAction(id: Int): CloseAction {
         val entry = _windows.value.firstOrNull { it.id == id } ?: return CloseAction.CLOSE_WINDOW
-        if (entry.kind == WindowKind.SECONDARY) return CloseAction.CLOSE_WINDOW
-        return if (visible && closeToTray && trayAvailable) CloseAction.HIDE_ALL else CloseAction.QUIT
+        return if (entry.kind == WindowKind.SECONDARY) CloseAction.CLOSE_WINDOW else CloseAction.QUIT
+    }
+
+    /**
+     * What minimizing window [id] does. Minimizing the main window sends PureTV to the tray
+     * (everything hides) when there is a tray and it is [visible]; every other case is the
+     * ordinary taskbar minimize.
+     */
+    fun minimizeAction(id: Int, visible: Boolean, trayAvailable: Boolean): MinimizeAction {
+        val entry = _windows.value.firstOrNull { it.id == id } ?: return MinimizeAction.MINIMIZE_ONLY
+        return if (entry.kind == WindowKind.PRIMARY && visible && trayAvailable) MinimizeAction.HIDE_ALL else MinimizeAction.MINIMIZE_ONLY
     }
 
     // ---- Focus ------------------------------------------------------------------

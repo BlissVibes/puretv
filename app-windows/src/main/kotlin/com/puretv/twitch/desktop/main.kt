@@ -7,8 +7,14 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Tray
+import androidx.compose.ui.window.WindowPosition
+import com.puretv.twitch.desktop.ui.MinimizeAction
+import com.puretv.twitch.desktop.ui.WindowBoundsGate
+import java.awt.event.ComponentAdapter
+import java.awt.event.ComponentEvent
 import androidx.compose.ui.window.TrayState
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowState
@@ -158,9 +164,9 @@ fun main(args: Array<String>) {
         var windowVisible by remember { mutableStateOf(!startHidden) }
         var frontRequests by remember { mutableIntStateOf(0) }
 
-        // The window's close (title bar X, Alt+F4). Hides to the tray only when the
-        // viewer chose that and there is a tray; otherwise, and always for a close that
-        // arrives while already hidden (Windows signing out, an installer), it quits.
+        // The window's close (title bar X, Alt+F4) always quits, hidden or not (a close
+        // that arrives while hidden is Windows signing out or an installer). Minimizing
+        // is what goes to the tray, see the minimize watcher below.
         // The updater and the tray's Quit never come through here: they call
         // exitApplication directly, so an update always really exits.
         // Every real exit stops answering a second launch first: application{} only
@@ -174,10 +180,30 @@ fun main(args: Array<String>) {
             exitApplication()
         }
         val closeWindow: () -> Unit = {
-            // Hiding to the tray hides every window; each stops what it plays.
-            when (registry.closeAction(WindowRegistry.PRIMARY_ID, windowVisible, settings.closeToTray, isTraySupported)) {
-                CloseAction.HIDE_ALL -> windowVisible = false
-                else -> quit()
+            when (registry.closeAction(WindowRegistry.PRIMARY_ID)) {
+                CloseAction.QUIT -> quit()
+                else -> Unit
+            }
+        }
+        // Where the window last sat in a normal state, so a minimize that makes Windows
+        // report a parked position (-32000) cannot become the place it comes back to.
+        val lastNormalPosition = remember { arrayOfNulls<java.awt.Point>(1) }
+        // Minimizing the main window sends PureTV to the tray: the window is put back to
+        // normal at once (so it comes back un-iconified) and then everything hides, the
+        // same way as any hide: each window stops what it plays and leaves mini/fullscreen.
+        // Our own restore flips isMinimized back to false, which this ignores, so there is
+        // no loop; the show path also clears it. Without a tray it stays a taskbar minimize.
+        LaunchedEffect(Unit) {
+            snapshotFlow { windowState.isMinimized }.collect { minimized ->
+                if (!minimized) return@collect
+                if (registry.minimizeAction(WindowRegistry.PRIMARY_ID, windowVisible, isTraySupported) != MinimizeAction.HIDE_ALL) return@collect
+                windowState.isMinimized = false
+                lastNormalPosition[0]?.let { p ->
+                    if (windowState.position.isSpecified && windowState.position.x.value <= -30_000f) {
+                        windowState.position = WindowPosition(p.x.dp, p.y.dp)
+                    }
+                }
+                windowVisible = false
             }
         }
         val windows by registry.windows.collectAsState()
@@ -210,9 +236,9 @@ fun main(args: Array<String>) {
             }
         }
 
-        // Alerts are delivered through the tray icon, so it is there whenever they can
-        // arrive, and whenever the window is hidden (the only way back to it).
-        if (isTraySupported && ((settings.liveNotifications && settings.notifyChannels.isNotEmpty()) || settings.closeToTray || !windowVisible)) {
+        // The tray icon is there for as long as PureTV runs: minimizing hides the window
+        // to it, and it is also where go-live alerts arrive.
+        if (isTraySupported) {
             // The icon is added to the system tray as Tray enters composition; this runs
             // right after, so a go-live toast that had nowhere to go yet appears now.
             LaunchedEffect(Unit) { notifier.flushPending() }
@@ -250,6 +276,17 @@ fun main(args: Array<String>) {
             DisposableEffect(window) {
                 AppWindows.add(window)
                 onDispose { AppWindows.remove(window) }
+            }
+            DisposableEffect(window) {
+                val track = object : ComponentAdapter() {
+                    override fun componentMoved(e: ComponentEvent) {
+                        if (WindowBoundsGate.shouldSave(window.extendedState, window.x, window.y)) {
+                            lastNormalPosition[0] = java.awt.Point(window.x, window.y)
+                        }
+                    }
+                }
+                window.addComponentListener(track)
+                onDispose { window.removeComponentListener(track) }
             }
             // Re-enable Windows-native window management (Aero Snap, Snap Layouts,
             // Win+Arrow, edge-resize) on our undecorated frame. Runs once the

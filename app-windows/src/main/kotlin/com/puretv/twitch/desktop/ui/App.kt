@@ -82,7 +82,6 @@ import com.puretv.twitch.desktop.ui.components.LocalContextMenuHost
 import com.puretv.twitch.desktop.ui.components.CountBadge
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.FollowedRail
-import com.puretv.twitch.desktop.ui.components.TrayHintBanner
 import com.puretv.twitch.desktop.ui.components.UpdateBanner
 import androidx.compose.ui.window.isTraySupported
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
@@ -206,11 +205,6 @@ fun App(
     val updateState by updateManager.state.collectAsState()
     var updateDismissed by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { if (isPrimary) updateManager.checkForUpdates() }
-
-    // The one-time tray offer (closing still quits by default): only to someone with
-    // alerts on for at least one channel, since that is who loses alerts by closing the window.
-    val showTrayHint = isPrimary && isTraySupported && settings.liveNotifications && settings.notifyChannels.isNotEmpty() &&
-        !settings.closeToTray && !settings.trayHintShown
 
     // The Windows animation-effects switch decides whether things move. Read at start and again
     // whenever the window regains focus, which is when someone who just flipped it comes back.
@@ -404,16 +398,6 @@ fun App(
                             onOpenReleasePage = { url -> openInBrowser(url) },
                             onDismiss = { updateDismissed = true },
                         )
-                        AnimatedVisibility(
-                            visible = showTrayHint,
-                            enter = PureTvMotion.panelEnter(),
-                            exit = PureTvMotion.panelExit(),
-                        ) {
-                            TrayHintBanner(
-                                onKeepInTray = { settingsStore.updateSettings { it.copy(closeToTray = true, trayHintShown = true) } },
-                                onDismiss = { settingsStore.updateSettings { it.copy(trayHintShown = true) } },
-                            )
-                        }
                     }
 
                     // Immersive playback drops the gutter so the video fills the window

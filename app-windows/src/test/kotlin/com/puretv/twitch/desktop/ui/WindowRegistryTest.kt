@@ -69,15 +69,23 @@ class WindowRegistryTest {
     @Test fun closeRuleOfThePrimaryAndSecondaryWindows() {
         val r = WindowRegistry()
         val s = opened(r.open(WindowDestination.Home))
-        // A secondary window only ever closes itself, whatever the tray setting.
-        assertEquals(CloseAction.CLOSE_WINDOW, r.closeAction(s, visible = true, closeToTray = true, trayAvailable = true))
-        assertEquals(CloseAction.CLOSE_WINDOW, r.closeAction(s, visible = false, closeToTray = false, trayAvailable = false))
-        // The main window: tray only when chosen, available and visible; otherwise quit.
-        assertEquals(CloseAction.HIDE_ALL, r.closeAction(0, visible = true, closeToTray = true, trayAvailable = true))
-        assertEquals(CloseAction.QUIT, r.closeAction(0, visible = true, closeToTray = false, trayAvailable = true))
-        assertEquals(CloseAction.QUIT, r.closeAction(0, visible = true, closeToTray = true, trayAvailable = false))
-        // Already hidden (Windows signing out): a close always quits.
-        assertEquals(CloseAction.QUIT, r.closeAction(0, visible = false, closeToTray = true, trayAvailable = true))
+        // A secondary window only ever closes itself.
+        assertEquals(CloseAction.CLOSE_WINDOW, r.closeAction(s))
+        // The main window always quits, visible or hidden.
+        assertEquals(CloseAction.QUIT, r.closeAction(0))
+        assertEquals(CloseAction.CLOSE_WINDOW, r.closeAction(99))
+    }
+
+    @Test fun minimizeRuleOfThePrimaryAndSecondaryWindows() {
+        val r = WindowRegistry()
+        val s = opened(r.open(WindowDestination.Home))
+        assertEquals(MinimizeAction.HIDE_ALL, r.minimizeAction(0, visible = true, trayAvailable = true))
+        assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(0, visible = true, trayAvailable = false))
+        // Already hidden in the tray: nothing more to hide.
+        assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(0, visible = false, trayAvailable = true))
+        // Other windows minimize on their own.
+        assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(s, visible = true, trayAvailable = true))
+        assertEquals(MinimizeAction.MINIMIZE_ONLY, r.minimizeAction(99, visible = true, trayAvailable = true))
     }
 
     @Test fun focusTrackingFallsBackWhenTheLastUsedWindowCloses() {

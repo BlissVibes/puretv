@@ -266,12 +266,11 @@ data class AppSettings(
     val notifyChannels: Set<String> = emptySet(),
     // The "alerts are now per channel" note in Settings was dismissed.
     val perChannelNoteDismissed: Boolean = false,
-    // Windows only: closing the window hides it to the tray instead of quitting,
-    // and PureTV can start hidden in the tray when Windows starts. Both off by
-    // default: the close button quits, as it always has.
+    // closeToTray and trayHintShown are unused now: the close button always quits and
+    // minimizing always goes to the tray. They stay so older settings files still load.
     val closeToTray: Boolean = false,
+    // Windows only: PureTV can start hidden in the tray when Windows starts.
     val startWithWindows: Boolean = false,
-    // Windows only: the one-time "keep PureTV in the tray" hint was answered.
     val trayHintShown: Boolean = false,
 
     // Ad Block

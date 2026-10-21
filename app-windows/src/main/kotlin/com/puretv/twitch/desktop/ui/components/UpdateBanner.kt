@@ -159,41 +159,6 @@ private fun UpdateBannerBody(
     }
 }
 
-/**
- * Asked once: closing the window quits PureTV (as it always has), which also stops
- * go-live alerts. This offers the tray instead, without changing anything unless the
- * viewer says yes. Either answer retires the banner for good.
- */
-@Composable
-fun TrayHintBanner(onKeepInTray: () -> Unit, onDismiss: () -> Unit) {
-    val c = PureTvTheme.colors
-    BannerShell(container = c.secondaryContainer) {
-        BannerIcon(ExpressiveIcons.Notify, c.onSecondaryContainer, c.secondaryContainer)
-        Column(Modifier.weight(1f)) {
-            Text(
-                "Get go-live alerts with the window closed?",
-                style = MaterialTheme.typography.titleMedium,
-                color = c.onSecondaryContainer,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                "PureTV can stay in the tray when you close it and tell you when channels you follow go live.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = c.onSecondaryContainer.copy(alpha = 0.86f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        ExpressiveButton(
-            text = "Keep in tray",
-            onClick = onKeepInTray,
-            style = ExpressiveButtonStyle.Filled,
-            size = ExpressiveButtonSize.Small,
-        )
-        DismissButton(onDismiss, c.onSecondaryContainer)
-    }
-}
-
 @Composable
 private fun BannerShell(
     container: androidx.compose.ui.graphics.Color,

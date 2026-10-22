@@ -207,12 +207,14 @@ jobs:
           done
 
       - name: Install with apt (resolves every dependency)
-        # VLC pulls in ~100 packages; the runner's mirror has taken 8 minutes to fetch them.
-        timeout-minutes: 20
+        # VLC pulls in ~100 packages; the runner's mirror has taken 8 to 20 minutes to fetch
+        # them. Recommended packages (the 61 MB CJK font among them) are skipped here: the
+        # launch check does not need them, and the container step installs with them.
+        timeout-minutes: 30
         run: |
           sudo apt-get update -q
           # Non-interactive, so no debconf question from a dependency can stall the job.
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "./${{ steps.deb.outputs.file }}" xvfb imagemagick desktop-file-utils
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends "./${{ steps.deb.outputs.file }}" xvfb xauth imagemagick desktop-file-utils
           dpkg -s puretv-for-twitch | grep -E '^(Status|Version):'
           desktop-file-validate /usr/share/applications/puretv-for-twitch.desktop
 

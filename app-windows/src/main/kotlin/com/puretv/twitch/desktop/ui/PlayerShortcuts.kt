@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import java.awt.event.KeyEvent
 
 /** What a keyboard shortcut on the live player screen does. */
@@ -234,10 +235,10 @@ object MultiShortcuts {
     }
 
     /** The one-line hint under the grid, from the same table the keys use. */
-    const val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   Ctrl + Left / Right move the selected channel"
+    val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   ${ShortcutKey.label()} + Left / Right move the selected channel"
 
     /** The hint when the selected tile is a past video. */
-    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move"
+    val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   Z sleep timer   ${ShortcutKey.label()} + Left / Right move"
 }
 
 /** What a keyboard shortcut does in a popped-out stream window. */
@@ -303,10 +304,10 @@ object PopoutShortcuts {
     }
 
     /** The one-line hint in a popped-out window, from the same table the keys use. */
-    const val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   Ctrl + W close"
+    val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   ${ShortcutKey.label()} + W close"
 
     /** The hint in the window of a past video. */
-    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   F fullscreen   D dock back   Ctrl + W close"
+    val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   F fullscreen   D dock back   ${ShortcutKey.label()} + W close"
 }
 
 /**

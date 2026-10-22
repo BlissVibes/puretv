@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import com.puretv.twitch.desktop.platform.AppDirs
 import androidx.compose.foundation.background
@@ -157,7 +158,7 @@ private fun SecondaryWindow(
         DisposableEffect(awtWindow) {
             val dispatcher = KeyEventDispatcher { e ->
                 if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
-                val closeKey = (e.keyCode == KeyEvent.VK_W && e.isControlDown && !e.isAltDown) ||
+                val closeKey = (e.keyCode == KeyEvent.VK_W && ShortcutKey.isDown(e) && !e.isAltDown) ||
                     (e.keyCode == KeyEvent.VK_ESCAPE && latestFailed.value)
                 if (!closeKey || !AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false
                 registry.close(entry.id)

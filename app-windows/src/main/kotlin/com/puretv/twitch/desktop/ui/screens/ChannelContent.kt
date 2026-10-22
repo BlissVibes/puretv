@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -66,7 +67,6 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.rememberAlertBell
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.WindowDestination
-import androidx.compose.ui.input.pointer.isCtrlPressed
 import androidx.compose.ui.platform.LocalWindowInfo
 import com.puretv.twitch.desktop.ui.components.MenuAction
 import com.puretv.twitch.desktop.ui.components.contextMenu
@@ -346,7 +346,7 @@ private fun PastBroadcastsSection(koin: Koin, userId: String, channelLogin: Stri
                     v,
                     // Ctrl held opens the video in a new window instead of here.
                     onClick = {
-                        if (windowInfo.keyboardModifiers.isCtrlPressed) {
+                        if (ShortcutKey.isHeld(windowInfo.keyboardModifiers)) {
                             openInNewWindow(WindowDestination.Vod(v.id, channelLogin, v.title, v.thumbnailUrl))
                         } else {
                             onPlayVod(VodLaunch(v.id, channelLogin, v.title, v.thumbnailUrl))

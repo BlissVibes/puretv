@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateDpAsState
@@ -208,7 +209,7 @@ fun MultiViewContent(
             val isRepeat = held.pressed(e.keyCode)
             val action = MultiShortcuts.actionFor(
                 keyCode = e.keyCode,
-                ctrl = e.isControlDown,
+                ctrl = ShortcutKey.isDown(e),
                 alt = e.isAltDown,
                 textInputFocused = latestTyping.value,
                 isRepeat = isRepeat,

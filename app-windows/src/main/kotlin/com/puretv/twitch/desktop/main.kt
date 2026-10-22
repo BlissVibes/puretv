@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop
 
+import com.puretv.twitch.desktop.platform.MacAppEvents
 import com.puretv.twitch.desktop.platform.LaunchArgs
 import com.puretv.twitch.desktop.platform.WindowChrome
 import com.puretv.twitch.desktop.platform.AppDirs
@@ -191,6 +192,9 @@ fun main(args: Array<String>) {
             guard.stopListening()
             exitApplication()
         }
+        // macOS: Cmd+Q and the Dock's Quit take the same way out, and the Dock icon brings
+        // back a window that is hidden.
+        LaunchedEffect(Unit) { MacAppEvents.install(onQuit = quit, onReopen = { navRequests.requestShow() }) }
         val closeWindow: () -> Unit = {
             when (registry.closeAction(WindowRegistry.PRIMARY_ID)) {
                 CloseAction.QUIT -> quit()

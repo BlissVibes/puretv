@@ -431,7 +431,7 @@ fun StreamContent(
             val action = PlayerShortcuts.actionFor(
                 keyCode = e.keyCode,
                 keyChar = e.keyChar,
-                ctrlOrAlt = e.isControlDown || e.isAltDown,
+                ctrlOrAlt = e.isControlDown || e.isMetaDown || e.isAltDown,
                 immersive = m != PlayerMode.DEFAULT,
                 helpOpen = latestHelpOpen.value,
                 textInputFocused = latestChatFocused.value,

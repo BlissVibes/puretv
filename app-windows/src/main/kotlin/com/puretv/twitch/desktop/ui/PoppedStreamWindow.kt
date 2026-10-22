@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
@@ -246,7 +247,7 @@ private fun PoppedStreamWindow(
                 // A popped-out window has no text box, so there is no typing to stand down for.
                 val action = PopoutShortcuts.actionFor(
                     keyCode = e.keyCode,
-                    ctrl = e.isControlDown,
+                    ctrl = ShortcutKey.isDown(e),
                     alt = e.isAltDown,
                     fullscreen = gate.fullscreen,
                     isRepeat = isRepeat,

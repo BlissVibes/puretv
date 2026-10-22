@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -112,7 +113,6 @@ import com.puretv.twitch.desktop.ui.theme.ThemeVariant
 import com.puretv.twitch.desktop.player.WindowPlayback
 import java.awt.Frame
 import java.awt.KeyEventDispatcher
-import androidx.compose.ui.input.pointer.isCtrlPressed
 import java.awt.KeyboardFocusManager
 import java.awt.MouseInfo
 import java.awt.event.KeyEvent
@@ -258,9 +258,9 @@ fun App(
             val showTab: (Destination) -> Unit = { destination = it }
             // The OS title names the screen, so Alt+Tab tells the windows apart.
             LaunchedEffect(route, destination) { registry.setTitle(windowId, windowTitle(slot, screenName(route, destination))) }
-            // Ctrl held while a card is clicked opens it in a new window instead of here.
+            // Ctrl (Cmd on macOS) held while a card is clicked opens it in a new window instead of here.
             val windowInfo = LocalWindowInfo.current
-            fun ctrlHeld() = windowInfo.keyboardModifiers.isCtrlPressed
+            fun ctrlHeld() = ShortcutKey.isHeld(windowInfo.keyboardModifiers)
             fun openChannel(login: String) {
                 if (ctrlHeld()) openInNewWindow(WindowDestination.Channel(login)) else route = Route.Channel(login)
             }
@@ -302,7 +302,7 @@ fun App(
             // Ctrl+N opens another window. Only the window that has the keyboard answers.
             DisposableEffect(awtWindow) {
                 val dispatcher = KeyEventDispatcher { e ->
-                    if (e.id != KeyEvent.KEY_PRESSED || e.keyCode != KeyEvent.VK_N || !e.isControlDown || e.isAltDown || e.isShiftDown) {
+                    if (e.id != KeyEvent.KEY_PRESSED || e.keyCode != KeyEvent.VK_N || !ShortcutKey.isDown(e) || e.isAltDown || e.isShiftDown) {
                         return@KeyEventDispatcher false
                     }
                     if (!AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false

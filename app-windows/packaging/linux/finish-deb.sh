@@ -2,8 +2,8 @@
 # Finishes the .deb jpackage made (gradle :app-windows:packageReleaseDeb):
 #  - adds what jpackage cannot know about: libVLC and its codecs and video outputs
 #    (vlc-plugin-video-output holds the window embedding; without it there is sound
-#    and no picture), and as recommendations
-#    a colour emoji font (chat) and libmpv (the optional mpv engine);
+#    and no picture), and as recommendations colour emoji and CJK fonts for chat
+#    and libmpv (the optional mpv engine);
 #  - lets each library from the 64-bit time_t transition ("libfoo2t64", which jpackage
 #    copies from the build machine) also be satisfied by its older name ("libfoo2"),
 #    so one package installs on Ubuntu 22.04, 24.04 and Debian 12;
@@ -33,7 +33,7 @@ awk '
       line = line (line == "" ? "" : ", ") d
     }
     print "Depends: " line ", libvlc5, vlc-plugin-base, vlc-plugin-video-output"
-    print "Recommends: fonts-noto-color-emoji, libmpv2 | libmpv1"
+    print "Recommends: fonts-noto-color-emoji, fonts-noto-cjk, libmpv2 | libmpv1"
     next
   }
   # A blank line would start a second stanza, which dpkg-deb rejects once Homepage is added.

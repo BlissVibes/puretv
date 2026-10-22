@@ -103,8 +103,10 @@ Found and fixed while testing (not in the first audit):
 | X19 | P2 | Keyboard: Tab stopped at the rail's last item on Home; the hero's Watch now and everything after a video panel were unreachable. All OSes. | Verified (WSL Tab walk, before/after) | Video `SwingPanel` excluded from focus traversal. |
 | X20 | P2 | The stream top bar squeezed the channel name to one letter at the default 1280x720 window with chat open, and the viewer count spilled out. All OSes. | Verified: macOS CI screenshot, Linux screenshot | Narrow bars drop button labels (names kept for screen readers); subtitle ellipsizes as one line. Verified on Linux. |
 | X21 | P2 | Sign-in said "We opened your browser" even when nothing opened (Java's launcher is often missing on Linux). | Code + Linux run | `xdg-open` / `open` fallback (https only); wording follows the result. `BrowserCommandTest`. |
-| X22 | P2 | Chat emoji showed as boxes on Linux without a colour emoji font. | Verified (WSL screenshot) | `.deb` recommends `fonts-noto-color-emoji`; verified rendered after install. |
+| X22 | P2 | Chat emoji, and Japanese/Chinese/Korean names and messages, showed as boxes on Linux without the fonts (minimal installs; Ubuntu Desktop has them). | Verified (WSL and CI 22.04 screenshots) | `.deb` recommends `fonts-noto-color-emoji` and `fonts-noto-cjk`; emoji verified rendered after install. |
 | X23 | P2 | mpv on Linux played sound over an empty pane where no GL context could be made (WSLg). | Verified (WSL) | `x11` software output as last resort on Linux. Verified: picture. |
+| X25 | P1 | **Native crash on Ubuntu 22.04 about a second after a stream opens.** Skia (libskiko) ships a static libstdc++ and exports it; loaded first, it owns the process-wide C++ facet ids, and 22.04's older system libstdc++ (12.3) sent VLC's C++ HLS demuxer through them. | CI runs 39757626495 and 39759384980 (hs_err: SIGSEGV in libstdc++ data); gdb on WSL Ubuntu 22.04: `std::ostream::_M_insert<unsigned long>` called from `libadaptive_plugin.so`. Not reproducible on 24.04. | `NativePreload` loads the system libstdc++ first thing in `main` on Linux. Verified on 22.04: two passing launch checks, video shown. |
+| X26 | P1 | **No picture from the .deb on a clean system**: libVLC's window embedding (`embed-xid`) is in `vlc-plugin-video-output`, which the package did not depend on. It only worked where the full `vlc` package was installed. | VLC verbose log: `looking for vout window module matching "embed-xid,any": 0 candidates` | Added to Depends. Verified on 22.04. |
 | X24 | P3 | `--channel <login>` launch option (validated login) for launchers, scripts and the smoke tests. | | `platform/LaunchArgs.kt`, `LaunchArgsTest` |
 
 ## 5. Verification evidence
@@ -133,6 +135,23 @@ Found and fixed while testing (not in the first audit):
 | `launch-smoke.sh` against the installed `.deb` | PASS: `stream.first_frame`, `player.video_output`, still running 15 s later |
 | Tab traversal | PASS after X19 fix |
 
+### GitHub-hosted runners after every fix (run 39767612350)
+
+| Job | Result |
+|---|---|
+| Windows: core + desktop tests | PASS |
+| macOS 14 arm64: tests, bundled VLC (VLC.app uninstalled), ad-hoc .dmg, install, launch | PASS: `stream.first_frame` 1829 ms, `player.video_output`, `player.frame_painted` |
+| Ubuntu 22.04: tests, .deb, apt install, menu entry valid, launch under Xvfb with PulseAudio, removal | PASS: `stream.first_frame` 768 ms, `player.video_output`, picture in the screenshot |
+
+### Linux: Ubuntu 22.04 under WSL2 (Xvfb + PulseAudio), this PC
+
+| Check | Result |
+|---|---|
+| The CI-built .deb (Temurin on 22.04) installs with apt | PASS |
+| Launch on a live channel before X25/X26 | FAIL: native crash (reproduced, gdb stack above) |
+| Same with X25/X26 fixed | PASS twice: `stream.first_frame` 607 ms, `player.video_output`, picture in the screenshot |
+| A .deb whose launcher was built with Ubuntu 24.04's own JDK | Does not start on 22.04 (`GLIBCXX_3.4.32 not found` in libapplauncher.so). Release packages are built on Ubuntu 22.04 with Temurin for this reason. |
+
 Caveat: WSLg has no GPU-backed GL for X11 clients (Skia falls back to software, mpv needs X23). A real Linux desktop with GPU drivers was not available.
 
 ### macOS 14 on Apple Silicon (GitHub-hosted `macos-14` runner)
@@ -147,7 +166,7 @@ Run 39752950707 (first push):
 | `.dmg` (UDZO) created, mounted, app copied to /Applications, `lipo -archs` = arm64 | PASS |
 | Launch on a live channel | PASS: `stream.first_frame` 1593 ms, `player.video_output`, `player.frame_painted 288x162`; screenshot shows video, traffic lights over the PureTV bar, menu-bar icon |
 
-Caveat on that run: VLC.app was still installed on the runner, so the app could have used it instead of its bundled copy. Commit `077ca4e` uninstalls it before the launch; see CI_RESULT_PLACEHOLDER.
+Caveat on that run: VLC.app was still installed on the runner, so the app could have used it instead of its bundled copy. From commit `077ca4e` the workflow uninstalls VLC.app first. Runs 39756064094, 39757626495 and 39759384980 then passed the same launch check (`stream.first_frame` 1721 ms, `player.video_output`, `player.frame_painted`), which proves the bundled VLC.
 
 ## 6. Parity matrix
 
@@ -160,7 +179,7 @@ PASS = verified, FAIL, BLOCKED = needs something not available here, UNVERIFIED 
 | Package | PASS (existing release.yml, unchanged steps) | PASS (.dmg, ad-hoc signed) | PASS (.deb, finished) |
 | Install / uninstall | PASS (shipping) | Install PASS (CI, no quarantine); uninstall = delete the app (UNVERIFIED) | PASS (WSL; CI apt) |
 | Launch | PASS (shipping 1.13.0) | PASS (CI) | PASS (WSL; CI Xvfb) |
-| Live playback (VLC) | PASS (shipping) | PASS (CI, frames painted) | PASS (WSL) |
+| Live playback (VLC) | PASS (shipping) | PASS (CI, bundled VLC, frames painted) | PASS (WSL 24.04 and 22.04) |
 | mpv engine | PASS (shipping) | N/A (not offered) | PASS (WSL, software fallback) |
 | Audio, per-tile volume | PASS (shipping) | UNVERIFIED (no audio device on the runner) | UNVERIFIED by ear |
 | Sign-in (device code) | PASS (shipping) | UNVERIFIED (needs a person) | UNVERIFIED (needs a person) |

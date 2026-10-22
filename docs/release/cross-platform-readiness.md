@@ -118,7 +118,9 @@ Found and fixed while testing (not in the first audit):
 | `gradlew :core:desktopTest :app-windows:test` (baseline) | 561 + 444 tests, 0 failures |
 | `gradlew :app-windows:test` after every change on the branch | 0 failures (last run includes all new tests) |
 | GitHub Actions `windows-latest`: `:core:desktopTest :app-windows:test` | PASS (runs 39752950707, 39754451563) |
-| Launching this branch's Windows build | NOT RUN: the owner's PureTV was running and holds the fixed proxy port 7979; a second copy would have talked to it. Windows code paths were kept identical where they matter (data folder, key derivation, updater install, upgrade GUID) and are covered by the unit tests. |
+| Launching this branch's Windows build (second pass, `bundleVlc` + `createReleaseDistributable`, APPDATA/LOCALAPPDATA pointed at scratch folders) | PASS: `app.first_window` 1.54 to 1.71 s over five launches, `stream.first_frame` 706 to 752 ms, `player.video_output`; the owner's real `%APPDATA%\PureTwitch` untouched |
+| Closing it with the X button | NOT VERIFIED: the app ran on a desktop this session cannot see, so no window could be sent WM_CLOSE. The Windows close path is unchanged by the branch. |
+| Windows CPU/memory | NOT MEASURED reliably: with the window on an undisplayed desktop rendering is throttled (a playing stream read 0% CPU), so those numbers are not evidence. |
 
 ### Linux: Ubuntu 24.04 under WSL2/WSLg (X11 via XWayland), this PC
 
@@ -202,6 +204,55 @@ PASS = verified, FAIL, BLOCKED = needs something not available here, UNVERIFIED 
 
 The `release: true` path (secret handoff to the reusable workflow, tag check, jar check, downloading the macOS and Linux artifacts into the draft, `SHA256SUMS.txt`) has **never run**. It was not dispatched on purpose: `release.yml` also pushes the proxy image to GHCR. The first real `v*` tag is its first test; it only opens a draft, so a failure publishes nothing. That tag needs `appVersion` above 1.13.0, since the guard refuses to rebuild a published version.
 
+## 6b. Second pass (2026-10-22): review, journeys, security
+
+### Code review of the branch (8 findings, all fixed)
+
+| # | Sev | Finding | Fix |
+|---|---|---|---|
+| R1 | P1 | macOS/Linux: leaving the system fullscreen through the OS (green button, Ctrl+Cmd+F, a window manager shortcut) left the player in its fullscreen layout; the next F did nothing visible. | `NativeFullscreenExit` follows the placement (main window and popped-out streams); unit-tested. |
+| R2 | P1 | macOS: the quit handler answered `cancelQuit`, which macOS reads as PureTV refusing to quit, so a logout or restart with PureTV open was interrupted. | The response is left pending and PureTV quits itself. CI now quits the app with a quit Apple event and requires a clean exit. |
+| R3 | P2 | Popped-out stream windows had the same fullscreen desync. | Same fix as R1. |
+| R4 | P2 | `--channel` on a second launch reached the running copy as a plain "show". | The activation request carries the channel; unit-tested and verified on Linux (J5 below). |
+| R5 | P2 | macOS/Linux data folder (history, follows, encrypted sign-in) created 0755. | Made 0700 at start; verified (J1). |
+| R6 | P2 | Start at login removed through the OS was written back on the next launch (macOS, Linux). | The setting follows the OS when the entry is gone. |
+| R7 | P3 | Stale doc said fullscreen never uses `WindowPlacement.Fullscreen`. | Updated. |
+| R8 | P3 | `VideoCanvas.clearFrame` unused. | Removed. |
+
+### Security (section 8 of the plan)
+
+| Check | Result |
+|---|---|
+| Dependency advisories (OSV, all 173 runtime artifacts of the desktop app) | Before: Netty 4.1.118 (from Ktor 3.1.1) with 30+ advisories (request smuggling, decoder DoS, HTTP/2 floods). Pinned Netty 4.1.139 through its BOM: **0 advisories**. Playback verified on Linux and Windows after the bump. Dependabot is disabled on the repository; turning it on is recommended. |
+| Local stream proxy reachable by web pages (DNS rebinding) | Was open: a page whose domain resolves to 127.0.0.1 is same-origin with it. Now refuses any Host but 127.0.0.1/localhost. Verified during playback: `127.0.0.1` 200, `localhost` 200, `Host: evil.example` 403. |
+| Proxy SSRF (`/variant`) | Already limited to `*.ttvnw.net`; verified 403 for `169.254.169.254`. |
+| `localhost` resolving to `::1` | Player URLs now use 127.0.0.1 (found when WSL's localhost forwarding held [::1]:7979 and the Windows player talked to it). |
+| Secrets in the repository | None tracked (`git ls-files`: only `secrets.properties.example` and the checker script). The client secret is injected at build time; release builds check the jar. |
+| Credential storage | AES-GCM with a per-machine key (Windows MachineGuid; macOS/Linux a 0600 `.keyseed` in the now-0700 data folder). Not the OS keychain; recommended as a follow-up (macOS Keychain, Secret Service on Linux). |
+| Logs | `timing.log` holds channel names and timings; the copyable diagnostics report scrubs tokens and signed URLs; `crash.log` stays local. |
+| Telemetry / new network access | None added. The smoke test queries Twitch's public GQL for a live channel (CI only). |
+
+### Linux user journeys (WSL Ubuntu 24.04, Xvfb, normal user, fresh build)
+
+| Journey | Result |
+|---|---|
+| J1 Watch 40 s, then SIGTERM (session logout) | PASS: video, exited in 4 s, data folder 0700 |
+| J2 Settings survive a restart (theme, chat timestamps, quality) | PASS: values kept, Ember theme shown on restart |
+| J3 Corrupted `settings.json` | PASS: starts normally; the bad file is kept as `settings.json.corrupt-<time>` |
+| J4 No internet at start | PASS: "Couldn't load live channels" with Retry, no crash |
+| J5 Second launch with `--channel` | PASS: the open window switched channel, still one process |
+| Proxy changes (Netty 4.1.139, Host check, 127.0.0.1) | PASS: launch smoke, `player.video_output`, probes above |
+
+### Performance (what was and was not measured)
+
+| Measure | Result |
+|---|---|
+| Time to first window | Windows 1.54 to 1.71 s; Linux (WSL) 1.1 to 2.3 s; macOS CI runner 4.5 s cold |
+| Stream open to first frame | Windows 0.7 s; Linux 0.5 to 0.8 s; macOS CI 1.6 to 1.8 s |
+| macOS frame-callback render cost | +8 points of one core vs native rendering, 1080p, measured on Linux with the forced path |
+| Idle/playing CPU and memory on Windows | Not measured reliably from this session (see section 5) |
+| Linux memory while playing | about 790 MB RSS (WSL, software rendering) |
+
 ## 7. Release recommendation
 
 **NOT READY** for a public macOS or Linux release yet. The gap is small: every remaining
@@ -211,12 +262,53 @@ item is a check by a person with a device, not missing engineering.
   first-open flow on a real Mac. Notarization is BLOCKED without a Developer ID, so the
   first open will always need "Open Anyway".
 - Linux: the same sign-in, restart and audio checks on a real desktop (GNOME and KDE).
-- Windows: a smoke run of a build from this branch on a machine where PureTV is not
-  already running, since the window chrome, focus and top-bar changes touch shared UI.
+- Windows: launch and playback of this branch PASS (second pass). Still for a person:
+  the X button, Snap, multi-window and the narrow top bar on the real desktop, since the
+  focus and top-bar changes touch shared UI.
 
 Nothing has been merged to `main`, tagged or released.
 
 Merge order: README's new macOS and Linux sections link to `/releases/latest`, which today carries only the Windows `.exe`. Merge them with (or after) the first release that carries the `.dmg` and `.deb`, not before.
+
+### Release-readiness gate (plan section 13)
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| P0/P1 blockers resolved or dispositioned | PASS | X1-X7, X17, X18, X25, X26, R1, R2 fixed; sign-in on mac/Linux dispositioned as a device check |
+| Existing functionality intact | PASS (automated) / person check pending | 0 test failures; Windows launch + playback PASS |
+| Tests pass | PASS | Windows local; CI Windows, macOS, Ubuntu 22.04 |
+| Lint / type check | N/A | No linter configured; the Kotlin compiler is the type check (clean) |
+| Production builds | PASS | Windows app image, macOS .app, Linux .deb |
+| Packaging | PASS | .dmg (ad-hoc), .deb (finished), Windows Inno unchanged |
+| Startup on each OS | PASS | Windows (this PC), macOS (CI), Linux (CI, WSL) |
+| Core journeys | PASS on Linux (J1-J5); PARTIAL on macOS (launch, play, quit); Windows launch/play | |
+| Authentication | BLOCKED | Device-code sign-in needs a person on macOS and Linux |
+| Playback | PASS | All three OSes |
+| Settings/data persistence | PASS on Linux; macOS UNVERIFIED | J2, J3 |
+| Shutdown and cleanup | PASS on Linux (SIGTERM, WSL and CI) and macOS (CI run 39864955580: "Quit cleanly" within 20 s; the step sends a quit Apple event and falls back to SIGTERM, and its log does not show which one ran) | |
+| Install / upgrade | Install PASS (all); upgrade UNVERIFIED (first mac/Linux release has nothing to upgrade from) | |
+| Signing | BLOCKED (macOS notarization, no Developer ID); Windows unsigned as today | |
+| Artifacts match platforms | PASS | `lipo -archs` arm64; .deb amd64 |
+| Versions, checksums, notes | PARTIAL | SHA256SUMS in release.yml (never run); notes drafted in CHANGELOG "Unreleased"; `appVersion` bump pending |
+| Known limitations documented | PASS | This report, README, DEVELOPING.md |
+
+### Release checklist
+
+1. Owner device checks: sign in and restart on a Mac and on a Linux desktop (GNOME and KDE); play with sound; fullscreen in and out with the OS controls; multi-stream audio per tile.
+2. On Windows: X button, Snap, Ctrl+N windows, the stream bar at the default size.
+3. Bump `appVersion` (above 1.13.0), rename the CHANGELOG "Unreleased" heading to `## <version> - <date>`, merge the branch (README with it).
+4. Tag `v<version>`: a draft opens with the .exe, .dmg, .deb and SHA256SUMS.txt, after all three OS jobs pass.
+5. Download each artifact from the draft, check its checksum, install, launch; then publish.
+
+### Product opportunities (plan section 9; recommendations, not built)
+
+| Idea | User problem and evidence | How | Effort / risk |
+|---|---|---|---|
+| Keychain / Secret Service for the sign-in key | The key seed is a file beside the token | Store the seed in macOS Keychain, Linux Secret Service, Windows DPAPI; keep the file as fallback | Medium; migration must not sign anyone out |
+| A `twitch.tv` link handler | Links in other apps open the browser, not PureTV | Register a URL scheme (`puretv://`) per OS and route it through `--channel` | Medium (installer work per OS) |
+| Pause the Home hero preview when the window is hidden or minimized | Home plays a live preview continuously | Stop it on hide/minimize; resume on show | Low; saves CPU and bandwidth |
+| Intel Mac build | Owner scoped it out; some Mac users are on Intel | `macos-13` runner, x64 VLC.app | Low |
+| Turn on Dependabot | Netty advisories went unnoticed | Repository setting plus a Gradle ecosystem config | Low |
 
 ## 8. Remaining work, by priority
 

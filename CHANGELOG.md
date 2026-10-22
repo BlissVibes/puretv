@@ -11,6 +11,40 @@ release notes automatically.
 
 ---
 
+## Unreleased (next desktop release)
+
+PureTV now runs on Mac and Linux too, with the same ad-free streams, chat and multi-stream as on Windows.
+
+<!-- When this ships: rename the heading to "## <appVersion> - <date>" (the release
+     workflow reads the section by that exact heading) and keep the Mac/Linux notes. -->
+
+### New
+- **PureTV for Mac (Apple Silicon).** Download the .dmg, drag PureTV into
+  Applications, and on first open allow it under System Settings, Privacy &
+  Security (it is not notarized by Apple yet). VLC is built in. It uses the Mac
+  window buttons, the Mac's own fullscreen, Cmd for shortcuts, and lives in the
+  menu bar for go-live alerts.
+- **PureTV for Linux.** Install the .deb with `sudo apt install ./puretv-for-twitch_*_amd64.deb`
+  on Ubuntu 22.04 or newer, Debian 12, Mint or Pop!_OS; it brings VLC with it.
+  It uses your desktop's window frame and fullscreen.
+- **Open a channel from a shortcut or script.** `PureTV for Twitch --channel <name>`
+  opens that stream, even when PureTV is already running.
+
+### Improved
+- **Keyboard.** Tab now reaches everything after a video, such as Watch now on
+  Home.
+- **Smaller windows.** The stream's top bar keeps the channel name readable by
+  turning its widest buttons into icons when space is tight.
+- **Sign-in.** If no browser can be opened, the sign-in screen says so and tells
+  you where to enter the code, instead of claiming it opened one.
+- **Safer local video connection.** The part of PureTV that removes ads runs on
+  your computer; it now only answers PureTV itself and is on an updated network
+  library with recent security fixes.
+
+### Fixed
+- On Mac and Linux, leaving fullscreen with the window's own controls now returns
+  the player to its normal layout.
+
 ## 1.13.0 - 2026-10-21
 
 Streams start sooner, ads get skipped more cleanly, and live streams play closer to live, on Windows, phone and TV.

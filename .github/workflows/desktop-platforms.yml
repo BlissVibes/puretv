@@ -205,6 +205,11 @@ jobs:
       - name: Launch on a live channel (Xvfb)
         timeout-minutes: 10
         run: |
+          # A desktop always has a sound server (PulseAudio or PipeWire); the runner has none.
+          # Without one, VLC 3.0.16 on Ubuntu 22.04 crashed natively once its PulseAudio
+          # output failed (run 39757626495), so run one here the way a desktop does.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q pulseaudio
+          pulseaudio --start --exit-idle-time=-1
           xvfb-run -a -s "-screen 0 1920x1080x24" app-windows/packaging/smoke/launch-smoke.sh \
             "/opt/puretv-for-twitch/bin/PureTV for Twitch" \
             "$HOME/.config/PureTwitch" \

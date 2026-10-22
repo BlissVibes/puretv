@@ -126,6 +126,10 @@ jobs:
           hdiutil detach /tmp/puretv-dmg
           lipo -archs "/Applications/PureTV for Twitch.app/Contents/MacOS/PureTV for Twitch"
           ls "/Applications/PureTV for Twitch.app/Contents/app/resources/vlc/lib" | head
+          # The launch below must prove the VLC inside the app works on a Mac without VLC
+          # installed, so the copy brew installed for bundling goes away first.
+          brew uninstall --cask vlc
+          test ! -e /Applications/VLC.app
 
       - name: Launch on a live channel
         timeout-minutes: 10

@@ -77,6 +77,11 @@ dependencies {
     // listener (port 3000, Section 03.2/10).
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
+    // Ktor 3.1.1 brings Netty 4.1.118, which has published advisories (HTTP/1 request
+    // smuggling, decoder DoS, HTTP/2 floods) fixed in 4.1.124 to 4.1.136. The proxy only
+    // listens on 127.0.0.1, but a web page can still send it requests, so pin a patched
+    // 4.1 release (same API) until Ktor ships one. Check with an OSV scan before raising.
+    implementation(platform("io.netty:netty-bom:4.1.139.Final"))
 
     implementation(libs.koin.core)
     implementation(libs.koin.compose)

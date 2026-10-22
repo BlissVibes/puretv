@@ -17,7 +17,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -71,9 +73,17 @@ class LocalStreamProxy(
         /** @see StreamResolver.PRIMARY_PLAYER_TYPE */
         const val PRIMARY_PLAYER_TYPE = StreamResolver.PRIMARY_PLAYER_TYPE
 
+        /**
+         * The address the proxy listens on. URLs name it as 127.0.0.1, not `localhost`:
+         * `localhost` can resolve to IPv6 ::1 first, where another program may hold the same
+         * port (seen with WSL, whose localhost forwarding listens on [::1]:7979 while a Linux
+         * PureTV runs), and the player would then talk to that program instead.
+         */
+        const val HOST = "127.0.0.1"
+
         /** Builds the URL VLCJ should be pointed at for [channelLogin]/[quality]. */
         fun streamUrl(channelLogin: String, quality: StreamQuality = StreamQuality.AUTO): String =
-            "http://localhost:$PORT/stream?channel=$channelLogin&quality=${quality.name}"
+            "http://$HOST:$PORT/stream?channel=$channelLogin&quality=${quality.name}"
 
         /**
          * The URL for a multi-stream tile: one rendition, the best one at or below
@@ -81,7 +91,7 @@ class LocalStreamProxy(
          * channel, and the proxy serves all of them at once.
          */
         fun tileStreamUrl(channelLogin: String, maxHeight: Int): String =
-            "http://localhost:$PORT/stream?channel=$channelLogin&quality=AUTO&cap=$maxHeight"
+            "http://$HOST:$PORT/stream?channel=$channelLogin&quality=AUTO&cap=$maxHeight"
 
         /**
          * The /variant route fetches an upstream URL on the player's behalf, so
@@ -95,6 +105,18 @@ class LocalStreamProxy(
         fun isAllowedVariantHost(url: String): Boolean {
             val host = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase() ?: return false
             return host == "ttvnw.net" || host.endsWith(".ttvnw.net")
+        }
+
+        /**
+         * True when a request's Host header names this machine's loopback address. A web page
+         * can reach 127.0.0.1 through its own domain (DNS rebinding) and would then be
+         * "same origin" with the proxy, able to read /diag and the playlists and to drive
+         * /simulate; its requests carry that domain as Host, so anything else is refused.
+         * The players always send 127.0.0.1:7979 (see [HOST]).
+         */
+        fun isAllowedHostHeader(host: String?): Boolean {
+            val name = host?.trim()?.lowercase()?.substringBeforeLast(':') ?: return false
+            return name == HOST || name == "localhost"
         }
 
         /**
@@ -179,7 +201,13 @@ class LocalStreamProxy(
 
     suspend fun start() = lifecycleLock.withLock {
         if (engine != null) return@withLock
-        val server = embeddedServer(Netty, port = PORT, host = "127.0.0.1") {
+        val server = embeddedServer(Netty, port = PORT, host = HOST) {
+            intercept(ApplicationCallPipeline.Plugins) {
+                if (!isAllowedHostHeader(call.request.headers[HttpHeaders.Host])) {
+                    call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+                    finish()
+                }
+            }
             routing {
                 get("/stream") {
                     val channel = call.request.queryParameters["channel"]

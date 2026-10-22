@@ -54,6 +54,12 @@ class NativeLibsTest {
     }
 
     @Test
+    fun `only linux falls back to software video in mpv`() {
+        assertEquals("gpu-next,gpu,x11", NativeLibs.mpvVideoOutputs(HostOs.LINUX))
+        assertEquals("gpu-next,gpu", NativeLibs.mpvVideoOutputs(HostOs.WINDOWS))
+    }
+
+    @Test
     fun `windows tiles keep DirectSound and linux tiles get their own pulse stream`() {
         assertEquals("directsound", NativeLibs.tileAudioOutput(HostOs.WINDOWS))
         assertEquals("pulse", NativeLibs.tileAudioOutput(HostOs.LINUX))

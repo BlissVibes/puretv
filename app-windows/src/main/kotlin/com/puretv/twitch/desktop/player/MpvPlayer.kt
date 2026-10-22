@@ -144,7 +144,7 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         // vo is a priority list: prefer gpu-next (libplacebo), fall back to the
         // older, broadly-compatible `gpu` VO so machines that can't bring up a
         // gpu-next context get video instead of a silent black pane.
-        l.mpv_set_option_string(c, "vo", "gpu-next,gpu")
+        l.mpv_set_option_string(c, "vo", NativeLibs.mpvVideoOutputs())
         l.mpv_set_option_string(c, "hwdec", "auto-safe")
         l.mpv_set_option_string(c, "keep-open", "yes")
         l.mpv_set_option_string(c, "network-timeout", "10")

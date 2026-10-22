@@ -54,6 +54,15 @@ object NativeLibs {
     }
 
     /**
+     * mpv's video outputs, in order of preference: gpu-next (libplacebo), then the older
+     * `gpu`. On Linux the plain `x11` output comes last: where no GL/EGL context can be
+     * made (seen under WSLg, and on machines without working GPU drivers) both GPU outputs
+     * fail and mpv would play sound over an empty pane. `x11` draws in software instead.
+     */
+    fun mpvVideoOutputs(os: HostOs = HostOs.current): String =
+        if (os == HostOs.LINUX) "gpu-next,gpu,x11" else "gpu-next,gpu"
+
+    /**
      * The libVLC audio output for multi-stream tiles, or null for VLC's default. Each tile
      * needs its own volume. On Windows the default output (mmdevice) shares one volume per
      * process, measured with two live players, so tiles use DirectSound. On Linux PulseAudio

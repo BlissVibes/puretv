@@ -189,11 +189,11 @@ jobs:
           echo "file=$out" >> "$GITHUB_OUTPUT"
 
       - name: Install with apt (resolves every dependency)
-        timeout-minutes: 15
+        # VLC pulls in ~100 packages; the runner's mirror has taken 8 minutes to fetch them.
+        timeout-minutes: 20
         run: |
           sudo apt-get update -q
-          # Non-interactive: a VLC dependency (jackd2) asks a debconf question, which
-          # otherwise waits for an answer nobody gives.
+          # Non-interactive, so no debconf question from a dependency can stall the job.
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "./${{ steps.deb.outputs.file }}" xvfb imagemagick
           dpkg -s puretv-for-twitch | grep -E '^(Status|Version):'
           desktop-file-validate /usr/share/applications/puretv-for-twitch.desktop

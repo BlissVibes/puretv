@@ -1,9 +1,9 @@
 # What's New in PureTV for Twitch
 
-Plain-language notes for each version — the same words users see in the app's
+Plain-language notes for each version, in the same words users see in the app's
 update prompt and on the download page.
 
-**When you cut a release:** add a new `## <version> — <date>` section at the top,
+**When you cut a release:** add a new `## <version> - <date>` section at the top,
 write a one-line summary, then list changes under **New / Improved / Fixed** in
 everyday language (e.g. "Sign-in is faster now", not "migrated OAuth to PKCE").
 Keep it short and friendly. The release pipeline turns the top section into the
@@ -11,12 +11,9 @@ release notes automatically.
 
 ---
 
-## Unreleased (next desktop release)
+## 1.14.0 - 2026-10-22
 
-PureTV now runs on Mac and Linux too, with the same ad-free streams, chat and multi-stream as on Windows.
-
-<!-- When this ships: rename the heading to "## <appVersion> - <date>" (the release
-     workflow reads the section by that exact heading) and keep the Mac/Linux notes. -->
+PureTV now runs on Mac and Linux too, and on Windows the keyboard, the stream bar and the ad-blocking connection all got better.
 
 ### New
 - **PureTV for Mac (Apple Silicon).** Download the .dmg, drag PureTV into
@@ -27,6 +24,9 @@ PureTV now runs on Mac and Linux too, with the same ad-free streams, chat and mu
 - **PureTV for Linux.** Install the .deb with `sudo apt install ./puretv-for-twitch_*_amd64.deb`
   on Ubuntu 22.04 or newer, Debian 12, Mint or Pop!_OS; it brings VLC with it.
   It uses your desktop's window frame and fullscreen.
+- These are the first Mac and Linux versions. They have been tested on real
+  machines for installing, playing streams and quitting, but if anything feels
+  off, please open an issue on GitHub so it can be fixed quickly.
 - **Open a channel from a shortcut or script.** `PureTV for Twitch --channel <name>`
   opens that stream, even when PureTV is already running.
 
@@ -538,7 +538,7 @@ Fixes a freeze with animated emotes, makes the followed list load faster with cl
 Makes in-app updates reliable and self-explaining.
 
 ### Fixed
-- **In-app updates that failed with a "signature check failed" error now recover on their own.** If a download arrives corrupted or incomplete (the usual cause), PureTV re-downloads once and tries again instead of giving up — so you shouldn't need to grab updates from the website anymore.
+- **In-app updates that failed with a "signature check failed" error now recover on their own.** If a download arrives corrupted or incomplete (the usual cause), PureTV re-downloads once and tries again instead of giving up, so you shouldn't need to grab updates from the website anymore.
 - **Clear, specific reasons when an update can't proceed.** Instead of one generic error, PureTV now tells you whether the download was bad versus a problem on your PC, and writes the details to a log (`%APPDATA%\PureTwitch\update.log`) so any remaining issue can be pinned down immediately.
 - **Updates no longer leave old files behind.** Installing over a previous version now cleans up the old program files first, so your install doesn't slowly bloat with every update.
 
@@ -547,13 +547,13 @@ Makes in-app updates reliable and self-explaining.
 GPU upscaling arrives, the emotes you type finally show up, and a big round of reliability and safety fixes under the hood.
 
 ### New
-- **Sharper streams with your graphics card.** In the player's gear menu you can switch the playback engine to mpv and turn on GPU upscaling. Pick **Sharp** for live content (gaming, IRL, sports) or **Anime** for animation, **hold X** to instantly compare against off, and press **F3** to see exactly what's happening (source size, output size and the scaler in use). It's off by default — the classic player is untouched until you opt in.
+- **Sharper streams with your graphics card.** In the player's gear menu you can switch the playback engine to mpv and turn on GPU upscaling. Pick **Sharp** for live content (gaming, IRL, sports) or **Anime** for animation, **hold X** to instantly compare against off, and press **F3** to see exactly what's happening (source size, output size and the scaler in use). It's off by default, and the classic player is untouched until you opt in.
 
 ### Fixed
-- **Your own emotes show when you send them.** Emotes you type or pick — Twitch, BTTV, FFZ and 7TV — now appear (animated) in your own messages instead of as plain text.
+- **Your own emotes show when you send them.** Emotes you type or pick (Twitch, BTTV, FFZ and 7TV) now appear (animated) in your own messages instead of as plain text.
 - **Settings no longer freezes the window.** Opening Settings while a stream was playing could briefly hang the whole app. That's gone.
 - **Cleaner chat.** Replies and channel notices no longer show stray characters like `\s` in the quoted text.
-- **Even fewer ads slip through.** Several edge cases where an ad could briefly play — or where a refresh could stutter — have been closed.
+- **Even fewer ads slip through.** Several edge cases where an ad could briefly play, or where a refresh could stutter, have been closed.
 - **Your saved data is safer.** Follows, watch progress and settings are now written so they can't be left half-finished or corrupted if the app or PC stops unexpectedly.
 - **Safer updates.** Update downloads are now locked to secure (HTTPS) connections.
 
@@ -565,7 +565,7 @@ Streams play again, chat gets Enter-to-send, and in-app updates install reliably
 - **Press Enter to send chat.** Send a message with the Enter key instead of clicking the arrow. Tab still completes an emote suggestion, and the arrow button is still there if you prefer it.
 
 ### Fixed
-- **Streams load again.** Twitch changed something on their side that stopped PureTV from starting any stream — the player stayed black and the ad-blocker was stuck on "Checking…". PureTV now asks Twitch for streams in a way that doesn't depend on that, so live channels and past broadcasts play normally again.
+- **Streams load again.** Twitch changed something on their side that stopped PureTV from starting any stream: the player stayed black and the ad-blocker was stuck on "Checking…". PureTV now asks Twitch for streams in a way that doesn't depend on that, so live channels and past broadcasts play normally again.
 - **Updates install on the first try.** In-app updates often failed the first time (and sometimes the second), and only went through after a few attempts. PureTV now downloads updates over a more reliable connection and retries automatically, so updating works the first time.
 - **Clearer when something's wrong.** If a stream genuinely can't be reached, the ad-block badge no longer hangs on "Checking…" forever, so a real outage is easier to spot.
 
@@ -632,9 +632,9 @@ Watch a channel's past broadcasts, ad-free.
 ### Improved
 - The quality switcher and volume control work on past videos just like they do on live streams.
 
-## 1.2.0 — 2026-06-14
+## 1.2.0 - 2026-06-14
 
-A complete visual redesign — PureTV now looks like a proper cinema.
+A complete visual redesign. PureTV now looks like a proper cinema.
 
 ### New
 - **A brand-new editorial look.** Every screen has been redesigned around a refined dark theme, confident typography, and stream thumbnails treated like cover art.
@@ -648,12 +648,12 @@ A complete visual redesign — PureTV now looks like a proper cinema.
 ### Fixed
 - Loading and empty screens no longer show blank gray boxes.
 
-## 1.1.0 — 2026-06-14
+## 1.1.0 - 2026-06-14
 
 A smoother, more secure sign-in and safer automatic updates.
 
 ### New
-- **Simpler sign-in.** PureTV now opens Twitch in your browser, you tap **Authorize**, and you're in — no more local pop-up window during login.
+- **Simpler sign-in.** PureTV now opens Twitch in your browser, you tap **Authorize**, and you're in, with no more local pop-up window during login.
 
 ### Improved
 - **Safer updates.** PureTV now checks that every update really came from us before installing it, so a tampered download can't sneak in.
@@ -663,6 +663,6 @@ A smoother, more secure sign-in and safer automatic updates.
 
 > Heads up: this update signs you out once. Just sign in again with the new, quicker flow.
 
-## 1.0.8 — 2026-06-08
+## 1.0.8 - 2026-06-08
 
 - A cleaner, more polished look and smoother window behavior.

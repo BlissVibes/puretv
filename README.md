@@ -2,7 +2,7 @@
 
 <h1>PureTV</h1>
 
-**Live streams without the ads. On your PC, your phone, and your TV.**
+**Live streams without the ads. On Windows, Mac, Linux, your phone, and your TV.**
 
 Ads get filtered out on your own device before the player ever sees them.
 No relay server, no account with us, no logging of what you watch.
@@ -10,6 +10,8 @@ No relay server, no account with us, no logging of what you watch.
 <br>
 
 [![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dhawal-ss/puretv/releases/latest)
 [![Android](https://img.shields.io/badge/Android-Download-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/download/android-latest/PureTV-for-Twitch-Android.apk)
 [![Android TV](https://img.shields.io/badge/Android_TV_&_Fire_TV-Download-6441A5?style=for-the-badge&logo=androidtv&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/download/tv-latest/PureTV-FireTV-AndroidTV.apk)
 
@@ -28,8 +30,8 @@ No relay server, no account with us, no logging of what you watch.
 | **No ads** | Mid-rolls are stripped from the stream on your device. A small pill on the player tells you it is working. |
 | **Five themes** | Violet Dusk, Ember, Teal Deep, Pure Black and Midnight Forest. Each one re-tones the whole app, not just an accent. |
 | **Your follows, front and centre** | Live channels first, offline below, on every platform. |
-| **Chat beside the stream** | With emotes, on all three apps. |
-| **Updates itself** | It checks on launch and installs in one tap. No re-downloading. |
+| **Chat beside the stream** | With emotes, on desktop, phone and TV. |
+| **Keeps you up to date** | It checks for new versions on launch. On Windows, phone and TV it installs in one tap; on Mac and Linux it takes you to the download. |
 | **Nothing phones home** | Sign-in goes straight to Twitch. Your session stays encrypted on your device. |
 
 <br>

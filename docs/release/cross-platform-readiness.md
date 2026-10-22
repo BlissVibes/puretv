@@ -255,8 +255,9 @@ The `release: true` path (secret handoff to the reusable workflow, tag check, ja
 
 ## 7. Release recommendation
 
-**NOT READY** for a public macOS or Linux release yet. The gap is small: every remaining
-item is a check by a person with a device, not missing engineering.
+**Released as 1.14.0 with documented limitations** (owner decision, 2026-10-22). My own
+recommendation was to wait for the device checks below; the owner chose to release all
+three platforms now. What is still unverified by a person:
 
 - macOS: sign-in, a restart with the session kept, audio, fullscreen and Gatekeeper's
   first-open flow on a real Mac. Notarization is BLOCKED without a Developer ID, so the
@@ -266,9 +267,7 @@ item is a check by a person with a device, not missing engineering.
   the X button, Snap, multi-window and the narrow top bar on the real desktop, since the
   focus and top-bar changes touch shared UI.
 
-Nothing has been merged to `main`, tagged or released.
-
-Merge order: README's new macOS and Linux sections link to `/releases/latest`, which today carries only the Windows `.exe`. Merge them with (or after) the first release that carries the `.dmg` and `.deb`, not before.
+Merged to `main` and released as `v1.14.0`, with the README's macOS and Linux sections, so `/releases/latest` carries the `.exe`, `.dmg` and `.deb` together.
 
 ### Release-readiness gate (plan section 13)
 

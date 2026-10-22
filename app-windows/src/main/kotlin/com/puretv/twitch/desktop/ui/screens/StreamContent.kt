@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -809,6 +811,13 @@ private fun TopBar(
     radius: Dp,
 ) {
     val c = PureTvTheme.colors
+    // The buttons are measured before the name takes what is left, so in a narrow bar (the
+    // default 1280x720 window with chat open) the name was squeezed to one letter. A narrow
+    // bar drops the labels of its two widest buttons instead; their names stay for screen
+    // readers.
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val compactMulti = maxWidth < TOP_BAR_FULL_WIDTH
+    val compactFollow = maxWidth < TOP_BAR_COMPACT_WIDTH
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -838,11 +847,20 @@ private fun TopBar(
                 overflow = TextOverflow.Ellipsis,
             )
             if (streamInfo != null) {
-                Row {
-                    val game = streamInfo.gameName.takeIf { it.isNotBlank() } ?: "No category"
-                    Text("$game · ", style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant, maxLines = 1)
-                    Text("${formatViewerCount(streamInfo.viewerCount)} viewers", style = PureTvType.data, color = c.onSurfaceVariant, maxLines = 1)
-                }
+                // One line that ellipsizes as a whole: as two texts, a narrow bar cut the
+                // category short and pushed the viewer count out of the bar.
+                val game = streamInfo.gameName.takeIf { it.isNotBlank() } ?: "No category"
+                val countStyle = PureTvType.data.toSpanStyle()
+                Text(
+                    buildAnnotatedString {
+                        append("$game · ")
+                        withStyle(countStyle) { append("${formatViewerCount(streamInfo.viewerCount)} viewers") }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         AdBlockPill(adBlockStatus)
@@ -858,23 +876,49 @@ private fun TopBar(
             contentDescription = "Open this channel's page in a new window",
             onClick = onOpenInNewWindow,
         )
-        ExpressiveButton(
-            text = "Watch with another channel",
-            onClick = onOpenMultiView,
-            style = ExpressiveButtonStyle.Tonal,
-            size = ExpressiveButtonSize.Medium,
-            icon = ExpressiveIcons.Grid,
-        )
-        ExpressiveButton(
-            text = if (isFollowed) "Following" else "Follow",
-            onClick = onToggleFollow,
-            style = ExpressiveButtonStyle.Tonal,
-            size = ExpressiveButtonSize.Medium,
-            icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
-            enabled = canFollow,
-        )
+        if (compactMulti) {
+            ExpressiveIconButton(
+                icon = ExpressiveIcons.Grid,
+                contentDescription = "Watch with another channel",
+                onClick = onOpenMultiView,
+                style = ExpressiveButtonStyle.Tonal,
+            )
+        } else {
+            ExpressiveButton(
+                text = "Watch with another channel",
+                onClick = onOpenMultiView,
+                style = ExpressiveButtonStyle.Tonal,
+                size = ExpressiveButtonSize.Medium,
+                icon = ExpressiveIcons.Grid,
+            )
+        }
+        if (compactFollow) {
+            ExpressiveIconButton(
+                icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
+                contentDescription = if (isFollowed) "Following" else "Follow",
+                onClick = onToggleFollow,
+                style = ExpressiveButtonStyle.Tonal,
+                enabled = canFollow,
+            )
+        } else {
+            ExpressiveButton(
+                text = if (isFollowed) "Following" else "Follow",
+                onClick = onToggleFollow,
+                style = ExpressiveButtonStyle.Tonal,
+                size = ExpressiveButtonSize.Medium,
+                icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
+                enabled = canFollow,
+            )
+        }
+    }
     }
 }
+
+/** At or above this width the stream's top bar has room for every button label and the name. */
+private val TOP_BAR_FULL_WIDTH = 1000.dp
+
+/** Below this width Follow also shows only its icon. */
+private val TOP_BAR_COMPACT_WIDTH = 760.dp
 
 // ── Playback controls ─────────────────────────────────────────────────────────
 

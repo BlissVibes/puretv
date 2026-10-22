@@ -9,7 +9,8 @@
 #
 # Passes when, within 120 s: the stream starts playing, libVLC opens a video output, and
 # (on macOS, where Java paints the frames) a frame is painted; and the app is still
-# running 15 s later. The screenshot is for a human to look at; it is not judged here.
+# running 15 s later, and it then quits within 20 s when the OS asks it to. The screenshot
+# is for a human to look at; it is not judged here.
 set -uo pipefail
 launcher="$1"
 data="$2"
@@ -58,7 +59,17 @@ cp "$data/crash.log" "$out/" 2>/dev/null || true
 # A native crash leaves the JVM's hs_err report in the working folder.
 cp hs_err_pid*.log "$out/" 2>/dev/null || true
 echo "--- timing.log"; cat "$data/timing.log" 2>/dev/null
-kill "$pid" 2>/dev/null; sleep 3; kill -9 "$pid" 2>/dev/null
+# Quit the way a user's system does and require a clean exit: on macOS a quit Apple event
+# (what Cmd+Q, the Dock and logout send, handled by MacAppEvents), elsewhere SIGTERM (what a
+# session logout sends; the shutdown hook flushes the stores).
+if [ "$(uname)" = "Darwin" ]; then
+  osascript -e 'tell application id "com.puretv.twitch" to quit' >/dev/null 2>&1 || kill "$pid" 2>/dev/null
+else
+  kill -TERM "$pid" 2>/dev/null
+fi
+quit=0
+for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || { quit=1; break; }; sleep 1; done
+if [ "$quit" = 1 ]; then echo "Quit cleanly"; else echo "::error::PureTV still running 20 s after being asked to quit"; kill -9 "$pid" 2>/dev/null; ok=0; fi
 
 if [ "$ok" != 1 ]; then
   echo "::error::Smoke test failed: needed ${need[*]}"

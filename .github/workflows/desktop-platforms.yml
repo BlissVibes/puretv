@@ -179,10 +179,6 @@ jobs:
       - name: Build the .deb
         run: ./gradlew :app-windows:packageReleaseDeb --console=plain
 
-      - name: Check the shipped jar carries the real client secret
-        if: inputs.release
-        run: app-windows/packaging/check-client-secret.sh "app-windows/build/compose/binaries/main-release/app"
-
       - name: Finish the .deb (libVLC dependency, older distro names, menu entry)
         id: deb
         run: |
@@ -191,6 +187,16 @@ jobs:
           out="$(basename "$in" | sed 's/-1_amd64/_amd64/')"
           app-windows/packaging/linux/finish-deb.sh "$in" "$out"
           echo "file=$out" >> "$GITHUB_OUTPUT"
+
+      # Checked inside the finished .deb: that is what ships, and packageReleaseDeb does not
+      # leave its app image under main-release/app.
+      - name: Check the shipped jar carries the real client secret
+        if: inputs.release
+        run: |
+          set -euo pipefail
+          rm -rf deb-root
+          dpkg-deb -x "${{ steps.deb.outputs.file }}" deb-root
+          app-windows/packaging/check-client-secret.sh deb-root/opt/puretv-for-twitch
 
       # The docs promise Debian 12 and Ubuntu 24.04 too: install (no launch) in clean containers.
       - name: Installs on Debian 12 and Ubuntu 24.04

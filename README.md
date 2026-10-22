@@ -76,6 +76,34 @@ Everything it needs, including the video engine, is in the installer.
 </details>
 
 <details>
+<summary><b>macOS (Apple Silicon)</b></summary>
+
+<br>
+
+1. [Download the `.dmg`](https://github.com/dhawal-ss/puretv/releases/latest) (`PureTV-for-Twitch-<version>-macos-arm64.dmg`), open it and drag **PureTV for Twitch** into **Applications**.
+2. The app is not notarized by Apple yet, so the first time you open it macOS refuses. Go to **System Settings, Privacy & Security**, scroll down and click **Open Anyway**.
+3. Open PureTV and sign in.
+
+VLC is inside the app. Intel Macs are not supported yet. New versions are announced in the app; installing one is the same drag into Applications.
+
+</details>
+
+<details>
+<summary><b>Linux (Ubuntu, Debian, Mint, Pop!_OS)</b></summary>
+
+<br>
+
+Needs Ubuntu 22.04, Debian 12 or newer, on a 64-bit PC.
+
+1. [Download the `.deb`](https://github.com/dhawal-ss/puretv/releases/latest) (`puretv-for-twitch_<version>_amd64.deb`).
+2. Install it with `sudo apt install ./puretv-for-twitch_*_amd64.deb`. That also installs VLC, which PureTV plays through.
+3. Open **PureTV for Twitch** from your applications menu and sign in.
+
+Go-live alerts need a system tray. GNOME has none unless you add the AppIndicator extension; KDE, Cinnamon and Xfce have one. New versions are announced in the app.
+
+</details>
+
+<details>
 <summary><b>Android</b></summary>
 
 <br>
@@ -121,7 +149,7 @@ A separate build with a 10-foot layout you drive entirely with the remote. It in
 
 ## Build it yourself
 
-Kotlin Multiplatform. A shared `core` module holds the API client, sign-in, ad-block engine and chat; each app builds its own UI on top. Windows uses Compose Multiplatform with VLC, Android and TV use Jetpack Compose with ExoPlayer.
+Kotlin Multiplatform. A shared `core` module holds the API client, sign-in, ad-block engine and chat; each app builds its own UI on top. The desktop app (Windows, macOS, Linux; the module is still called `app-windows`) uses Compose Multiplatform with VLC, Android and TV use Jetpack Compose with ExoPlayer.
 
 ```bash
 ./gradlew :app-windows:run          # desktop, needs JDK 17 and VLC

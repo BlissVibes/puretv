@@ -40,9 +40,39 @@ left unsigned.
 
 This bundles VLC, so the installed app needs nothing extra.
 
+## Packaging macOS and Linux
+
+Each OS packages on itself (jpackage cannot cross-build). CI does both on native
+runners in `.github/workflows/desktop-platforms.yml`; by hand:
+
+```bash
+# macOS (Apple Silicon), with VLC.app installed (brew install --cask vlc)
+./gradlew :app-windows:bundleVlc
+./gradlew :app-windows:createReleaseDistributable
+codesign --force --deep --sign - "app-windows/build/compose/binaries/main-release/app/PureTV for Twitch.app"
+# then hdiutil create, as the workflow does
+
+# Linux (build on Ubuntu 22.04 or Debian 12; needs fakeroot and dpkg-dev)
+./gradlew :app-windows:packageReleaseDeb
+app-windows/packaging/linux/finish-deb.sh app-windows/build/compose/binaries/main-release/deb/*.deb puretv.deb
+```
+
+- macOS bundles VLC from VLC.app; mpv is not offered there. Video is drawn through
+  libVLC's frame callbacks (`VideoCanvas`), since a Java window has no native view
+  for VLC. `-Dpuretv.video.callback=true` forces that path on Windows or Linux.
+- The `.dmg` is ad-hoc signed, not notarized: there is no Apple Developer ID. Users
+  allow it once under System Settings, Privacy & Security.
+- Linux uses the distro's libVLC; `finish-deb.sh` adds it as a dependency and makes
+  the package installable on Ubuntu 22.04 through 24.04 and Debian 12.
+- Data lives in `~/Library/Application Support/PureTwitch` (macOS) and
+  `$XDG_CONFIG_HOME/PureTwitch` (Linux); caches in `~/Library/Caches/PureTwitch` and
+  `$XDG_CACHE_HOME/PureTwitch`. Windows is unchanged (`%APPDATA%\PureTwitch`).
+- `app-windows/packaging/smoke/launch-smoke.sh` launches an installed build on a
+  live channel and checks that video plays.
+
 ## Cutting a release
 
-### Windows
+### Desktop (Windows, macOS, Linux)
 
 Bump `appVersion` in `app-windows/build.gradle.kts`, commit, then:
 
@@ -51,8 +81,11 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-CI builds the installer and opens a draft release. Publish it and the in-app
-updater picks it up on everyone's next launch.
+CI builds the Windows installer, the macOS `.dmg` and the Linux `.deb`, each on its
+own runner, and opens one draft release with all three plus `SHA256SUMS.txt`. The
+draft waits for every OS, and the tag must equal `appVersion`. Publish it and the
+in-app updater offers it on everyone's next launch (on macOS and Linux the update
+opens the release page; only Windows installs in place).
 
 ### Android and TV
 

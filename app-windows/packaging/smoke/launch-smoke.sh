@@ -18,7 +18,8 @@ mkdir -p "$out"
 
 # The most-watched live channel, from Twitch's public GraphQL endpoint (the same one
 # and client id the app uses for anonymous browsing).
-channel="$(curl -fsS https://gql.twitch.tv/gql \
+channel="${SMOKE_CHANNEL:-}"
+[ -n "$channel" ] || channel="$(curl -fsS https://gql.twitch.tv/gql \
   -H 'Client-ID: kimne78kx3ncx6brgo4mv6wki5h1ko' \
   -d '{"query":"{ streams(first: 1) { edges { node { broadcaster { login } } } } }"}' \
   | sed -n 's/.*"login":"\([^"]*\)".*/\1/p')"

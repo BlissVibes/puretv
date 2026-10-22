@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Finishes the .deb jpackage made (gradle :app-windows:packageReleaseDeb):
-#  - adds what jpackage cannot know about: libVLC (playback), and as recommendations
+#  - adds what jpackage cannot know about: libVLC and its codecs and video outputs
+#    (vlc-plugin-video-output holds the window embedding; without it there is sound
+#    and no picture), and as recommendations
 #    a colour emoji font (chat) and libmpv (the optional mpv engine);
 #  - lets each library from the 64-bit time_t transition ("libfoo2t64", which jpackage
 #    copies from the build machine) also be satisfied by its older name ("libfoo2"),
@@ -30,7 +32,7 @@ awk '
       if (d ~ /t64$/) { old = d; sub(/t64$/, "", old); d = d " | " old }
       line = line (line == "" ? "" : ", ") d
     }
-    print "Depends: " line ", libvlc5, vlc-plugin-base"
+    print "Depends: " line ", libvlc5, vlc-plugin-base, vlc-plugin-video-output"
     print "Recommends: fonts-noto-color-emoji, libmpv2 | libmpv1"
     next
   }

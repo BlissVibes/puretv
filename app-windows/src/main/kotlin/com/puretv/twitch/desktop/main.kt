@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop
 
+import com.puretv.twitch.desktop.platform.NativePreload
 import com.puretv.twitch.desktop.platform.MacAppEvents
 import com.puretv.twitch.desktop.platform.LaunchArgs
 import com.puretv.twitch.desktop.platform.WindowChrome
@@ -81,6 +82,8 @@ import org.koin.core.context.GlobalContext.startKoin
 import org.koin.dsl.koinApplication
 
 fun main(args: Array<String>) {
+    // Before anything can load Skia: see NativePreload (Linux only).
+    NativePreload.linuxCxxRuntime()
     TimingFileSink.install()
     Diagnostics.installCrashLog()
     // One running copy only: a second launch brings the open window forward (or out

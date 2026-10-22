@@ -16,6 +16,14 @@ import java.io.File
  */
 object NativeLibs {
 
+    /**
+     * True on macOS, where libVLC decodes into memory for [VideoCanvas] to paint instead of
+     * drawing into a native window (see above). `-Dpuretv.video.callback=true` forces the
+     * same path on Windows or Linux, so the macOS renderer can be checked without a Mac.
+     */
+    fun callbackVideo(os: HostOs = HostOs.current): Boolean =
+        os == HostOs.MACOS || System.getProperty("puretv.video.callback") == "true"
+
     /** False on macOS, where libmpv has no window to draw into (see above). */
     fun mpvSupported(os: HostOs = HostOs.current): Boolean = os != HostOs.MACOS
 

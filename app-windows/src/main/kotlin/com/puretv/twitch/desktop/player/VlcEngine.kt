@@ -62,8 +62,18 @@ class VlcEngine(private val extraArgs: () -> List<String> = { emptyList() }) {
     /** A new media player on the shared instance, or null when VLC is not installed. */
     fun newEmbeddedPlayer(): EmbeddedMediaPlayer? = factory?.mediaPlayers()?.newEmbeddedMediaPlayer()
 
-    /** A video surface bound to the native window of [component]. */
-    fun newVideoSurface(component: Component): VideoSurface? = factory?.videoSurfaces()?.newVideoSurface(component)
+    /**
+     * A video surface for [component]: its native window on Windows and Linux, or on
+     * macOS frames decoded into memory that the [VideoCanvas] paints itself.
+     */
+    fun newVideoSurface(component: Component): VideoSurface? {
+        val surfaces = factory?.videoSurfaces() ?: return null
+        if (NativeLibs.callbackVideo() && component is VideoCanvas) {
+            val sink = FrameSink(component)
+            return surfaces.newVideoSurface(sink, sink, true)
+        }
+        return surfaces.newVideoSurface(component)
+    }
 
     /** Frees libVLC. Call once at shutdown, after every player made from it is released. */
     fun releaseIfBuilt() {

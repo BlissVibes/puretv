@@ -143,6 +143,12 @@ Found and fixed while testing (not in the first audit):
 | macOS 14 arm64: tests, bundled VLC (VLC.app uninstalled), ad-hoc .dmg, install, launch | PASS: `stream.first_frame` 1829 ms, `player.video_output`, `player.frame_painted` |
 | Ubuntu 22.04: tests, .deb, apt install, menu entry valid, launch under Xvfb with PulseAudio, removal | PASS: `stream.first_frame` 768 ms, `player.video_output`, picture in the screenshot |
 
+### Linux: the CI-built .deb on Ubuntu 24.04 (WSL), after every fix
+
+The release package is built on Ubuntu 22.04 with Temurin. That exact file (run 39767612350) installs on 24.04 with apt and passes `launch-smoke.sh` (`stream.first_frame` 600 ms, `player.video_output`, still running 15 s later). The earlier 24.04 results above were taken before `NativePreload` existed.
+
+Its Depends use names shared by Ubuntu and Debian (`libasound2`, `libpng16-16`, no `libjpeg-turbo8`); CI also installs it in clean `debian:12` and `ubuntu:24.04` containers (install only, no launch).
+
 ### Linux: Ubuntu 22.04 under WSL2 (Xvfb + PulseAudio), this PC
 
 | Check | Result |
@@ -179,7 +185,7 @@ PASS = verified, FAIL, BLOCKED = needs something not available here, UNVERIFIED 
 | Package | PASS (existing release.yml, unchanged steps) | PASS (.dmg, ad-hoc signed) | PASS (.deb, finished) |
 | Install / uninstall | PASS (shipping) | Install PASS (CI, no quarantine); uninstall = delete the app (UNVERIFIED) | PASS (WSL; CI apt) |
 | Launch | PASS (shipping 1.13.0) | PASS (CI) | PASS (WSL; CI Xvfb) |
-| Live playback (VLC) | PASS (shipping) | PASS (CI, bundled VLC, frames painted) | PASS (WSL 24.04 and 22.04) |
+| Live playback (VLC) | PASS (shipping) | PASS (CI, bundled VLC, frames painted) | PASS (CI 22.04; WSL 22.04 and 24.04 with the CI-built .deb) |
 | mpv engine | PASS (shipping) | N/A (not offered) | PASS (WSL, software fallback) |
 | Audio, per-tile volume | PASS (shipping) | UNVERIFIED (no audio device on the runner) | UNVERIFIED by ear |
 | Sign-in (device code) | PASS (shipping) | UNVERIFIED (needs a person) | UNVERIFIED (needs a person) |
@@ -191,6 +197,10 @@ PASS = verified, FAIL, BLOCKED = needs something not available here, UNVERIFIED 
 | Updates | In-place install (shipping) | Notify + release page (unit-tested selector) | Notify + release page (unit-tested selector) |
 | Code signing | Not signed (SmartScreen warning, as today) | BLOCKED: no Developer ID; ad-hoc only, not notarized | N/A (.deb unsigned, normal for direct downloads) |
 | Keyboard Tab traversal | Fixed (same code, verified on Linux) | Fixed (same code) | PASS (WSL) |
+
+### Release workflow
+
+The `release: true` path (secret handoff to the reusable workflow, tag check, jar check, downloading the macOS and Linux artifacts into the draft, `SHA256SUMS.txt`) has **never run**. It was not dispatched on purpose: `release.yml` also pushes the proxy image to GHCR. The first real `v*` tag is its first test; it only opens a draft, so a failure publishes nothing. That tag needs `appVersion` above 1.13.0, since the guard refuses to rebuild a published version.
 
 ## 7. Release recommendation
 
@@ -205,6 +215,8 @@ item is a check by a person with a device, not missing engineering.
   already running, since the window chrome, focus and top-bar changes touch shared UI.
 
 Nothing has been merged to `main`, tagged or released.
+
+Merge order: README's new macOS and Linux sections link to `/releases/latest`, which today carries only the Windows `.exe`. Merge them with (or after) the first release that carries the `.dmg` and `.deb`, not before.
 
 ## 8. Remaining work, by priority
 

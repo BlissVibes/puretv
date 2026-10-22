@@ -192,6 +192,14 @@ jobs:
           app-windows/packaging/linux/finish-deb.sh "$in" "$out"
           echo "file=$out" >> "$GITHUB_OUTPUT"
 
+      # The docs promise Debian 12 and Ubuntu 24.04 too: install (no launch) in clean containers.
+      - name: Installs on Debian 12 and Ubuntu 24.04
+        run: |
+          for image in debian:12 ubuntu:24.04; do
+            echo "== $image"
+            docker run --rm -v "$PWD":/w -e DEBIAN_FRONTEND=noninteractive "$image" sh -c               "apt-get update -qq && apt-get install -y -qq /w/${{ steps.deb.outputs.file }} >/dev/null && dpkg -s puretv-for-twitch | grep -E '^Status'"
+          done
+
       - name: Install with apt (resolves every dependency)
         # VLC pulls in ~100 packages; the runner's mirror has taken 8 minutes to fetch them.
         timeout-minutes: 20

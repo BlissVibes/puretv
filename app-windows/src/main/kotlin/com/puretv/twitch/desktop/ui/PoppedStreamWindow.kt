@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
+import androidx.compose.runtime.snapshotFlow
+import com.puretv.twitch.desktop.platform.NativeFullscreenExit
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -165,6 +167,17 @@ private fun PoppedStreamWindow(
         val awtWindow = window
         remember(awtWindow) { WindowChrome.styleNativeFrame(awtWindow) }
         var restore by remember { mutableStateOf<MiniRect?>(null) }
+        // The OS can end its fullscreen on its own (green button, a window manager shortcut).
+        val nativeExit = remember { NativeFullscreenExit() }
+        LaunchedEffect(Unit) {
+            if (!WindowChrome.nativeFullscreen()) return@LaunchedEffect
+            snapshotFlow { windowState.placement }.collect { placement ->
+                if (nativeExit.left(gate.fullscreen, placement)) {
+                    gate.fullscreen = false
+                    fullscreen = false
+                }
+            }
+        }
 
         // Borderless fullscreen on the monitor the window is on, the way the main window does it:
         // no exclusive mode, which fights the video surface.

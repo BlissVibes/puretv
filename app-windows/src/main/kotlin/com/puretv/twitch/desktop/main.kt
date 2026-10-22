@@ -84,6 +84,7 @@ import org.koin.dsl.koinApplication
 fun main(args: Array<String>) {
     // Before anything can load Skia: see NativePreload (Linux only).
     NativePreload.linuxCxxRuntime()
+    AppDirs.createPrivate()
     TimingFileSink.install()
     Diagnostics.installCrashLog()
     // One running copy only: a second launch brings the open window forward (or out
@@ -91,6 +92,7 @@ fun main(args: Array<String>) {
     val guard = SingleInstance(
         lockFile = File(AppDirs.data, "instance.lock"),
         focusExistingWindow = { SingleInstance.focusWindowTitled(PRIMARY_WINDOW_TITLE) },
+        request = LaunchArgs.request(args),
     )
     if (!guard.acquire()) exitProcess(0)
     instanceGuard = guard
@@ -102,7 +104,10 @@ fun main(args: Array<String>) {
     val navRequests = koinApp.koin.get<NavigationRequests>()
     // Also installs the registry that openInNewWindow() uses.
     val registry = koinApp.koin.get<WindowRegistry>()
-    guard.listenForActivation { navRequests.requestShow() }
+    guard.listenForActivation { request ->
+        val channel = LaunchArgs.channelFromRequest(request)
+        if (channel != null) navRequests.requestStream(channel) else navRequests.requestShow()
+    }
     // `--channel <login>`: start on that stream (a launcher shortcut, a script, a smoke test).
     LaunchArgs.channel(args)?.let { navRequests.requestStream(it) }
 
@@ -142,10 +147,12 @@ fun main(args: Array<String>) {
                 }
             }
     }
-    // "Start with Windows" points at the launcher exe; rewrite it on each start so it
-    // follows the app if it was reinstalled somewhere else.
+    // "Start at login" points at the launcher; rewrite it on each start so it follows the app
+    // if it was reinstalled somewhere else. Removed through the OS (macOS, Linux): turn it off.
     if (settingsStore.settings.value.startWithWindows) {
-        backgroundScope.launch { LoginStartup.setEnabled(true) }
+        backgroundScope.launch {
+            if (!LoginStartup.refresh()) settingsStore.updateSettings { it.copy(startWithWindows = false) }
+        }
     }
 
     val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()

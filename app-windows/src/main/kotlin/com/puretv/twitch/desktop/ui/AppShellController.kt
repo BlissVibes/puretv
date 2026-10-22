@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.NativeFullscreenExit
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
@@ -31,7 +32,7 @@ enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
 /**
  * Owns window-chrome state (player mode, chat, maximize/minimize/fullscreen).
  *
- * FULLSCREEN: we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
+ * FULLSCREEN on Windows: we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
  * undecorated window that combination drives Windows *exclusive* fullscreen,
  * whose Direct3D surface fights the heavyweight VLC video Canvas and leaves a
  * blank/white screen, most reliably when entered from a maximized window.
@@ -41,6 +42,10 @@ enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
  * to cover the whole monitor, taskbar included. No exclusive mode, no surface
  * hand-off, no white flash. On exit we restore the exact pre-fullscreen geometry
  * through [WindowState] so its size/placement memory stays correct.
+ *
+ * On macOS and Linux the window has the system's frame, so fullscreen is the system's
+ * (`WindowPlacement.Fullscreen`, see [WindowChrome.nativeFullscreen]); when the OS ends it
+ * on its own, [onPlacementChanged] brings the player back to its normal layout.
  */
 class AppShellController(
     private val windowState: WindowState,
@@ -72,6 +77,18 @@ class AppShellController(
 
     /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
     private var miniRestore: FullscreenRestore? = null
+
+    private val nativeExit = NativeFullscreenExit()
+
+    /** Fed every window placement (see App): follows the OS leaving its fullscreen. */
+    fun onPlacementChanged(placement: WindowPlacement) {
+        if (!WindowChrome.nativeFullscreen()) return
+        if (nativeExit.left(playerModeState == PlayerMode.FULLSCREEN, placement)) {
+            // The OS already put the window back; only the player's layout follows.
+            fullscreenRestore = null
+            playerModeState = PlayerMode.DEFAULT
+        }
+    }
 
     fun setPlayerMode(mode: PlayerMode) {
         val previous = playerModeState

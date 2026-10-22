@@ -41,6 +41,9 @@ class SingleInstance(
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val activationDir: File = File(lockFile.parentFile ?: File("."), "activate"),
+    // What a second launch asks of the running copy: "show", or what LaunchArgs.request
+    // makes of its command line (e.g. a channel to open).
+    private val request: String = LaunchArgs.SHOW,
 ) {
     private var channel: FileChannel? = null
     private var lock: FileLock? = null
@@ -74,10 +77,10 @@ class SingleInstance(
     }
 
     /**
-     * Calls [onActivate] (on a background thread) each time another launch asks this
-     * copy to show itself. Only the copy that won [acquire] should listen.
+     * Calls [onActivate] (on a background thread) with the request each time another launch
+     * asks this copy to show itself. Only the copy that won [acquire] should listen.
      */
-    fun listenForActivation(onActivate: () -> Unit) {
+    fun listenForActivation(onActivate: (String) -> Unit) {
         val service = runCatching {
             activationDir.mkdirs()
             FileSystems.getDefault().newWatchService().also {
@@ -118,9 +121,11 @@ class SingleInstance(
         watcher = null
     }
 
-    private fun consumeRequest(onActivate: () -> Unit) {
-        if (listening && requestFile.exists() && runCatching { requestFile.delete() }.getOrDefault(false)) {
-            runCatching(onActivate)
+    private fun consumeRequest(onActivate: (String) -> Unit) {
+        if (!listening || !requestFile.exists()) return
+        val text = runCatching { requestFile.readText() }.getOrDefault(LaunchArgs.SHOW)
+        if (runCatching { requestFile.delete() }.getOrDefault(false)) {
+            runCatching { onActivate(text) }
         }
     }
 
@@ -128,7 +133,7 @@ class SingleInstance(
     private fun requestActivation(): Boolean = runCatching {
         activationDir.mkdirs()
         val temp = File.createTempFile("show", ".tmp", activationDir)
-        temp.writeText("show")
+        temp.writeText(request)
         Files.move(temp.toPath(), requestFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         true
     }.getOrDefault(false)

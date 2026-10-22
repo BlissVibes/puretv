@@ -16,10 +16,11 @@ object MacAppEvents {
         val desktop = Desktop.getDesktop()
         runCatching {
             if (desktop.isSupported(Desktop.Action.APP_QUIT_HANDLER)) {
-                desktop.setQuitHandler { _, response ->
-                    response.cancelQuit()
-                    SwingUtilities.invokeLater(onQuit)
-                }
+                // The response is deliberately left unanswered: cancelQuit() would tell macOS
+                // PureTV refused (aborting a logout or restart), and performQuit() would end the
+                // JVM before the stores are flushed. onQuit ends the process itself, which is
+                // what macOS waits for.
+                desktop.setQuitHandler { _, _ -> SwingUtilities.invokeLater(onQuit) }
             }
         }
         runCatching {

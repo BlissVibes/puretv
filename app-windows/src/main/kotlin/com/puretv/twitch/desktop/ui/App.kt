@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import androidx.compose.runtime.snapshotFlow
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.animation.AnimatedVisibility
@@ -202,6 +203,7 @@ fun App(
     val themeVariant = ThemeVariant.fromKey(settings.theme)
     val shapeIntensity = ShapeIntensity.fromKey(settings.shapeIntensity)
     val shell = rememberAppShellController(windowState, awtWindow)
+    LaunchedEffect(shell) { snapshotFlow { windowState.placement }.collect { shell.onPlacementChanged(it) } }
 
     val updateManager = remember { koin.get<UpdateManager>() }
     val updateState by updateManager.state.collectAsState()

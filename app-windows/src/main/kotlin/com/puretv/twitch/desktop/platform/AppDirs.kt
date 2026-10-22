@@ -45,6 +45,23 @@ object AppDirs {
         if (HostOs.current == HostOs.WINDOWS) File(data, "image_cache") else File(cache, "images")
     }
 
+    /**
+     * Creates the data folder and, on macOS and Linux, makes it private to this user (0700):
+     * it holds watch history, follows and the encrypted sign-in, and the default umask would
+     * leave it readable by other accounts. Windows profiles are private already. Never throws.
+     */
+    fun createPrivate() {
+        runCatching {
+            data.mkdirs()
+            if (HostOs.current != HostOs.WINDOWS) {
+                java.nio.file.Files.setPosixFilePermissions(
+                    data.toPath(),
+                    java.nio.file.attribute.PosixFilePermissions.fromString("rwx------"),
+                )
+            }
+        }
+    }
+
     internal fun dataDir(os: HostOs, env: (String) -> String?, home: String): File = when (os) {
         HostOs.WINDOWS -> File(env("APPDATA") ?: home, NAME)
         HostOs.MACOS -> File(home, "Library/Application Support/$NAME")

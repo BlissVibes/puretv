@@ -56,12 +56,6 @@ open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
         repaint()
     }
 
-    /** Drops the last frame, e.g. when the engine moves to another surface. */
-    internal fun clearFrame() {
-        synchronized(lock) { frame = null }
-        repaint()
-    }
-
     // Without a frame the default update clears to black. With one, painting over the
     // whole area anyway, so skipping the clear avoids a black flash on every frame.
     override fun update(g: Graphics) {

@@ -45,3 +45,31 @@ object WindowChrome {
         root.putClientProperty("apple.awt.windowTitleVisible", false)
     }
 }
+
+/**
+ * Notices the OS ending a system fullscreen PureTV asked for: the macOS green button or
+ * Ctrl+Cmd+F, a window manager's shortcut. Without it PureTV would keep its fullscreen
+ * layout in a window that is no longer fullscreen.
+ *
+ * Feed it every placement while the window is (as far as PureTV knows) fullscreen. The
+ * placement can still read as normal for a moment after PureTV asks for fullscreen, so
+ * only a fullscreen that was actually reached and then left counts.
+ */
+class NativeFullscreenExit {
+    private var reached = false
+
+    /** True when [placement] means the OS just left the fullscreen PureTV is in. */
+    fun left(inFullscreen: Boolean, placement: androidx.compose.ui.window.WindowPlacement): Boolean {
+        if (!inFullscreen) {
+            reached = false
+            return false
+        }
+        if (placement == androidx.compose.ui.window.WindowPlacement.Fullscreen) {
+            reached = true
+            return false
+        }
+        if (!reached) return false
+        reached = false
+        return true
+    }
+}

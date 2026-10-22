@@ -19,4 +19,14 @@ class LaunchArgsTest {
         assertNull(LaunchArgs.channel(arrayOf("--channel=a b")))
         assertNull(LaunchArgs.channel(arrayOf("--channel", "x".repeat(26))))
     }
+
+    @Test
+    fun `a second launch hands its channel to the running copy`() {
+        assertEquals("channel:forsen", LaunchArgs.request(arrayOf("--channel", "Forsen")))
+        assertEquals("show", LaunchArgs.request(arrayOf()))
+        assertEquals("forsen", LaunchArgs.channelFromRequest("channel:forsen\n"))
+        assertNull(LaunchArgs.channelFromRequest("show"))
+        assertNull(LaunchArgs.channelFromRequest("channel:../x"))
+        assertNull(LaunchArgs.channelFromRequest("forsen"))
+    }
 }

@@ -45,6 +45,24 @@ object LoginStartup {
         }
     }.getOrDefault(false)
 
+    /**
+     * Run at each start while the setting is on: points the entry at the launcher again (it
+     * follows the app if it was reinstalled elsewhere). False when the entry is gone on macOS
+     * or Linux, where the OS's own startup settings remove it by deleting the file: the
+     * setting then follows the OS instead of putting the entry back.
+     */
+    fun refresh(): Boolean {
+        val home = File(System.getProperty("user.home"))
+        val file = when (HostOs.current) {
+            HostOs.WINDOWS -> return setEnabled(true).let { true }
+            HostOs.LINUX -> linuxEntry(home, System.getenv("XDG_CONFIG_HOME"))
+            HostOs.MACOS -> macAgent(home)
+        }
+        if (!file.exists()) return false
+        setEnabled(true)
+        return true
+    }
+
     private fun setWindows(enabled: Boolean): Boolean {
         if (enabled) {
             val exe = launcher ?: return false

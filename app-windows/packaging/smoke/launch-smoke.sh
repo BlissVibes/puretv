@@ -54,6 +54,8 @@ fi
 
 cp "$data/timing.log" "$out/" 2>/dev/null || true
 cp "$data/crash.log" "$out/" 2>/dev/null || true
+# A native crash leaves the JVM's hs_err report in the working folder.
+cp hs_err_pid*.log "$out/" 2>/dev/null || true
 echo "--- timing.log"; cat "$data/timing.log" 2>/dev/null
 kill "$pid" 2>/dev/null; sleep 3; kill -9 "$pid" 2>/dev/null
 

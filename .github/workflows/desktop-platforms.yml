@@ -198,7 +198,7 @@ jobs:
         run: |
           sudo apt-get update -q
           # Non-interactive, so no debconf question from a dependency can stall the job.
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "./${{ steps.deb.outputs.file }}" xvfb imagemagick
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "./${{ steps.deb.outputs.file }}" xvfb imagemagick desktop-file-utils
           dpkg -s puretv-for-twitch | grep -E '^(Status|Version):'
           desktop-file-validate /usr/share/applications/puretv-for-twitch.desktop
 

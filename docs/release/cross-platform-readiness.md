@@ -202,7 +202,10 @@ PASS = verified, FAIL, BLOCKED = needs something not available here, UNVERIFIED 
 
 ### Release workflow
 
-The `release: true` path (secret handoff to the reusable workflow, tag check, jar check, downloading the macOS and Linux artifacts into the draft, `SHA256SUMS.txt`) has **never run**. It was not dispatched on purpose: `release.yml` also pushes the proxy image to GHCR. The first real `v*` tag is its first test; it only opens a draft, so a failure publishes nothing. That tag needs `appVersion` above 1.13.0, since the guard refuses to rebuild a published version.
+The `release: true` path ran for the first time with `v1.14.0` (published 2026-10-22). It took three runs, none of which published anything until all three OSes passed:
+1. The Linux client-secret check looked for an app image that `packageReleaseDeb` does not leave behind. Fixed by checking inside the finished `.deb`; testing that also exposed a pipefail bug that could have let a placeholder secret pass, now fixed and verified both ways.
+2. The runner's apt mirror timed out on a 61 MB font the launch check does not need. The runner's install now skips recommended packages.
+3. All jobs passed. Before publishing: every file matched `SHA256SUMS.txt`, the installer's Ed25519 signature verified against the key built into the app, and the `.deb` is 1.14.0 with the real client secret.
 
 ## 6b. Second pass (2026-10-22): review, journeys, security
 
@@ -288,7 +291,7 @@ Merged to `main` and released as `v1.14.0`, with the README's macOS and Linux se
 | Install / upgrade | Install PASS (all); upgrade UNVERIFIED (first mac/Linux release has nothing to upgrade from) | |
 | Signing | BLOCKED (macOS notarization, no Developer ID); Windows unsigned as today | |
 | Artifacts match platforms | PASS | `lipo -archs` arm64; .deb amd64 |
-| Versions, checksums, notes | PARTIAL | SHA256SUMS in release.yml (never run); notes drafted in CHANGELOG "Unreleased"; `appVersion` bump pending |
+| Versions, checksums, notes | PASS | v1.14.0: appVersion 1.14.0, tag check passed, SHA256SUMS verified, notes from CHANGELOG |
 | Known limitations documented | PASS | This report, README, DEVELOPING.md |
 
 ### Release checklist

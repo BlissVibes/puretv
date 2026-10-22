@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -155,7 +156,10 @@ fun VlcPlayerView(
         // Canvas + JPanel are already BLACK; this is the one background Compose
         // itself paints, so it must be black too.
         background = ComposeColor.Black,
-        modifier = modifier,
+        // Out of keyboard traversal: nothing in the video panel takes focus (see above), so
+        // Tab moving into it stopped there, and every control after a video (the Home hero's
+        // Watch now, the stream page) was out of the keyboard's reach.
+        modifier = modifier.focusProperties { canFocus = false },
         factory = { panel },
     )
 }

@@ -7,14 +7,15 @@ import java.awt.Component
 import javax.swing.SwingUtilities
 
 /**
- * The audio output multi-stream tiles use. VLC's default Windows output (mmdevice)
+ * The audio output multi-stream tiles use (per OS, see [NativeLibs.tileAudioOutput]).
+ * VLC's default Windows output (mmdevice)
  * sets volume and mute on the process's one audio session, so with several players
  * muting the quiet tiles silenced the active one too: measured with two live
  * players, setting one player's volume changed the other's. DirectSound keeps a
  * volume per player (measured the same way), which is what "only the active tile is
  * audible" needs. The single-stream player keeps VLC's default.
  */
-const val TILE_AUDIO_OUTPUT = "directsound"
+val TILE_AUDIO_OUTPUT: String? = NativeLibs.tileAudioOutput()
 
 /**
  * The one libVLC instance of the app. Loading libVLC scans its plugins, which is
@@ -94,8 +95,8 @@ class VlcEngine(private val extraArgs: () -> List<String> = { emptyList() }) {
         fun detectBundledVlc(): String? {
             val resourcesDir = System.getProperty("compose.application.resources.dir")
                 ?: return null
-            val vlcDir = java.io.File(resourcesDir, "vlc")
-            if (!vlcDir.exists() || !java.io.File(vlcDir, "libvlc.dll").exists()) return null
+            // Windows: vlc/libvlc.dll. macOS: vlc/lib/libvlc.dylib. Linux uses the distro's libVLC.
+            val vlcDir = NativeLibs.bundledVlcLibDir(java.io.File(resourcesDir)) ?: return null
             val existing = System.getProperty("jna.library.path")
             System.setProperty(
                 "jna.library.path",

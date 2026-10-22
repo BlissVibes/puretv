@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.TooltipArea
 import androidx.compose.foundation.background
@@ -158,16 +159,23 @@ private fun PoppedStreamWindow(
         state = windowState,
         title = "${tile.vod?.title?.ifBlank { null } ?: info.displayName} - PureTV",
         icon = icon,
-        undecorated = true,
+        undecorated = WindowChrome.customFrame(),
     ) {
         val awtWindow = window
+        remember(awtWindow) { WindowChrome.styleNativeFrame(awtWindow) }
         var restore by remember { mutableStateOf<MiniRect?>(null) }
 
         // Borderless fullscreen on the monitor the window is on, the way the main window does it:
         // no exclusive mode, which fights the video surface.
         fun setFullscreen(on: Boolean) {
             if (on == gate.fullscreen) return
-            if (on) {
+            if (on && WindowChrome.nativeFullscreen()) {
+                gate.fullscreen = true
+                windowState.placement = WindowPlacement.Fullscreen
+            } else if (!on && WindowChrome.nativeFullscreen()) {
+                windowState.placement = WindowPlacement.Floating
+                gate.fullscreen = false
+            } else if (on) {
                 // Before the bounds change: the resize events that follow must not be saved as a place.
                 gate.fullscreen = true
                 restore = MiniRect(awtWindow.x, awtWindow.y, awtWindow.width, awtWindow.height)
@@ -433,8 +441,17 @@ private fun Modifier.windowDrag(
                 if (event.changes.any { it.isConsumed }) return@awaitEachGesture
                 val travelled = (event.changes.first().position - down.position).getDistance()
                 if (latestEnabled && event.type == PointerEventType.Move && travelled > viewConfiguration.touchSlop) {
-                    // Blocks in the OS move loop until the button is released.
-                    WindowsNative.startWindowDrag(window)
+                    // Blocks in the OS move loop until the button is released (Windows).
+                    if (WindowsNative.startWindowDrag(window)) return@awaitEachGesture
+                    // Elsewhere there is no OS move loop to hand over to: follow the pointer.
+                    val start = java.awt.MouseInfo.getPointerInfo()?.location ?: return@awaitEachGesture
+                    val origin = window.location
+                    while (true) {
+                        val move = awaitPointerEvent()
+                        if (move.changes.none { it.pressed }) break
+                        val p = java.awt.MouseInfo.getPointerInfo()?.location ?: break
+                        window.setLocation(origin.x + p.x - start.x, origin.y + p.y - start.y)
+                    }
                     return@awaitEachGesture
                 }
             }

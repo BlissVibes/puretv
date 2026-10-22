@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.data
 
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.TokenRefreshException
 import com.puretv.twitch.core.di.TokenHolder
@@ -50,7 +51,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 class DesktopSettingsStore(
     private val tokenHolder: TokenHolder,
-    private val appDataDir: File = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch"),
+    private val appDataDir: File = AppDirs.data,
 ) {
 
     private val settingsFile = File(appDataDir, "settings.json")

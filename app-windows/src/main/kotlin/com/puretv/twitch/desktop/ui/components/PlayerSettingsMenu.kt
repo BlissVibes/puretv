@@ -1,6 +1,7 @@
 package com.puretv.twitch.desktop.ui.components
 
 import androidx.compose.foundation.background
+import com.puretv.twitch.desktop.player.NativeLibs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -53,7 +54,8 @@ fun PlayerSettingsMenu(
         PlayerMenuSection("Resolution") {
             SegmentedControl(StreamQuality.entries.toList(), currentQuality, { it.label }, onQualitySelected)
         }
-        PlayerMenuSection("Scaling") {
+        // Without mpv (macOS) there is no engine choice and no GPU upscaling to offer.
+        if (NativeLibs.mpvSupported()) PlayerMenuSection("Scaling") {
             if (scalingEnabled) {
                 SegmentedControl(UpscalingMode.entries.toList(), upscalingMode, { it.label }, onUpscalingSelected)
                 Text(
@@ -69,7 +71,7 @@ fun PlayerSettingsMenu(
                 )
             }
         }
-        PlayerMenuSection("Engine") {
+        if (NativeLibs.mpvSupported()) PlayerMenuSection("Engine") {
             SegmentedControl(PlaybackBackend.entries.toList(), backend, { it.label }, onBackendSelected)
             Text("Applies after restart.", style = PureTvType.dataSmall, color = c.outline)
         }

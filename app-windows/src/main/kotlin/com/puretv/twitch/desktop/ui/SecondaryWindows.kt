@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.WindowChrome
+import com.puretv.twitch.desktop.platform.AppDirs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -81,7 +83,7 @@ fun SecondaryWindows(koin: Koin, visible: Boolean, frontRequests: Int, icon: Pai
 /** Where each window slot was left, kept next to the other desktop files. */
 internal object WindowBoundsStores {
     val shared: PopoutBoundsStore by lazy {
-        PopoutBoundsStore(File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/app-windows.txt"))
+        PopoutBoundsStore(File(AppDirs.data, "app-windows.txt"))
     }
 }
 
@@ -134,9 +136,10 @@ private fun SecondaryWindow(
         state = windowState,
         title = entry.title.ifBlank { windowTitle(entry.slot, null) },
         icon = icon,
-        undecorated = true,
+        undecorated = WindowChrome.customFrame(),
     ) {
         val awtWindow = window
+        remember(awtWindow) { WindowChrome.styleNativeFrame(awtWindow) }
         LaunchedEffect(visible) {
             if (!visible) return@LaunchedEffect
             if (!WindowsNative.enableBorderlessSnap(awtWindow)) {

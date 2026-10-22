@@ -14,7 +14,7 @@ object TimingFileSink {
     private const val MAX_BYTES = 256 * 1024L
 
     private val file: File by lazy {
-        File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch").resolve("timing.log")
+        AppDirs.data.resolve("timing.log")
     }
 
     fun install() {

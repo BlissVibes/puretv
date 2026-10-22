@@ -35,7 +35,9 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
 
     // Order matters: detectBundledMpv() sets jna.library.path BEFORE Native.load.
     private val mpvDir: String? = detectBundledMpv()
-    private val lib: MpvLibrary? = runCatching { Native.load("libmpv-2", MpvLibrary::class.java) }.getOrNull()
+    private val lib: MpvLibrary? = if (!NativeLibs.mpvSupported()) null else NativeLibs.mpvLoadNames().firstNotNullOfOrNull { name ->
+        runCatching { Native.load(name, MpvLibrary::class.java) }.getOrNull()
+    }
 
     // Verify mpv can create a context at all (library loads, no missing runtime
     // deps) WITHOUT binding a surface — the real, surface-bound contexts are made
@@ -501,7 +503,7 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         val resourcesDir = System.getProperty("compose.application.resources.dir")
         val base = resourcesDir ?: System.getenv("MPV_DIR") ?: return null
         val dir = if (resourcesDir != null) File(base, "mpv") else File(base)
-        if (!File(dir, "libmpv-2.dll").exists()) return null
+        if (!File(dir, NativeLibs.mpvFileName()).exists()) return null
         val existing = System.getProperty("jna.library.path")
         System.setProperty(
             "jna.library.path",

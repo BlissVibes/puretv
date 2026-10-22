@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.di
 
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.FollowStore
@@ -29,6 +30,7 @@ import coil3.disk.DiskCache
 import okio.Path.Companion.toOkioPath
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.MpvPlayer
+import com.puretv.twitch.desktop.player.NativeLibs
 import com.puretv.twitch.desktop.player.VlcEngine
 import com.puretv.twitch.desktop.player.VlcPlayer
 import com.puretv.twitch.desktop.update.UpdateManager
@@ -129,15 +131,14 @@ val desktopModule = module {
     // can never grow without limit.
     single<DiskCache> {
         DiskCache.Builder()
-            .directory(File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/image_cache").toOkioPath())
+            .directory(AppDirs.imageCache.toOkioPath())
             .maxSizeBytes(256L * 1024 * 1024)
             .build()
     }
     single { EmoteFrameCache(get(), get()) }
     // Emote lists survive restarts so chat shows emotes on its first lines.
     single<EmoteCache> {
-        val localData = System.getenv("LOCALAPPDATA") ?: System.getenv("APPDATA") ?: System.getProperty("user.home")
-        PersistentEmoteCache(FileTextStore(File(localData, "PureTwitch/cache/emotes")))
+        PersistentEmoteCache(FileTextStore(File(AppDirs.cache, "emotes")))
     }
 
     // --- Playback ------------------------------------------------------------
@@ -155,7 +156,8 @@ val desktopModule = module {
         val store = get<DesktopSettingsStore>()
         val engine = get<VlcEngine>()
         DesktopPlayerProvider {
-            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) MpvPlayer(store) else VlcPlayer(engine)
+            val mpv = store.settings.value.playbackBackend == PlaybackBackend.MPV && NativeLibs.mpvSupported()
+            if (mpv) MpvPlayer(store) else VlcPlayer(engine)
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }

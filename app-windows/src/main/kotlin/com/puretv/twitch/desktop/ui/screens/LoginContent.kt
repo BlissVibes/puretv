@@ -151,6 +151,7 @@ fun LoginContent(koin: Koin) {
                         )
                         state.isAuthenticating -> AuthenticatingArea(
                             userCode = state.userCode,
+                            browserOpened = state.browserOpened,
                             onCopyCode = ::copyToClipboard,
                             onOpenActivatePage = { openInBrowser(TwitchConfig.ACTIVATE_URL) },
                         )
@@ -254,7 +255,12 @@ private fun SignedOutArea(onSignIn: () -> Unit) {
  * paste and Authorize; the button copies it again and the text itself is selectable.
  */
 @Composable
-private fun AuthenticatingArea(userCode: String?, onCopyCode: (String) -> Unit, onOpenActivatePage: () -> Unit) {
+private fun AuthenticatingArea(
+    userCode: String?,
+    browserOpened: Boolean,
+    onCopyCode: (String) -> Unit,
+    onOpenActivatePage: () -> Unit,
+) {
     val c = PureTvTheme.colors
     var copied by remember(userCode) { mutableStateOf(false) }
     LaunchedEffect(userCode) {
@@ -322,7 +328,11 @@ private fun AuthenticatingArea(userCode: String?, onCopyCode: (String) -> Unit, 
                 modifier = Modifier.width(16.dp),
             )
             Text(
-                "We opened your browser. Click Authorize there to finish.",
+                if (browserOpened) {
+                    "We opened your browser. Click Authorize there to finish."
+                } else {
+                    "Waiting for you to authorize at twitch.tv/activate."
+                },
                 style = PureTvType.dataSmall,
                 color = c.onSurfaceVariant,
             )
@@ -331,7 +341,11 @@ private fun AuthenticatingArea(userCode: String?, onCopyCode: (String) -> Unit, 
         if (userCode != null) {
             Spacer(Modifier.height(8.dp))
             Text(
-                "Didn't open? Use the button above, or go to twitch.tv/activate and paste the code.",
+                if (browserOpened) {
+                    "Didn't open? Use the button above, or go to twitch.tv/activate and paste the code."
+                } else {
+                    "No browser could be opened from here. Go to twitch.tv/activate on any device and paste the code."
+                },
                 style = PureTvType.dataSmall,
                 color = c.onSurfaceVariant,
                 textAlign = TextAlign.Center,

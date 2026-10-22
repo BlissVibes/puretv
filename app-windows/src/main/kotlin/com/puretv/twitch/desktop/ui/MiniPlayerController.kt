@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.desktop.data.AtomicFile
 import java.awt.Color
 import java.awt.Dimension
@@ -172,7 +173,7 @@ class DoubleClickDetector(private val windowMs: Long = 400) {
  * stores: "x y width". Anything unreadable is simply forgotten.
  */
 class MiniBoundsStore(
-    private val file: File = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/mini-player.txt"),
+    private val file: File = File(AppDirs.data, "mini-player.txt"),
 ) {
     fun load(): MiniRect? = runCatching {
         val parts = file.readText().trim().split(' ').map { it.toInt() }

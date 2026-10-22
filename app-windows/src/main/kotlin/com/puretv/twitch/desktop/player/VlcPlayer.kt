@@ -51,12 +51,7 @@ class VlcPlayer(
 
     private val _status = MutableStateFlow(
         if (mediaPlayer == null) PlayerStatus(
-            error = when {
-                System.getProperty("compose.application.resources.dir") != null ->
-                    "VLC bundle missing — please reinstall PureTV for Twitch."
-                else ->
-                    "VLC not found. Install VLC from https://videolan.org/vlc/ and restart PureTV."
-            },
+            error = NativeLibs.vlcMissingMessage(packaged = System.getProperty("compose.application.resources.dir") != null),
         ) else PlayerStatus(),
     )
     override val status: StateFlow<PlayerStatus> = _status.asStateFlow()

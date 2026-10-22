@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -398,6 +399,7 @@ fun App(
                             },
                             onOpenReleasePage = { url -> openInBrowser(url) },
                             onDismiss = { updateDismissed = true },
+                            updateLabel = if (updateManager.canSelfInstall) "Update" else "Download",
                         )
                     }
 
@@ -609,8 +611,10 @@ private fun CustomTitleBar(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .padding(start = 16.dp)
+                .padding(start = 16.dp + WindowChrome.leadingInset())
                 .pointerInput(awtWindow) {
+                    // Linux: the window manager's title bar moves and maximizes the window.
+                    if (!WindowChrome.headerMovesWindow()) return@pointerInput
                     var lastDownTime = 0L
                     var manualDrag = false
                     // armed: pressed on the caption and eligible to start a drag (not a
@@ -712,10 +716,13 @@ private fun CustomTitleBar(
 
         // Window control buttons, outside the drag zone so clicks are not swallowed
         WinButton(onClick = onNewWindow) { NewWindowIcon() }
-        WinButton(onClick = { shell.minimize() }) { MinimizeIcon() }
-        WinButton(onClick = { shell.toggleMaximize() }) { MaximizeIcon(shell.isMaximized) }
-        WinButton(onClick = onClose, isClose = true) {
-            Icon(ExpressiveIcons.Close, "Close", tint = PureTvTheme.colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        // macOS and Linux keep the system's own window buttons (see WindowChrome).
+        if (WindowChrome.customFrame()) {
+            WinButton(onClick = { shell.minimize() }) { MinimizeIcon() }
+            WinButton(onClick = { shell.toggleMaximize() }) { MaximizeIcon(shell.isMaximized) }
+            WinButton(onClick = onClose, isClose = true) {
+                Icon(ExpressiveIcons.Close, "Close", tint = PureTvTheme.colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+            }
         }
         Spacer(Modifier.width(8.dp))
     }

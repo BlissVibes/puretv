@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.data
 
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.core.vod.ResumePolicy
 import com.puretv.twitch.core.vod.WatchProgress
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -81,6 +82,6 @@ class WatchProgressStore(appDataDir: File = defaultDir()) {
         private const val MAX_ENTRIES = 300
 
         private fun defaultDir(): File =
-            File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+            AppDirs.data
     }
 }

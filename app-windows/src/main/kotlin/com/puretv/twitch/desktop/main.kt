@@ -1,5 +1,8 @@
 package com.puretv.twitch.desktop
 
+import com.puretv.twitch.desktop.platform.LaunchArgs
+import com.puretv.twitch.desktop.platform.WindowChrome
+import com.puretv.twitch.desktop.platform.AppDirs
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,7 +45,7 @@ import com.puretv.twitch.desktop.platform.Diagnostics
 import com.puretv.twitch.desktop.platform.SingleInstance
 import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
-import com.puretv.twitch.desktop.platform.WindowsStartup
+import com.puretv.twitch.desktop.platform.LoginStartup
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.VlcEngine
@@ -82,7 +85,7 @@ fun main(args: Array<String>) {
     // One running copy only: a second launch brings the open window forward (or out
     // of the tray) and exits.
     val guard = SingleInstance(
-        lockFile = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/instance.lock"),
+        lockFile = File(AppDirs.data, "instance.lock"),
         focusExistingWindow = { SingleInstance.focusWindowTitled(PRIMARY_WINDOW_TITLE) },
     )
     if (!guard.acquire()) exitProcess(0)
@@ -96,6 +99,8 @@ fun main(args: Array<String>) {
     // Also installs the registry that openInNewWindow() uses.
     val registry = koinApp.koin.get<WindowRegistry>()
     guard.listenForActivation { navRequests.requestShow() }
+    // `--channel <login>`: start on that stream (a launcher shortcut, a script, a smoke test).
+    LaunchArgs.channel(args)?.let { navRequests.requestStream(it) }
 
     val settingsStore = koinApp.koin.get<DesktopSettingsStore>()
     val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -136,7 +141,7 @@ fun main(args: Array<String>) {
     // "Start with Windows" points at the launcher exe; rewrite it on each start so it
     // follows the app if it was reinstalled somewhere else.
     if (settingsStore.settings.value.startWithWindows) {
-        backgroundScope.launch { WindowsStartup.setEnabled(true) }
+        backgroundScope.launch { LoginStartup.setEnabled(true) }
     }
 
     val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()
@@ -163,7 +168,7 @@ fun main(args: Array<String>) {
     val notifier = koinApp.koin.get<DesktopLiveNotifier>()
     // Started by Windows at sign-in: stay in the tray. Without a tray there would be
     // no way to reach a hidden window, so the window shows after all.
-    val startHidden = WindowsStartup.BACKGROUND_ARG in args && isTraySupported
+    val startHidden = LoginStartup.BACKGROUND_ARG in args && isTraySupported
 
     application {
         val windowState: WindowState = rememberWindowState(width = 1280.dp, height = 720.dp)
@@ -285,8 +290,9 @@ fun main(args: Array<String>) {
             state = windowState,
             title = mainTitle,
             icon = appIcon,
-            undecorated = true,
+            undecorated = WindowChrome.customFrame(),
         ) {
+            remember(window) { WindowChrome.styleNativeFrame(window) }
             DisposableEffect(window) {
                 AppWindows.add(window)
                 onDispose { AppWindows.remove(window) }
@@ -395,7 +401,7 @@ private const val PARKED_BELOW = -30_000
  * dropped it) minimizing must not hide the app, as there would be no way back.
  */
 private fun trayIconPresent(): Boolean =
-    isTraySupported && runCatching { SystemTray.getSystemTray().trayIcons.isNotEmpty() }.getOrDefault(false)
+    WindowChrome.minimizeToTray() && isTraySupported && runCatching { SystemTray.getSystemTray().trayIcons.isNotEmpty() }.getOrDefault(false)
 
 /**
  * Keeps the main window where the viewer can reach it: a parked position (left behind by

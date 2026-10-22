@@ -932,6 +932,8 @@ data class LoginUiState(
     /** Shown while waiting for browser approval. */
     val userCode: String? = null,
     val verificationUri: String? = null,
+    /** False when no browser could be launched, so the screen must not claim it opened one. */
+    val browserOpened: Boolean = true,
     val error: String? = null,
     val isLoggedIn: Boolean = false,
 )
@@ -966,8 +968,8 @@ class LoginViewModel(
             // This used to append `?public_code=` to verification_uri, which already
             // carries a query string, so the pre-fill was malformed and the page often
             // failed to take the code. The screen copies the code for pasting instead.
-            oauthManager.openInBrowser(TwitchConfig.ACTIVATE_URL)
-            _state.update { it.copy(userCode = device.userCode, verificationUri = device.verificationUri) }
+            val opened = oauthManager.openInBrowser(TwitchConfig.ACTIVATE_URL)
+            _state.update { it.copy(userCode = device.userCode, verificationUri = device.verificationUri, browserOpened = opened) }
             pollForToken(device)
         }
     }

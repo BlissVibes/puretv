@@ -42,7 +42,7 @@ import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.platform.Diagnostics
-import com.puretv.twitch.desktop.platform.WindowsStartup
+import com.puretv.twitch.desktop.platform.LoginStartup
 import com.puretv.twitch.desktop.platform.openInBrowser
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
 import androidx.compose.ui.window.isTraySupported
@@ -137,7 +137,7 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onLiveAlerts = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
             startWithWindows = state.settings.startWithWindows,
             onStartWithWindows = { on ->
-                if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
+                if (LoginStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
             },
             showNote = GoLiveAlerts.showPerChannelNote(state.settings),
             onDismissNote = { settingsStore.updateSettings { it.copy(perChannelNoteDismissed = true) } },
@@ -177,6 +177,7 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onCheckForUpdates = { updateManager.checkForUpdates(force = true) },
             onDownloadAndInstall = { info -> updateManager.downloadAndInstall(info, onExit) },
             onOpenDownloadPage = { url -> openInBrowser(url) },
+            canSelfInstall = updateManager.canSelfInstall,
         )
     }
 }
@@ -437,7 +438,7 @@ private fun NotificationsPanel(
 ) {
     val c = PureTvTheme.colors
     val trayAvailable = remember { isTraySupported }
-    val startupAvailable = remember { WindowsStartup.isAvailable }
+    val startupAvailable = remember { LoginStartup.isAvailable }
     ExpressivePanel {
         Column {
             Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
@@ -455,7 +456,7 @@ private fun NotificationsPanel(
             }
             if (!trayAvailable) {
                 Text(
-                    "Go-live alerts need the Windows system tray, which is not available here.",
+                    "Go-live alerts need a system tray, which this desktop does not offer.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.onSurfaceVariant,
                 )
@@ -469,9 +470,9 @@ private fun NotificationsPanel(
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(
-                label = "Start with Windows",
+                label = LoginStartup.label(),
                 description = if (startupAvailable) {
-                    "Open PureTV in the tray when you sign in to Windows."
+                    "Open PureTV in the tray when you sign in."
                 } else {
                     "Available in the installed app."
                 },
@@ -588,6 +589,7 @@ private fun AboutPanel(
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstall: (UpdateInfo) -> Unit,
     onOpenDownloadPage: (String) -> Unit,
+    canSelfInstall: Boolean,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -644,7 +646,7 @@ private fun AboutPanel(
                     )
                     Spacer(Modifier.height(12.dp))
                     ExpressiveButton(
-                        text = "Download and install ${updateState.info.version}",
+                        text = if (canSelfInstall) "Download and install ${updateState.info.version}" else "Open download page for ${updateState.info.version}",
                         onClick = { onDownloadAndInstall(updateState.info) },
                     )
                 }

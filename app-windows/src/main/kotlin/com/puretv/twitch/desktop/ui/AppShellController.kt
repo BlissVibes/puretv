@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -136,6 +137,11 @@ class AppShellController(
         // Capture geometry through WindowState (it holds the *floating* size even
         // while maximized, so restore is exact in either case).
         fullscreenRestore = currentGeometry()
+        // macOS and Linux: the system's fullscreen, which hides their window frame too.
+        if (WindowChrome.nativeFullscreen()) {
+            windowState.placement = WindowPlacement.Fullscreen
+            return
+        }
         windowState.placement = WindowPlacement.Floating
         (window as? Frame)?.let { frame ->
             // Clear MAXIMIZED_BOTH, since a maximized frame ignores setBounds, then
@@ -148,6 +154,11 @@ class AppShellController(
     private fun exitFullscreen() {
         val restore = fullscreenRestore ?: return
         fullscreenRestore = null
+        if (WindowChrome.nativeFullscreen()) {
+            // The system puts the window back where it was; sizing it mid-transition fights that.
+            windowState.placement = restore.placement
+            return
+        }
         (window as? Frame)?.extendedState = Frame.NORMAL
         // Replay through WindowState so CMP re-applies geometry and keeps its own
         // size/placement memory consistent (important if restoring to Maximized).

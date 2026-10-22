@@ -1,6 +1,9 @@
 package com.puretv.twitch.desktop.update
 
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.desktop.AppBuildConfig
+import com.puretv.twitch.desktop.platform.HostOs
+import com.puretv.twitch.desktop.platform.openInBrowser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -61,6 +64,12 @@ class UpdateManager {
 
     val currentVersion: String get() = AppBuildConfig.VERSION
 
+    /**
+     * True only on Windows, where the updater downloads, verifies and runs the installer
+     * itself. Elsewhere an update is announced and opens the release page.
+     */
+    val canSelfInstall: Boolean = HostOs.current == HostOs.WINDOWS
+
     private val isPackaged: Boolean =
         System.getProperty("compose.application.resources.dir") != null
 
@@ -115,8 +124,10 @@ class UpdateManager {
         // Unauthenticated list-releases never returns drafts; latestInstallerRelease
         // still filters draft/prerelease defensively and requires an installer asset.
         val releases = json.decodeFromString(ListSerializer(GithubRelease.serializer()), response.body())
-        val release = latestInstallerRelease(releases) ?: return@withContext null
-        val asset = release.installerAsset() ?: return@withContext null
+        val os = HostOs.current
+        val arch = System.getProperty("os.arch", "")
+        val release = latestInstallerRelease(releases, os, arch) ?: return@withContext null
+        val asset = release.installerAsset(os, arch) ?: return@withContext null
         UpdateInfo(
             version = release.tag_name,
             downloadUrl = asset.browser_download_url,
@@ -136,6 +147,12 @@ class UpdateManager {
      * locked files.
      */
     fun downloadAndInstall(info: UpdateInfo, exitApplication: () -> Unit) {
+        if (!canSelfInstall) {
+            // macOS and Linux: the new .dmg or .deb is installed by the viewer (a
+            // package manager or a drag to Applications), so the update opens its page.
+            openInBrowser(resolveReleaseUrl(info.htmlUrl))
+            return
+        }
         scope.launch {
             runCatching {
                 // Anti-rollback (audit F2): refuse to install a version that is not
@@ -289,7 +306,7 @@ class UpdateManager {
     }
 
     private val dataDir: File
-        get() = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+        get() = AppDirs.data
 
     /** Written by the update script when Setup failed; holds the version it tried. */
     private val failedInstallMarker: File get() = File(dataDir, "update-failed.txt")

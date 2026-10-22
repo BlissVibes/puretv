@@ -176,6 +176,16 @@ jobs:
           path: app-windows/build/installer/*.exe
           if-no-files-found: error
 
+  # macOS (.dmg, Apple Silicon) and Linux (.deb, amd64), each built, installed and launched
+  # on its own native runner by the same workflow CI runs; here with the real client secret.
+  desktop-platforms:
+    name: macOS and Linux desktop
+    uses: ./.github/workflows/desktop-platforms.yml
+    with:
+      release: true
+    secrets:
+      TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+
   proxy-image:
     name: Go proxy (Docker image -> GHCR)
     runs-on: ubuntu-latest
@@ -210,9 +220,10 @@ jobs:
 
   draft-release:
     name: Create draft GitHub Release
-    # Only the Windows installer gates the release; the Android app is released on
-    # its own `android-v*` channel, and the proxy image publishes to GHCR independently.
-    needs: [windows]
+    # All three desktop builds gate the release, so a failure on one OS never publishes a
+    # partial set; the Android app is released on its own `android-v*` channel, and the
+    # proxy image publishes to GHCR independently.
+    needs: [windows, desktop-platforms]
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -224,6 +235,16 @@ jobs:
         with:
           name: windows-release
           path: artifacts/windows-release
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: macos-arm64
+          path: artifacts/macos-arm64
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: linux-amd64
+          path: artifacts/linux-amd64
 
       - name: Resolve version (strip leading v from the tag)
         id: vars
@@ -240,6 +261,8 @@ jobs:
           cat >> "$GITHUB_STEP_SUMMARY" <<'EOF'
           ### Before publishing this draft
           - [ ] Windows installer runs end-to-end on a clean VM
+          - [ ] macOS: the "Launch on a live channel" step passed; look at its screenshot (macos-arm64 artifact)
+          - [ ] Linux: the .deb installed with apt and the launch step passed (linux-amd64 artifact)
           - [ ] `ghcr.io/${{ github.repository_owner }}/puretv-twitch-proxy:${{ github.ref_name }}` pulls and serves `/health`
           - [ ] Android APKs install + are signed (once signing is configured — see this file's header)
           - [ ] Eyeball the auto-generated "What's Changed" notes on the draft
@@ -267,6 +290,14 @@ jobs:
           rm -f signing_key.pem installer.sig.raw
           echo "Signed $(basename "$installer") -> $(basename "${installer}").sig"
 
+      # One checksum file over every installer, so a download can be checked by hand.
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/sums
+          (cd artifacts && sha256sum windows-release/*.exe macos-arm64/*.dmg linux-amd64/*.deb             | sed 's#  [^ ]*/#  #') > artifacts/sums/SHA256SUMS.txt
+          cat artifacts/sums/SHA256SUMS.txt
+
       # Turn the top CHANGELOG.md section into the user-facing release notes —
       # plain language, no auto-generated technical commit list.
       - name: Build release notes from CHANGELOG
@@ -285,7 +316,13 @@ jobs:
           cat >> notes.md <<'DL'
 
           ---
-          **Download** the installer below and run it. Everything's included, no separate VLC needed. If Windows shows a SmartScreen warning, click **More info, then Run anyway**. Already have PureTV? Just install over it.
+          **Windows:** download the `.exe` below and run it. Everything's included, no separate VLC needed. If Windows shows a SmartScreen warning, click **More info, then Run anyway**. Already have PureTV? Just install over it.
+
+          **macOS (Apple Silicon):** open the `.dmg` and drag PureTV into Applications. The app is not notarized by Apple yet, so the first time macOS refuses to open it: go to **System Settings, Privacy & Security** and click **Open Anyway**.
+
+          **Linux (Ubuntu 22.04 or newer, Debian 12):** download the `.deb` and install it with `sudo apt install ./puretv-for-twitch_*.deb`, which also installs VLC.
+
+          `SHA256SUMS.txt` lists the checksum of every download.
           DL
           echo "----- release notes -----"; cat notes.md
 
@@ -298,3 +335,6 @@ jobs:
           files: |
             artifacts/windows-release/**/*.exe
             artifacts/windows-release/**/*.exe.sig
+            artifacts/macos-arm64/*.dmg
+            artifacts/linux-amd64/*.deb
+            artifacts/sums/SHA256SUMS.txt

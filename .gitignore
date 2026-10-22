@@ -26,6 +26,9 @@ app-windows/resources/windows/vlc/
 # The Anime4K shader source lives (committed) in app-windows/shaders/.
 app-windows/resources/windows/mpv/
 
+# macOS VLC bundle (populated by `gradle :app-windows:bundleVlc` on a Mac from VLC.app).
+app-windows/resources/macos-arm64/vlc/
+
 # Secrets — injected at build time, never committed (see secrets.properties.example)
 secrets.properties
 

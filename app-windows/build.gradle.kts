@@ -114,8 +114,38 @@ dependencies {
 // loaded alongside the real ones. Nothing else lives in that folder; mpv has
 // its own sibling folder (bundleMpv).
 
+// Which desktop OS this build runs on: each one packages its own installer (see the
+// native runners in release.yml), so the bundling below is per OS too.
+val buildOs: String = System.getProperty("os.name", "").lowercase().let {
+    when {
+        it.startsWith("windows") -> "windows"
+        it.startsWith("mac") -> "macos"
+        else -> "linux"
+    }
+}
+
 val bundleVlc by tasks.registering(Sync::class) {
-    description = "Syncs local VLC files into resources/windows/vlc/ for self-contained packaging, removing stale ones. Run once before packageMsi/createDistributable."
+    description = "Syncs the local VLC into the app resources for self-contained packaging (Windows, macOS), removing stale files. Run once before createDistributable."
+    // Linux uses the distro's libVLC, which the .deb depends on; nothing is bundled.
+    onlyIf { buildOs != "linux" }
+
+    if (buildOs == "macos") {
+        // macOS: VLC.app's lib/ and plugins/ side by side, the layout vlcj's macOS discovery
+        // expects (VLC_PLUGIN_PATH = lib/../plugins). Every plugin is kept: the app's size
+        // does not matter, a missing demuxer or codec does.
+        val app = listOf(System.getenv("VLC_APP"), "/Applications/VLC.app").filterNotNull().map { File(it) }
+            .firstOrNull { File(it, "Contents/MacOS/lib/libvlc.dylib").exists() }
+        if (app != null) {
+            from(File(app, "Contents/MacOS/lib")) { include("*.dylib"); into("lib") }
+            from(File(app, "Contents/MacOS/plugins")) { into("plugins") }
+        }
+        into(layout.projectDirectory.dir("resources/macos-arm64/vlc"))
+        doFirst {
+            if (app == null) throw GradleException("VLC.app not found. Install VLC (brew install --cask vlc) or set VLC_APP.")
+            println("[bundleVlc] Copying VLC from: ${app.absolutePath}")
+        }
+        return@registering
+    }
 
     val vlcDir = listOf(
         System.getenv("VLC_DIR"),
@@ -158,6 +188,7 @@ val bundleVlc by tasks.registering(Sync::class) {
     into(layout.projectDirectory.dir("resources/windows/vlc"))
 
     doFirst {
+        if (buildOs == "linux") return@doFirst
         if (vlcDir == null) {
             throw GradleException(
                 "VLC not found. Install VLC from https://videolan.org/vlc/ or set the VLC_DIR env var.",
@@ -219,14 +250,15 @@ compose.desktop {
             // bundleMpv populates resources/windows/mpv/ with libmpv + the Anime4K shader.
             appResourcesRootDir.set(layout.projectDirectory.dir("resources"))
 
-            // SECTION 12.4 — both installer formats per the spec; jpackage
-            // bundles a JVM so end users do not need Java pre-installed.
-            // MSI and EXE both require WiX Toolset 3.x on the PATH.
-            // Download portable WiX: https://github.com/wixtoolset/wix3/releases
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+            // jpackage bundles a JVM so end users do not need Java pre-installed, and only
+            // builds the formats of the OS it runs on. MSI and EXE need WiX Toolset 3.x
+            // (the shipped Windows installer is Inno Setup over the app image, see
+            // release.yml). The macOS .dmg is made by release.yml too, after an ad-hoc
+            // signature, since there is no Developer ID to let jpackage sign it.
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "PureTV for Twitch"
             packageVersion = appVersion
-            description = "Ad-free Twitch viewing for Windows — desktop companion to PureTV for Twitch."
+            description = "Ad-free Twitch viewing on the desktop."
             copyright = "© 2026 PureTV for Twitch. Unaffiliated with Twitch Interactive, Inc."
             vendor = "PureTV for Twitch"
 
@@ -243,6 +275,22 @@ compose.desktop {
                 upgradeUuid = "a75efb70-c7e9-424a-99b8-b6d9a98a0799"
                 dirChooser = true
                 perUserInstall = true
+                shortcut = true
+            }
+            macOS {
+                iconFile.set(project.file("packaging/icon.icns"))
+                bundleID = "com.puretv.twitch"
+                dockName = "PureTV"
+                appCategory = "public.app-category.entertainment"
+                minimumSystemVersion = "12.0"
+            }
+            linux {
+                iconFile.set(project.file("packaging/icon.png"))
+                // Debian package names are lower case without spaces.
+                packageName = "puretv-for-twitch"
+                debMaintainer = "dhawal-ss@users.noreply.github.com"
+                appCategory = "video"
+                menuGroup = "AudioVideo;Video;Player;"
                 shortcut = true
             }
         }

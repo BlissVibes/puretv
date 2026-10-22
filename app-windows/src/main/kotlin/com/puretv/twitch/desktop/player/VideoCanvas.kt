@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.perf.TimingLog
 import uk.co.caprica.vlcj.player.base.MediaPlayer
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.BufferFormat
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.BufferFormatCallback
@@ -28,6 +29,7 @@ import java.nio.ByteOrder
 open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
     private val lock = Any()
     private var frame: BufferedImage? = null
+    @Volatile private var paintedOnce = false
 
     init {
         background = Color.BLACK
@@ -69,6 +71,10 @@ open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
     override fun paint(g: Graphics) {
         synchronized(lock) {
             val image = frame ?: return
+            if (!paintedOnce) {
+                paintedOnce = true
+                TimingLog.log("player.frame_painted", 0, "${image.width}x${image.height}")
+            }
             val r = fit(image.width, image.height, width, height)
             g.color = Color.BLACK
             if (r.y > 0) {

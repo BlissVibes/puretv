@@ -49,7 +49,7 @@ class NativeLibsTest {
 
     @Test
     fun `linux tries the runtime soname after the dev symlink`() {
-        assertEquals(listOf("mpv", "libmpv.so.2"), NativeLibs.mpvLoadNames(HostOs.LINUX))
+        assertEquals(listOf("mpv", "libmpv.so.2", "libmpv.so.1"), NativeLibs.mpvLoadNames(HostOs.LINUX))
         assertEquals(listOf("libmpv-2"), NativeLibs.mpvLoadNames(HostOs.WINDOWS))
     }
 

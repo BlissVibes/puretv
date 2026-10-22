@@ -43,12 +43,14 @@ object NativeLibs {
 
     /**
      * Names to hand JNA, tried in order. On Linux, plain "mpv" needs the `-dev` package's
-     * unversioned symlink, so the versioned soname the runtime package ships comes next.
+     * unversioned symlink, so the versioned sonames the runtime packages ship come next:
+     * `libmpv2` (Ubuntu 24.04, Debian 12) and then `libmpv1` (Ubuntu 22.04), whose client
+     * API covers every call PureTV makes.
      */
     fun mpvLoadNames(os: HostOs = HostOs.current): List<String> = when (os) {
         HostOs.WINDOWS -> listOf("libmpv-2")
         HostOs.MACOS -> listOf("mpv.2", "mpv")
-        HostOs.LINUX -> listOf("mpv", "libmpv.so.2")
+        HostOs.LINUX -> listOf("mpv", "libmpv.so.2", "libmpv.so.1")
     }
 
     /**

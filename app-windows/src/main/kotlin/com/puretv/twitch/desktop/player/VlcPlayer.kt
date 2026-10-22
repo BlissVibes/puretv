@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.perf.TimingLog
 import com.puretv.twitch.core.stream.LiveLatency
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,6 +89,12 @@ class VlcPlayer(
                 // The audio output usually does not exist yet at this moment, so this
                 // can be dropped; timeChanged below repeats it until it sticks.
                 syncAudio(mediaPlayer)
+            }
+
+            // libVLC opened (or closed) its video output: the evidence that video, not only
+            // audio, is being drawn. Logged for diagnostics and the platform smoke tests.
+            override fun videoOutput(mediaPlayer: MediaPlayer, newCount: Int) {
+                if (newCount > 0) TimingLog.log("player.video_output", 0, "outputs=$newCount")
             }
 
             override fun paused(mediaPlayer: MediaPlayer) {

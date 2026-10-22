@@ -1,0 +1,218 @@
+# Desktop app on all three operating systems, each on its own native runner:
+#  - Windows: the desktop unit tests (the installer itself is built by release.yml).
+#  - macOS (Apple Silicon): tests, the .app with VLC bundled, an ad-hoc signed .dmg,
+#    installing it into /Applications and launching it on a live channel.
+#  - Linux (Ubuntu 22.04, the oldest supported base): tests, the .deb, installing it
+#    with apt (which proves its dependencies resolve), launching it on a live channel
+#    under Xvfb, and removing it again.
+# The launch checks need a channel that is live, so they talk to Twitch; see
+# app-windows/packaging/smoke/launch-smoke.sh. Packages are uploaded as run artifacts.
+#
+# release.yml calls this workflow with `release: true` for a `v*` tag: the builds then
+# carry the real Twitch client secret (checked in the jar) and the tag must match
+# appVersion. The draft release takes the macos-arm64 and linux-amd64 artifacts.
+name: Desktop platforms
+
+on:
+  push:
+    branches: [main, "cross-platform-**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: "Build release packages (real client secret, tag must match appVersion)"
+        type: boolean
+        default: false
+    secrets:
+      TWITCH_CLIENT_SECRET:
+        required: false
+
+concurrency:
+  group: desktop-platforms-${{ github.ref }}-${{ inputs.release || false }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  windows-tests:
+    name: Windows (tests)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Core and desktop unit tests
+        run: .\gradlew.bat :core:desktopTest :app-windows:test --console=plain
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-reports
+          path: "**/build/reports/tests/"
+          retention-days: 7
+
+  macos:
+    name: macOS (arm64 .dmg + launch)
+    runs-on: macos-14
+    env:
+      # Empty outside a release: the build then carries the placeholder, which is fine for
+      # a launch check that never signs in.
+      TWITCH_CLIENT_SECRET: ${{ inputs.release && secrets.TWITCH_CLIENT_SECRET || '' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Release tag matches appVersion
+        if: inputs.release
+        run: |
+          ver="$(sed -n 's/^val appVersion = "\(.*\)"/\1/p' app-windows/build.gradle.kts)"
+          if [ "${GITHUB_REF_NAME#v}" != "$ver" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match appVersion $ver"; exit 1
+          fi
+          if [ -z "$TWITCH_CLIENT_SECRET" ]; then
+            echo "::error::TWITCH_CLIENT_SECRET is not set. Refusing to build a release that signs users out."; exit 1
+          fi
+
+      - name: Core and desktop unit tests
+        run: ./gradlew :core:desktopTest :app-windows:test --console=plain
+
+      - name: Install VLC (bundled into the app)
+        run: brew install --cask vlc
+
+      # Separate invocations: the app image reads the folder bundleVlc writes.
+      - name: Bundle VLC into the app resources
+        run: ./gradlew :app-windows:bundleVlc --console=plain
+
+      - name: Build the app
+        run: ./gradlew :app-windows:createReleaseDistributable --console=plain
+
+      - name: Check the shipped jar carries the real client secret
+        if: inputs.release
+        run: app-windows/packaging/check-client-secret.sh "app-windows/build/compose/binaries/main-release/app/PureTV for Twitch.app"
+
+      - name: Ad-hoc sign and make the .dmg
+        id: dmg
+        run: |
+          set -euo pipefail
+          ver="$(sed -n 's/^val appVersion = "\(.*\)"/\1/p' app-windows/build.gradle.kts)"
+          app="app-windows/build/compose/binaries/main-release/app/PureTV for Twitch.app"
+          # No Developer ID: an ad-hoc signature keeps Apple Silicon running the bundled
+          # native code; Gatekeeper still asks the user to allow the app once.
+          codesign --force --deep --sign - "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          mkdir -p dmg-stage
+          cp -R "$app" dmg-stage/
+          ln -s /Applications dmg-stage/Applications
+          dmg="PureTV-for-Twitch-${ver}-macos-arm64.dmg"
+          hdiutil create -volname "PureTV for Twitch" -srcfolder dmg-stage -ov -format UDZO "$dmg"
+          echo "file=$dmg" >> "$GITHUB_OUTPUT"
+          du -h "$dmg"
+
+      - name: Install from the .dmg
+        run: |
+          set -euo pipefail
+          hdiutil attach "${{ steps.dmg.outputs.file }}" -mountpoint /tmp/puretv-dmg -nobrowse
+          cp -R "/tmp/puretv-dmg/PureTV for Twitch.app" /Applications/
+          hdiutil detach /tmp/puretv-dmg
+          lipo -archs "/Applications/PureTV for Twitch.app/Contents/MacOS/PureTV for Twitch"
+          ls "/Applications/PureTV for Twitch.app/Contents/app/resources/vlc/lib" | head
+
+      - name: Launch on a live channel
+        run: |
+          app-windows/packaging/smoke/launch-smoke.sh \
+            "/Applications/PureTV for Twitch.app/Contents/MacOS/PureTV for Twitch" \
+            "$HOME/Library/Application Support/PureTwitch" \
+            smoke-macos
+
+      - name: Upload the .dmg and launch evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-arm64
+          path: |
+            ${{ steps.dmg.outputs.file }}
+            smoke-macos/
+          retention-days: 14
+
+  linux:
+    name: Linux (.deb + launch)
+    runs-on: ubuntu-22.04
+    env:
+      TWITCH_CLIENT_SECRET: ${{ inputs.release && secrets.TWITCH_CLIENT_SECRET || '' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      - name: Release tag matches appVersion
+        if: inputs.release
+        run: |
+          ver="$(sed -n 's/^val appVersion = "\(.*\)"/\1/p' app-windows/build.gradle.kts)"
+          if [ "${GITHUB_REF_NAME#v}" != "$ver" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match appVersion $ver"; exit 1
+          fi
+          if [ -z "$TWITCH_CLIENT_SECRET" ]; then
+            echo "::error::TWITCH_CLIENT_SECRET is not set. Refusing to build a release that signs users out."; exit 1
+          fi
+
+      - name: Core and desktop unit tests
+        run: ./gradlew :core:desktopTest :app-windows:test --console=plain
+
+      - name: Build the .deb
+        run: ./gradlew :app-windows:packageReleaseDeb --console=plain
+
+      - name: Check the shipped jar carries the real client secret
+        if: inputs.release
+        run: app-windows/packaging/check-client-secret.sh "app-windows/build/compose/binaries/main-release/app"
+
+      - name: Finish the .deb (libVLC dependency, older distro names, menu entry)
+        id: deb
+        run: |
+          set -euo pipefail
+          in="$(ls app-windows/build/compose/binaries/main-release/deb/*.deb | head -n1)"
+          out="$(basename "$in" | sed 's/-1_amd64/_amd64/')"
+          app-windows/packaging/linux/finish-deb.sh "$in" "$out"
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Install with apt (resolves every dependency)
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q "./${{ steps.deb.outputs.file }}" xvfb imagemagick
+          dpkg -s puretv-for-twitch | grep -E '^(Status|Version):'
+          desktop-file-validate /usr/share/applications/puretv-for-twitch.desktop
+
+      - name: Launch on a live channel (Xvfb)
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24" app-windows/packaging/smoke/launch-smoke.sh \
+            "/opt/puretv-for-twitch/bin/PureTV for Twitch" \
+            "$HOME/.config/PureTwitch" \
+            smoke-linux
+
+      - name: Remove the package
+        run: |
+          sudo apt-get remove -y -q puretv-for-twitch
+          test ! -e "/opt/puretv-for-twitch/bin/PureTV for Twitch"
+          test ! -e /usr/share/applications/puretv-for-twitch.desktop
+
+      - name: Upload the .deb and launch evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-amd64
+          path: |
+            ${{ steps.deb.outputs.file }}
+            smoke-linux/
+          retention-days: 14

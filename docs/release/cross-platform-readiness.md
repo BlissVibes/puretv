@@ -147,7 +147,7 @@ Found and fixed while testing (not in the first audit):
 
 The release package is built on Ubuntu 22.04 with Temurin. That exact file (run 39767612350) installs on 24.04 with apt and passes `launch-smoke.sh` (`stream.first_frame` 600 ms, `player.video_output`, still running 15 s later). The earlier 24.04 results above were taken before `NativePreload` existed.
 
-Its Depends use names shared by Ubuntu and Debian (`libasound2`, `libpng16-16`, no `libjpeg-turbo8`); CI also installs it in clean `debian:12` and `ubuntu:24.04` containers (install only, no launch).
+Its Depends use names shared by Ubuntu and Debian (`libasound2`, `libpng16-16`, no `libjpeg-turbo8`); CI also installs it in clean `debian:12` and `ubuntu:24.04` containers (install only, no launch): both `install ok installed` in run 39769132786, which also passed all three OS jobs with the CJK font recommendation.
 
 ### Linux: Ubuntu 22.04 under WSL2 (Xvfb + PulseAudio), this PC
 

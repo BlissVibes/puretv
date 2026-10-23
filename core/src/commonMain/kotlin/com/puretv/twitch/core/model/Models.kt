@@ -320,6 +320,13 @@ data class AppSettings(
     // the broadcaster's mix. Instant on mpv, phone and TV; VLC after a restart.
     val audioNormalizer: Boolean = false,
 
+    // NVIDIA RTX Video, Windows with an RTX card only. Super Resolution sharpens the
+    // video when it is shown larger than it was sent (on by default). HDR turns SDR
+    // streams into HDR on a display in Windows HDR mode; it changes the broadcaster's
+    // look a lot, so it is the viewer's choice (off by default). mpv only.
+    val rtxSuperResolution: Boolean = true,
+    val rtxHdr: Boolean = false,
+
     // Remote control (Wave 4), TV only. With the player controls hidden, Up and Down
     // change channel; off, they show the controls instead (the Channel Up/Down keys
     // always change channel).

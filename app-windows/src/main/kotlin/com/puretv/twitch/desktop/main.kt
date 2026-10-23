@@ -51,6 +51,11 @@ import com.puretv.twitch.desktop.platform.LoginStartup
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.desktop.player.VlcEngine
+import com.puretv.twitch.desktop.player.VlcPlayer
+import com.puretv.twitch.desktop.player.RtxVlcEngines
+import com.puretv.twitch.desktop.platform.RtxGpu
+import com.puretv.twitch.desktop.platform.UiStallWatch
+import com.puretv.twitch.desktop.platform.AppRestart
 import androidx.compose.runtime.DisposableEffect
 import com.puretv.twitch.desktop.ui.App
 import com.puretv.twitch.desktop.ui.AppWindows
@@ -85,6 +90,9 @@ fun main(args: Array<String>) {
     // Before anything can load Skia: see NativePreload (Linux only).
     NativePreload.linuxCxxRuntime()
     AppDirs.createPrivate()
+    // Which GPUs Windows lists (for the RTX Video settings), read in the background.
+    RtxGpu.warmUp()
+    javax.swing.SwingUtilities.invokeLater { UiStallWatch.installIfAsked() }
     TimingFileSink.install()
     Diagnostics.installCrashLog()
     // One running copy only: a second launch brings the open window forward (or out
@@ -158,6 +166,7 @@ fun main(args: Array<String>) {
     val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()
     val localStreamProxy = koinApp.koin.get<LocalStreamProxy>()
     val vlcEngine = koinApp.koin.get<VlcEngine>()
+    val rtxEngines = koinApp.koin.get<RtxVlcEngines>()
     Runtime.getRuntime().addShutdownHook(Thread {
         // The stores now persist off the UI thread via a conflated async writer; flush
         // any pending snapshot so a change made right before quitting is still durable.
@@ -169,7 +178,9 @@ fun main(args: Array<String>) {
         runCatching { koinApp.koin.get<LiveNotifyFileStore>().flush() }
         runCatching { runBlocking { localStreamProxy.stop() } }
         runCatching { playerProvider.releaseIfCreated() }
+        runCatching { VlcPlayer.awaitAllReleased(3_000) }
         runCatching { vlcEngine.releaseIfBuilt() }
+        runCatching { rtxEngines.releaseIfBuilt() }
     })
 
     // Create icon once before the Compose application loop so it isn't
@@ -202,6 +213,7 @@ fun main(args: Array<String>) {
             guard.stopListening()
             exitApplication()
         }
+        AppRestart.quit = quit
         // macOS: Cmd+Q and the Dock's Quit take the same way out, and the Dock icon brings
         // back a window that is hidden.
         LaunchedEffect(Unit) { MacAppEvents.install(onQuit = quit, onReopen = { navRequests.requestShow() }) }
@@ -400,7 +412,13 @@ fun main(args: Array<String>) {
     runCatching { koinApp.koin.get<MultiSession>().end() }
     runCatching { runBlocking { withTimeoutOrNull(3_000) { localStreamProxy.stop() } } }
     runCatching { playerProvider.releaseIfCreated() }
+    // Players stop and free their libVLC work on their own threads: let that finish
+    // before libVLC itself is released (this is main(), never the UI thread).
+    runCatching { VlcPlayer.awaitAllReleased(3_000) }
     runCatching { vlcEngine.releaseIfBuilt() }
+    runCatching { rtxEngines.releaseIfBuilt() }
+    // "Restart now" (an engine switch): start the launcher again; it waits for this copy to go.
+    AppRestart.relaunchIfRequested()
     exitProcess(0)
 }
 

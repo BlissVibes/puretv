@@ -68,7 +68,62 @@ class LocalStreamProxy(
     lowLatency: () -> Boolean = { false },
 ) {
     companion object {
-        const val PORT = 7979
+        /** One attribute of an `#EXT-X-STREAM-INF` line (quotes removed), or "". */
+        internal fun hlsAttr(line: String, name: String): String =
+            Regex("(?:^|[,:])$name=([^,]+)").find(line)?.groupValues?.get(1)?.trim()?.trim('"').orEmpty()
+
+        /**
+         * Whether a master playlist's `#EXT-X-STREAM-INF` line is the rendition for [quality].
+         * By name first (VIDEO="720p60"), then by height: Twitch names its top rendition
+         * "chunked" (Source) even when it is the 1080p60 one, so on most channels a 1080p60
+         * pick matched nothing by name, VLC got every rendition, and it started at 160p and
+         * climbed, rebuilding its video output at each step.
+         */
+        internal fun variantMatches(streamInf: String, quality: StreamQuality): Boolean {
+            val name = hlsAttr(streamInf, "VIDEO")
+            if (name.isNotBlank() && StreamQuality.fromVariantName(name) == quality) return true
+            val height = hlsAttr(streamInf, "RESOLUTION").substringAfter('x', "").toIntOrNull() ?: return false
+            return when (quality) {
+                StreamQuality.P1080P60 -> height == 1080
+                StreamQuality.P720P60 -> height == 720
+                StreamQuality.P480P -> height == 480
+                StreamQuality.P360P -> height == 360
+                else -> false
+            }
+        }
+
+        /**
+         * Which of a master playlist's `#EXT-X-STREAM-INF` lines plays [quality], by index,
+         * or null when there is nothing to choose from.
+         *  - Source: the "chunked" rendition when Twitch names one, otherwise the highest
+         *    bandwidth (many channels name their top rendition "1080p60", and Twitch may
+         *    list 360p first).
+         *  - A height (1080p60 ... 360p): that rendition (see [variantMatches]); when the
+         *    channel has none, the nearest one below it, else the lowest above it.
+         *  - Anything else (Auto, audio only): null, the caller keeps its own handling.
+         */
+        internal fun chooseVariant(streamInfs: List<String>, quality: StreamQuality): Int? {
+            if (streamInfs.isEmpty()) return null
+            fun height(line: String) = hlsAttr(line, "RESOLUTION").substringAfter('x', "").toIntOrNull() ?: 0
+            fun bandwidth(line: String) = hlsAttr(line, "BANDWIDTH").toLongOrNull() ?: 0L
+            val wanted = when (quality) {
+                StreamQuality.SOURCE -> return streamInfs.indexOfFirst { hlsAttr(it, "VIDEO").equals("chunked", ignoreCase = true) }
+                    .takeIf { it >= 0 } ?: streamInfs.indices.maxByOrNull { bandwidth(streamInfs[it]) }
+                StreamQuality.P1080P60 -> 1080
+                StreamQuality.P720P60 -> 720
+                StreamQuality.P480P -> 480
+                StreamQuality.P360P -> 360
+                else -> return null
+            }
+            streamInfs.indexOfFirst { variantMatches(it, quality) }.takeIf { it >= 0 }?.let { return it }
+            val video = streamInfs.indices.filter { height(streamInfs[it]) > 0 }
+            return video.filter { height(streamInfs[it]) <= wanted }.maxByOrNull { height(streamInfs[it]) * 10_000_000L + bandwidth(streamInfs[it]) }
+                ?: video.minByOrNull { height(streamInfs[it]) }
+        }
+
+        // Fixed, so a second launch finds it busy (see SingleInstance). The property is only
+        // for running a test copy beside an installed PureTV.
+        val PORT: Int = System.getProperty("puretv.proxy.port")?.toIntOrNull() ?: 7979
 
         /** @see StreamResolver.PRIMARY_PLAYER_TYPE */
         const val PRIMARY_PLAYER_TYPE = StreamResolver.PRIMARY_PLAYER_TYPE
@@ -499,40 +554,37 @@ class LocalStreamProxy(
     }
 
     /**
-     * Return a copy of [masterPlaylist] that contains only the single
-     * `#EXT-X-STREAM-INF` + URL pair whose VIDEO= attribute maps to [quality].
-     * All header/tag lines (including `#EXTM3U`, `#EXT-X-TWITCH-INFO`,
-     * `#EXT-X-MEDIA`) are preserved so VLC still parses a valid HLS master.
-     *
-     * Falls back to the unfiltered master if no exact match is found (e.g.
-     * the requested quality isn't available for this broadcaster).
+     * Return a copy of [masterPlaylist] with only the one `#EXT-X-STREAM-INF` + URL pair
+     * [chooseVariant] picks for [quality]. All header/tag lines (including `#EXTM3U`,
+     * `#EXT-X-TWITCH-INFO`, `#EXT-X-MEDIA`) are preserved so VLC still parses a valid
+     * HLS master. Only a master with no variants at all comes back unfiltered: handing
+     * VLC every rendition makes it start at the lowest (160p) and climb.
      */
     private fun filterMasterToQuality(masterPlaylist: String, quality: StreamQuality): String {
         val lines = masterPlaylist.lines()
+        val variants = buildList {
+            lines.forEachIndexed { i, line ->
+                val trimmed = line.trim()
+                val url = lines.getOrNull(i + 1)?.trim().orEmpty()
+                if (trimmed.startsWith("#EXT-X-STREAM-INF") && url.isNotEmpty() && !url.startsWith("#")) add(i to trimmed)
+            }
+        }
+        val chosen = chooseVariant(variants.map { it.second }, quality)?.let { variants[it].first } ?: return masterPlaylist
         val out = StringBuilder(masterPlaylist.length)
-        var foundMatch = false
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
-            val trimmed = line.trim()
-            if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
-                val url = lines.getOrNull(i + 1)?.trim().orEmpty()
-                val nameHint = streamInfAttr(trimmed, "VIDEO")
-                    .ifBlank { streamInfAttr(trimmed, "RESOLUTION") }
-                val variantQuality = StreamQuality.fromVariantName(nameHint)
-                if (variantQuality == quality && url.isNotEmpty() && !url.startsWith("#")) {
-                    out.append(line).append('\n').append(url).append('\n')
-                    foundMatch = true
-                }
-                // Skip past the URL line regardless (it's consumed here)
-                if (url.isNotEmpty() && !url.startsWith("#")) i++
-            } else {
-                // Keep all non-variant lines: headers, EXT-X-MEDIA, blanks, etc.
-                out.append(line).append('\n')
+            if (variants.any { it.first == i }) {
+                // A variant and its URL line: keep only the chosen one.
+                if (i == chosen) out.append(line).append('\n').append(lines[i + 1]).append('\n')
+                i += 2
+                continue
             }
+            // Keep all non-variant lines: headers, EXT-X-MEDIA, blanks, etc.
+            out.append(line).append('\n')
             i++
         }
-        return if (foundMatch) out.toString() else masterPlaylist
+        return out.toString()
     }
 
     /**
@@ -595,8 +647,7 @@ class LocalStreamProxy(
      * safe. Anchored on a `:`/`,` boundary so e.g. FRAME-RATE isn't matched
      * inside another token.
      */
-    private fun streamInfAttr(line: String, name: String): String =
-        Regex("(?:^|[,:])$name=([^,]+)").find(line)?.groupValues?.get(1)?.trim()?.trim('"').orEmpty()
+    private fun streamInfAttr(line: String, name: String): String = hlsAttr(line, name)
 
     private fun renderDiag(success: FetchSnapshot?, failure: FetchSnapshot?): String {
         // Hand-rolled JSON to avoid pulling kotlinx-serialization into this

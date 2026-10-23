@@ -1,6 +1,8 @@
 package com.puretv.twitch.desktop.player
 
 import uk.co.caprica.vlcj.factory.MediaPlayerFactory
+import uk.co.caprica.vlcj.log.LogLevel
+import uk.co.caprica.vlcj.log.NativeLog
 import uk.co.caprica.vlcj.player.embedded.EmbeddedMediaPlayer
 import uk.co.caprica.vlcj.player.embedded.videosurface.VideoSurface
 import java.awt.Component
@@ -35,29 +37,51 @@ val TILE_AUDIO_OUTPUT: String? = NativeLibs.tileAudioOutput()
  * setting is whatever it is when VLC starts (VLC 3.0.23 only loads audio filters
  * per instance, so a change applies after a restart).
  */
-class VlcEngine(private val extraArgs: () -> List<String> = { emptyList() }) {
+class VlcEngine(
+    private val extraArgs: () -> List<String> = { emptyList() },
+    // Arguments worth having but not worth failing over (RTX Video): when libVLC refuses
+    // to start with them, it is tried again without them before the extras go too.
+    private val optionalArgs: () -> List<String> = { emptyList() },
+) {
 
     private val lazyFactory = lazy {
         // jna.library.path must be set before VLCJ's JNA binding loads libvlc.dll.
         detectBundledVlc()
         val extra = extraArgs()
-        buildFactory(extra)
-            ?: if (extra.isEmpty()) null else {
-                // An extra argument libVLC refuses makes it refuse to start at all;
-                // playing without the extras beats not playing.
-                System.err.println("VLC rejected the extra arguments $extra, starting without them")
-                buildFactory(emptyList())
+        val optional = optionalArgs()
+        // An argument libVLC refuses makes it refuse to start at all; playing without
+        // the optional arguments, then without the extras, beats not playing.
+        listOf(extra + optional, extra, emptyList()).distinct().firstNotNullOfOrNull { args ->
+            buildFactory(args)?.also {
+                optionalAccepted = optional.isEmpty() || args.containsAll(optional)
+                if (args.size < extra.size + optional.size) {
+                    System.err.println("VLC rejected ${extra + optional}, started with $args")
+                }
             }
+        }
     }
+
+    /** False when libVLC started only after dropping the optional arguments (an older VLC). */
+    @Volatile var optionalAccepted: Boolean = true
+        private set
 
     private val factory: MediaPlayerFactory? get() = lazyFactory.value
 
     val isAvailable: Boolean get() = factory != null
 
+    /** Whether libVLC already started for this instance (so using it costs nothing). */
+    val isBuilt: Boolean get() = lazyFactory.isInitialized()
+
     /** Builds libVLC ahead of the first stream. Call off the UI thread. */
     fun warmUp() {
         factory
     }
+
+    /**
+     * libVLC's own log for this instance at debug level, or null when VLC is not
+     * installed. RTX Video reports what it did only there. Release it when done.
+     */
+    fun newDebugLog(): NativeLog? = factory?.application()?.newLog()?.apply { setLevel(LogLevel.DEBUG) }
 
     /** A new media player on the shared instance, or null when VLC is not installed. */
     fun newEmbeddedPlayer(): EmbeddedMediaPlayer? = factory?.mediaPlayers()?.newEmbeddedMediaPlayer()
@@ -82,13 +106,13 @@ class VlcEngine(private val extraArgs: () -> List<String> = { emptyList() }) {
         SwingUtilities.invokeLater { runCatching { f.release() } }
     }
 
-    private companion object {
+    companion object {
         // `--no-video-title-show`   suppress VLC's on-video filename overlay.
         // `--network-caching=2000`  2s network buffer; smooths over Twitch's variable
         //                           segment delivery without adding noticeable latency.
         // `--live-caching=1000`     separate, shorter buffer specifically for live sources.
         // `--sout-mux-caching=500`  output muxer cache; keeps A/V sync tight.
-        fun buildFactory(extra: List<String>): MediaPlayerFactory? = runCatching {
+        private fun buildFactory(extra: List<String>): MediaPlayerFactory? = runCatching {
             MediaPlayerFactory(
                 "--no-video-title-show",
                 "--network-caching=2000",
@@ -98,11 +122,17 @@ class VlcEngine(private val extraArgs: () -> List<String> = { emptyList() }) {
             )
         }.getOrNull()
 
+        /** libVLC's version ("3.0.24 Vetinari"), read without starting an instance; null when VLC is missing. */
+        fun libVlcVersion(): String? = runCatching {
+            detectBundledVlc()
+            uk.co.caprica.vlcj.binding.lib.LibVlc.libvlc_get_version()
+        }.getOrNull()
+
         // Checks for a VLC copy bundled inside the distributable's resources dir.
         // When found, prepends the directory to jna.library.path so JNA locates
         // libvlc.dll before scanning system paths. VLC then finds its plugins/
         // subdirectory relative to its own DLL location automatically.
-        fun detectBundledVlc(): String? {
+        private fun detectBundledVlc(): String? {
             val resourcesDir = System.getProperty("compose.application.resources.dir")
                 ?: return null
             // Windows: vlc/libvlc.dll. macOS: vlc/lib/libvlc.dylib. Linux uses the distro's libVLC.

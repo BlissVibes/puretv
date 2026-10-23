@@ -121,6 +121,17 @@ class VodPlayerViewModel(
     }
 
     /** Live-apply the scaler to the running player AND persist it (mirrors StreamViewModel). */
+    /** NVIDIA RTX Video switches from the player menu: saved, then applied to this video. */
+    fun setRtxSuperResolution(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxSuperResolution = on) }
+        player.applyRtxVideo()
+    }
+
+    fun setRtxHdr(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxHdr = on) }
+        player.applyRtxVideo()
+    }
+
     fun setUpscaling(mode: UpscalingMode) {
         player.setUpscaling(mode)
         settingsStore.updateSettings { it.copy(upscalingMode = mode) }

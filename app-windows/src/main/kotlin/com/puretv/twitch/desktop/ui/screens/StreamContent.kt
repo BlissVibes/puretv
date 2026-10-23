@@ -1,16 +1,12 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.AppRestart
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -128,6 +124,7 @@ import com.puretv.twitch.desktop.ui.chat.composerKeyAction
 import com.puretv.twitch.desktop.ui.chat.nextFollowing
 import com.puretv.twitch.desktop.ui.chat.scrollAnchor
 import com.puretv.twitch.desktop.ui.components.AdBlockPill
+import com.puretv.twitch.desktop.ui.components.RtxMenuState
 import com.puretv.twitch.desktop.ui.components.Avatar
 import com.puretv.twitch.desktop.ui.components.ChatMessageRow
 import com.puretv.twitch.desktop.ui.components.CountBadge
@@ -154,6 +151,7 @@ import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.desktop.ui.theme.sidePanelReveal
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -227,7 +225,9 @@ fun StreamContent(
             .distinctUntilChanged()
     }.collectAsState(initial = vlcPlayer.status.value.copy(positionMs = 0L, durationMs = 0L))
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
+    val playerProvider = remember { koin.get<DesktopPlayerProvider>() }
     val appSettings by settingsStore.settings.collectAsState()
+    val rtxStatus by vlcPlayer.rtxStatus.collectAsState()
     val bell = rememberAlertBell(settingsStore, channelLogin, state.channel?.displayName ?: channelLogin)
     val shell = LocalAppShell.current
     val mode = shell.playerMode
@@ -237,23 +237,31 @@ fun StreamContent(
 
     // The App shell itself collapses its own outer inset and pane rounding to 0 in
     // THEATER/FULLSCREEN (see App.kt's paneCorner). Mirror that here so the player
-    // chrome goes fully edge-to-edge when immersive, and springs back into the
-    // "separate rounded cards" look the moment the user returns to DEFAULT.
+    // chrome goes fully edge-to-edge when immersive, and back into the "separate
+    // rounded cards" look the moment the user returns to DEFAULT. In one step, like
+    // the shell: easing the padding would resize the video surface on every frame.
     val immersive = mode != PlayerMode.DEFAULT
-    val groundPad by animateDpAsState(if (immersive) 0.dp else 8.dp, PureTvMotion.move(), label = "groundPad")
-    val panelRadius by animateDpAsState(if (immersive) 0.dp else 24.dp, PureTvMotion.move(), label = "panelRadius")
+    val groundPad = if (immersive) 0.dp else 8.dp
+    val panelRadius = if (immersive) 0.dp else 24.dp
 
+    // Chat takes or gives back its width in one step (see PureTvMotion.sidePanelSize),
+    // so the video beside it resizes once per toggle; the card itself slides and fades.
     val chatWidth by animateDpAsState(
         targetValue = if (isChatOpen) CHAT_WIDTH else 0.dp,
-        animationSpec = PureTvMotion.move(),
+        animationSpec = PureTvMotion.sidePanelSize(isChatOpen, instant = mini),
         label = "chatWidth",
+    )
+    val chatReveal by animateFloatAsState(
+        targetValue = if (isChatOpen) 1f else 0f,
+        animationSpec = PureTvMotion.sidePanelReveal(isChatOpen, instant = mini),
+        label = "chatReveal",
     )
     // The breathing room between the player column and the chat card. Tied to
     // isChatOpen (not the immersive ground padding) so chat keeps its own gap even
     // when the player chrome has gone edge-to-edge.
     val chatGap by animateDpAsState(
         targetValue = if (isChatOpen) 8.dp else 0.dp,
-        animationSpec = PureTvMotion.move(),
+        animationSpec = PureTvMotion.sidePanelSize(isChatOpen, instant = mini),
         label = "chatGap",
     )
 
@@ -628,6 +636,15 @@ fun StreamContent(
                             onBackendSelected = viewModel::setPlaybackBackend,
                             sleepMinutes = sleep.ui.minutes,
                             onSleepSelected = sleep::set,
+                            rtx = if (vlcPlayer.supportsRtxVideo) RtxMenuState(
+                                status = rtxStatus,
+                                superResolution = appSettings.rtxSuperResolution,
+                                onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                                hdr = appSettings.rtxHdr.takeIf { vlcPlayer.supportsRtxHdr },
+                                onHdrChange = viewModel::setRtxHdr,
+                            ) else null,
+                            engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
+                            onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
                         )
                     }
 
@@ -683,7 +700,8 @@ fun StreamContent(
             Spacer(Modifier.width(chatGap))
 
             // ── Chat panel ─────────────────────────────────────────────────────
-            // Width animates 0↔392dp. clipToBounds() ensures content clips clean.
+            // Width is 0 or 392dp; the card slides and fades inside it. clipToBounds()
+            // keeps the slide inside the panel.
             Box(
                 modifier = Modifier
                     .width(chatWidth)
@@ -691,7 +709,7 @@ fun StreamContent(
                     .clipToBounds(),
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().sidePanelReveal { chatReveal },
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     var chatTab by remember { mutableStateOf(ChatTab.Chat) }

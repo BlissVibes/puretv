@@ -11,6 +11,41 @@ release notes automatically.
 
 ---
 
+## 1.15.0 - 2026-10-23
+
+NVIDIA RTX Video comes to PureTV on Windows, streams open at the quality you pick, and the whole app got a new typeface and quicker, smoother motion.
+
+### New
+- **NVIDIA RTX Video (Windows, RTX graphics cards).** Super Resolution uses your
+  RTX card to sharpen streams shown bigger than they were sent, like 1080p on a
+  1440p or 4K screen, and it is on by default. RTX HDR turns normal streams into
+  HDR on a display that has Windows HDR turned on; it is off by default because it
+  changes the look a lot. Both are switches in Settings and in the player menu,
+  which also tells you what each one is doing right now. How strong Super
+  Resolution is comes from the NVIDIA app: System, Video, RTX Video Enhancement.
+  Multi-stream tiles and extra windows stay as they are, to save your GPU.
+- **Stats on the default engine.** Press F3 on a stream to see the source and
+  screen size, what is scaling the picture, and dropped frames.
+- **Restart now.** Switching the playback engine offers a one-click restart
+  instead of asking you to restart later.
+
+### Improved
+- **New typeface.** The whole app now uses Google Sans Flex, the Material 3
+  Expressive font, with even-width numbers so viewer counts and timers sit still.
+- **Quicker, smoother motion.** Animations follow Material 3 Expressive's spring
+  timing, and opening chat, theater mode or fullscreen resizes the video once
+  instead of on every animation frame.
+- **VLC 3.0.24.** The built-in player is updated, which also brings VLC's latest
+  security fixes.
+
+### Fixed
+- **Streams start at the quality you pick.** Choosing Source or 1080p60 no longer
+  starts at 160p and climbs on channels whose top quality isn't labelled the way
+  PureTV expected. A quality the channel doesn't have plays the nearest one below.
+- **No white box when you leave a stream.** The window no longer freezes while the
+  video shuts down.
+- **The picture fills the player again after you open and close the player menu.**
+
 ## 1.14.0 - 2026-10-22
 
 PureTV now runs on Mac and Linux too, and on Windows the keyboard, the stream bar and the ad-blocking connection all got better.

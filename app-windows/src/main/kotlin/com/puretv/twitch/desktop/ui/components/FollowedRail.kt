@@ -1,10 +1,5 @@
 package com.puretv.twitch.desktop.ui.components
 
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
@@ -124,13 +119,13 @@ fun FollowedRail(
                     Text("No followed channels live", color = c.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp))
                 }
                 // Keyed by login (live + offline are disjoint, so keys stay unique across both).
-                else -> items(state.live, key = { it.login }) { Box(Modifier.animateItem()) { RailEntry(it) } }
+                else -> items(state.live, key = { it.login }) { Box(Modifier.animateItem(PureTvMotion.itemFadeIn(), PureTvMotion.itemPlacement(), PureTvMotion.itemFadeOut())) { RailEntry(it) } }
             }
 
             if (state.offline.isNotEmpty()) {
                 item { OfflineToggleRow(expanded = state.offlineExpanded, count = state.offline.size, onClick = onToggleOffline) }
                 if (state.offlineExpanded) {
-                    items(state.offline, key = { it.login }) { Box(Modifier.animateItem()) { RailEntry(it) } }
+                    items(state.offline, key = { it.login }) { Box(Modifier.animateItem(PureTvMotion.itemFadeIn(), PureTvMotion.itemPlacement(), PureTvMotion.itemFadeOut())) { RailEntry(it) } }
                 }
             }
         }
@@ -143,7 +138,7 @@ private fun SignInPrompt(onSignIn: () -> Unit) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val ink by animateColorAsState(if (hovered) c.onPrimaryContainer else c.primary, tween(PureTvMotion.Fast), label = "signInInk")
+    val ink by animateColorAsState(if (hovered) c.onPrimaryContainer else c.primary, PureTvMotion.effectsFast(), label = "signInInk")
     Text(
         "Sign in to see who's live",
         style = MaterialTheme.typography.bodyMedium,

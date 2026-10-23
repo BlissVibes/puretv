@@ -41,6 +41,18 @@ open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
         super.removeNotify()
     }
 
+    /**
+     * Never zero-sized. Layout can hand the surface 0x0 for a moment (going to the mini
+     * player), and VLC 3.0.24 with RTX Super Resolution or HDR then divides by that size
+     * while fitting the picture (integer divide by zero in libvlccore, the whole app goes).
+     * Two pixels look the same as none.
+     */
+    @Deprecated("AWT's own deprecation; overridden so every size change goes through the clamp")
+    override fun reshape(x: Int, y: Int, width: Int, height: Int) {
+        @Suppress("DEPRECATION")
+        super.reshape(x, y, width.coerceAtLeast(MIN_SIDE), height.coerceAtLeast(MIN_SIDE))
+    }
+
     /** Copies one decoded RV32 frame in and schedules a repaint. Called on libVLC's thread. */
     internal fun present(pixels: ByteBuffer, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
@@ -87,6 +99,9 @@ open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
     internal data class Box(val x: Int, val y: Int, val width: Int, val height: Int)
 
     internal companion object {
+        // The smallest the surface may be (see reshape): VLC must never see 0x0.
+        const val MIN_SIDE = 2
+
         /** The largest [srcW]x[srcH] box that fits [dstW]x[dstH], centred (letterbox or pillarbox). */
         fun fit(srcW: Int, srcH: Int, dstW: Int, dstH: Int): Box {
             if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return Box(0, 0, 0, 0)

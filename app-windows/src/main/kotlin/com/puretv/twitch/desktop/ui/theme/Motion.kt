@@ -6,8 +6,8 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.Easing
 import androidx.compose.animation.core.FiniteAnimationSpec
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.SpringSpec
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -15,6 +15,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
@@ -32,38 +33,48 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 
 /**
  * The one motion vocabulary for the desktop app. Everything animated in `ui/` pulls
  * its duration, curve and spring from here, so a change in feel is a change in one file.
  *
- * Durations: [Fast] for hover and press feedback, [Medium] for a state change or a
- * panel, [Slow] for a structural change (the window shell). Nothing is linear.
+ * Durations: [Fast] for things leaving, [Medium] for things entering (a panel, a bar,
+ * a screen), [Slow] for anything bigger. Hover and press are springs, not durations.
+ * Nothing is linear.
  *
  * Curves: [Standard] is the default for colour and layout (quick start, long settle).
  * [Decelerate] is for things ENTERING (they arrive fast and land softly), [Accelerate]
  * for things LEAVING (they pick up speed and are gone). Leaving is always shorter than
  * entering so the UI never feels like it is making you wait.
  *
- * Springs: [MorphSpring] is the one deliberately bouncy spring, reserved for corner
- * radius morphs and switch thumbs. [PressSpring] and [HoverSpring] are low bounce and
- * stiff, for scale and lift, so a press settles in about 150 ms instead of wobbling.
+ * Springs follow Material 3 Expressive's motion physics (the `MotionScheme.expressive()`
+ * values from androidx material3's ExpressiveMotionTokens, copied below because this
+ * material3 version has no MotionScheme). Spatial springs move things and may overshoot
+ * a little; effects springs drive colour and opacity and never overshoot. Anything the
+ * user can interrupt (hover, press, selection) runs on a spring, because a spring keeps
+ * its velocity when the target flips mid-flight and a tween restarts from rest.
+ * [MorphSpring], [PressSpring] and [HoverSpring] are all the fast spatial spring.
  *
  * Rules the call sites follow:
  *  - Move things in a `graphicsLayer { }` lambda (scale, alpha, translation) so a frame
  *    costs a layer update, not a recomposition or a relayout.
  *  - Never animate size, alpha or scale of anything that hosts or sits over the native
  *    video surface; the heavyweight AWT canvas ignores Compose transforms and flickers.
- *    Panels beside the video use [panelEnter] and [panelExit]: they fade while their
- *    size changes once, so the surface resizes once instead of every frame.
+ *    Panels beside the video use [panelEnter] and [panelExit] (above or below it) or
+ *    [sidePanelSize] and [sidePanelReveal] (beside it): they fade while their size
+ *    changes once, so the surface resizes once instead of every frame.
+ *  - Nothing that feeds layout (padding, width, spacing) rides a spring that can
+ *    overshoot: on the way to 0 it would go negative, and layout throws.
  *  - No infinite animation on a screen that is playing video (see [LocalQuietMotion]).
  *  - Direction carries meaning: going deeper slides content in from the right, going
  *    back reverses it (see [RouteTransition]).
  *
  * [reduced] is the central off switch. It is set from the Windows "Animation effects"
  * preference (see `platform/SystemAnimations.kt`) and turns every move, scale and
- * spring below into a snap. Opacity fades stay: they carry no motion.
+ * spatial spring below into a snap. Opacity fades and effects springs stay: they carry
+ * no motion, and the springs are over in under 170 ms.
  */
 object PureTvMotion {
     const val Fast = 120
@@ -79,6 +90,15 @@ object PureTvMotion {
 
     /** Pixels of travel for a route change. Small on purpose: it hints direction, it is not a swipe. */
     val RouteTravel: Dp = 28.dp
+
+    /** Travel of a side panel's content (chat) as it fades in beside the video. */
+    val PanelTravel: Dp = 24.dp
+
+    /** One half of the LIVE dot's breathing cycle. */
+    const val LivePulseMs = 1400
+
+    /** Scale settles to within 0.1%; the default 1% threshold ends a press with a visible jump. */
+    const val ScaleThreshold = 0.001f
 
     /**
      * True when the user turned Windows animation effects off. Snapshot state: a spec reads it
@@ -100,23 +120,42 @@ object PureTvMotion {
 
     // ── Springs ────────────────────────────────────────────────────────────────
 
+    // M3 Expressive spring tokens (ExpressiveMotionTokens in androidx.compose.material3).
+    // Fast is for small things (buttons, chips, switches, corners), default for larger
+    // ones (list items moving). Effects springs are critically damped by definition.
+
+    /** Fast spatial: settles in about 270 ms with a small (~10%) overshoot. */
+    const val SpatialFastDamping = 0.6f
+    const val SpatialFastStiffness = 800f
+
+    /** Default spatial: settles in about 300 ms with a barely visible overshoot. */
+    const val SpatialDefaultDamping = 0.8f
+    const val SpatialDefaultStiffness = 380f
+
+    /** Fast effects (hover colour, focus ring): about 110 ms, no overshoot. */
+    const val EffectsFastStiffness = 3800f
+
+    /** Default effects (a state's colour or opacity): about 170 ms, no overshoot. */
+    const val EffectsDefaultStiffness = 1600f
+
     /**
-     * The morph curve. Overshoots its target and settles back, which is what makes
-     * a corner change read as elastic rather than as a plain tween. The CSS
-     * mockup expresses the same thing as `cubic-bezier(.2, 1.4, .3, 1)`. Note the
-     * 1.4 control point above 1. Do NOT use it for anything that feeds layout
-     * (padding, width, spacing): an overshoot there goes negative.
+     * The morph curve: the fast spatial spring. Overshoots its target and settles back,
+     * which is what makes a corner change read as elastic rather than as a plain tween.
+     * Do NOT use it for anything that feeds layout (padding, width, spacing): an
+     * overshoot there goes negative.
      */
-    val MorphSpring: SpringSpec<Dp> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
+    val MorphSpring: SpringSpec<Dp> =
+        spring(SpatialFastDamping, SpatialFastStiffness, visibilityThreshold = Dp.VisibilityThreshold)
 
-    /** Same feel, for float-valued properties (scale, translation, alpha ramps). */
-    val MorphSpringFloat: SpringSpec<Float> = spring(dampingRatio = 0.55f, stiffness = Spring.StiffnessMediumLow)
+    /** Same feel, for float-valued properties (scale, translation). */
+    val MorphSpringFloat: SpringSpec<Float> =
+        spring(SpatialFastDamping, SpatialFastStiffness, visibilityThreshold = ScaleThreshold)
 
-    /** Press scale: stiff and almost critically damped, one barely visible settle. */
-    val PressSpring: SpringSpec<Float> = spring(dampingRatio = 0.75f, stiffness = 900f)
+    /** Press scale. The overshoot on release is a fraction of a percent of the press depth. */
+    val PressSpring: SpringSpec<Float> = MorphSpringFloat
 
-    /** Hover lift (Dp) and hover scale (Float): calmer than a press. */
-    val HoverSpring: SpringSpec<Dp> = spring(dampingRatio = 0.85f, stiffness = 600f)
+    /** Hover lift (Dp). Hover scale uses [PressSpring]. */
+    val HoverSpring: SpringSpec<Dp> = MorphSpring
 
     // ── Reduced-motion aware specs ─────────────────────────────────────────────
 
@@ -140,16 +179,60 @@ object PureTvMotion {
     /** [MorphSpringFloat] as a spec that respects [reduced]. */
     fun morphFloat(): FiniteAnimationSpec<Float> = if (reduced) snap() else MorphSpringFloat
 
+    /**
+     * Fast effects spring for hover colour and focus. Interruptible, so sweeping the
+     * pointer across a grid never leaves a trail of cards finishing a fixed-length tween.
+     * Not snapped when [reduced]: like [fade], it carries no motion.
+     */
+    fun <T> effectsFast(): FiniteAnimationSpec<T> = spring(stiffness = EffectsFastStiffness)
+
+    /** Default effects spring, for a colour that marks a state (selected, checked). */
+    fun <T> effects(): FiniteAnimationSpec<T> = spring(stiffness = EffectsDefaultStiffness)
+
+    // ── Lazy list items ────────────────────────────────────────────────────────
+
+    /** Fade for an item that appears in a lazy list after it first laid out. */
+    fun itemFadeIn(): FiniteAnimationSpec<Float> = effects()
+
+    /** Fade for an item that leaves a lazy list: quick, so the gap closes promptly. */
+    fun itemFadeOut(): FiniteAnimationSpec<Float> = effectsFast()
+
+    /**
+     * Movement of lazy list items when the list reorders (a refresh re-ranking streams).
+     * Null, so items jump to their new place, when [reduced].
+     */
+    fun itemPlacement(): FiniteAnimationSpec<IntOffset>? =
+        if (reduced) null else spring(SpatialDefaultDamping, SpatialDefaultStiffness, IntOffset.VisibilityThreshold)
+
+    // ── Side panels beside the video ───────────────────────────────────────────
+
+    /**
+     * Width (or gap) of a panel that sits BESIDE the native video surface, such as chat.
+     * It takes its width in one step when opening and gives it back in one step once
+     * [sidePanelReveal] has faded the content out, so the video resizes once per
+     * toggle instead of on every frame. [instant] when the window itself is changing
+     * shape (mini player).
+     */
+    fun <T> sidePanelSize(open: Boolean, instant: Boolean = false): FiniteAnimationSpec<T> =
+        snap(delayMillis = if (open || instant) 0 else Fast)
+
+    /** Progress (0 hidden, 1 shown) of the content inside a [sidePanelSize] panel. Use with [Modifier.sidePanelReveal]. */
+    fun sidePanelReveal(open: Boolean, instant: Boolean = false): FiniteAnimationSpec<Float> = when {
+        instant -> snap()
+        open -> fade(Medium, Decelerate)
+        else -> fade(Fast, Accelerate)
+    }
+
     // ── Stagger ────────────────────────────────────────────────────────────────
 
     /** Items past this index appear at once: a late, far-down item must never wait on a delay. */
-    const val StaggerMaxItems = 10
-    const val StaggerStepMs = 28
+    const val StaggerMaxItems = 8
+    const val StaggerStepMs = 20
 
     /**
-     * Delay before the item at [index] starts appearing: 28 ms per item, capped at
-     * [StaggerMaxItems] items so the whole group is in within ~280 ms. Negative
-     * indexes clamp to zero. Pure, so it can be unit tested.
+     * Delay before the item at [index] starts appearing: 20 ms per item, capped at
+     * [StaggerMaxItems] items so the last one starts by 140 ms and the group is in
+     * within ~360 ms. Negative indexes clamp to zero. Pure, so it can be unit tested.
      */
     fun staggerDelayMs(index: Int, stepMs: Int = StaggerStepMs, maxItems: Int = StaggerMaxItems): Int =
         index.coerceIn(0, maxItems) * stepMs
@@ -189,6 +272,31 @@ object PureTvMotion {
     /** Mirror of [panelEnter]: fade first, then give the height back in one step. */
     fun panelExit(): ExitTransition =
         fadeOut(tween(Fast, easing = Accelerate)) + shrinkVertically(snap(delayMillis = Fast))
+
+    /**
+     * The navigation rail returning when the player leaves an immersive mode. Its slot
+     * comes back in one step, together with the shell gutter, and the rail slides into
+     * it. It has no exit animation on purpose: going immersive switches the whole shell
+     * in a single frame, so the video resizes once instead of once per frame of a slide.
+     */
+    fun railEnter(): EnterTransition =
+        if (reduced) {
+            fadeIn(tween(Fast))
+        } else {
+            slideInHorizontally(tween(Medium, easing = Decelerate)) { -it } + fadeIn(tween(Fast, easing = Decelerate))
+        }
+}
+
+/**
+ * Fades the content of a [PureTvMotion.sidePanelSize] panel in while it slides in from
+ * the right, the side such panels sit on. Runs in the layer, so a frame costs a layer
+ * update. Callers clip the panel to its bounds. [progress] is
+ * read in the layer block, so pass a lambda over animated state.
+ */
+fun Modifier.sidePanelReveal(progress: () -> Float): Modifier = graphicsLayer {
+    val p = progress()
+    alpha = p
+    if (!PureTvMotion.reduced) translationX = (1f - p) * PureTvMotion.PanelTravel.toPx()
 }
 
 /**

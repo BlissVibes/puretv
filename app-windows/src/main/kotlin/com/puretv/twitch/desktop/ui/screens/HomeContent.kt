@@ -72,6 +72,7 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.components.prewarmStreamOnHover
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.components.channelWindowMenu
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.StaggerLedger
 import com.puretv.twitch.desktop.ui.theme.staggerIn
@@ -267,7 +268,9 @@ fun HomeContent(
                                 flipOrigin.record(state.topStreams.map { it.userLogin })
                                 onOpenChannel(stream.userLogin)
                             },
-                            modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin).channelWindowMenu(stream.userLogin, true),
+                            // staggerIn owns the entrance; the item's own fade-in would fade it twice.
+                            modifier = Modifier.animateItem(fadeInSpec = null, placementSpec = PureTvMotion.itemPlacement(), fadeOutSpec = PureTvMotion.itemFadeOut())
+                                .staggerIn(index, stream.id, stagger).prewarmStreamOnHover(stream.userLogin).channelWindowMenu(stream.userLogin, true),
                         )
                     }
                 } else if (state.following.isEmpty()) {

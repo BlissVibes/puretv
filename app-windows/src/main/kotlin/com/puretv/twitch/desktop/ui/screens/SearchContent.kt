@@ -2,7 +2,6 @@ package com.puretv.twitch.desktop.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -140,7 +139,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
     val focused by interaction.collectIsFocusedAsState()
     val radius by animateDpAsState(
         targetValue = if (hovered || focused) 20.dp else 32.dp,
-        animationSpec = PureTvMotion.MorphSpring,
+        animationSpec = PureTvMotion.morph(),
         label = "searchFieldRadius",
     )
 
@@ -201,7 +200,7 @@ private fun SearchResultRow(result: ChannelSearchResult, onClick: () -> Unit) {
     val hovered by interaction.collectIsHoveredAsState()
     val rowColor by animateColorAsState(
         targetValue = if (hovered) c.surfaceHigh else Color.Transparent,
-        animationSpec = tween(PureTvMotion.Fast),
+        animationSpec = PureTvMotion.effectsFast(),
         label = "rowHover",
     )
 

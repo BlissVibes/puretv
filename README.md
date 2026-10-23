@@ -31,6 +31,7 @@ No relay server, no account with us, no logging of what you watch.
 | **Five themes** | Violet Dusk, Ember, Teal Deep, Pure Black and Midnight Forest. Each one re-tones the whole app, not just an accent. |
 | **Your follows, front and centre** | Live channels first, offline below, on every platform. |
 | **Chat beside the stream** | With emotes, on desktop, phone and TV. |
+| **NVIDIA RTX Video on Windows** | With an RTX card, Super Resolution sharpens streams shown bigger than they were sent, and RTX HDR turns them into HDR on a display with Windows HDR on. Both are switches in Settings and the player menu. |
 | **Keeps you up to date** | It checks for new versions on launch. On Windows, phone and TV it installs in one tap; on Mac and Linux it takes you to the download. |
 | **Nothing phones home** | Sign-in goes straight to Twitch. Your session stays encrypted on your device. |
 

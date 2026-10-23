@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.AppRestart
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -80,6 +82,7 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
 import com.puretv.twitch.desktop.ui.components.PlayerSettingsMenu
+import com.puretv.twitch.desktop.ui.components.RtxMenuState
 import com.puretv.twitch.desktop.ui.components.SeekPreview
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
@@ -135,7 +138,9 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val chatViewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodChatViewModel> { parametersOf(launch.vodId, launch.channelLogin, windowPlayback) } }
     val chatMessages by chatViewModel.messages.collectAsState()
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
+    val playerProvider = remember { koin.get<DesktopPlayerProvider>() }
     val appSettings by settingsStore.settings.collectAsState()
+    val rtxStatus by viewModel.player.rtxStatus.collectAsState()
     var settingsMenuOpen by remember { mutableStateOf(false) }
     val multiSession = remember { koin.get<MultiSession>() }
     // Shown in place of the channel name for a few seconds when multi-stream refused the video.
@@ -296,6 +301,15 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
                         scalingEnabled = viewModel.player.supportsUpscaling,
                         backend = appSettings.playbackBackend,
                         onBackendSelected = viewModel::setPlaybackBackend,
+                        rtx = if (viewModel.player.supportsRtxVideo) RtxMenuState(
+                            status = rtxStatus,
+                            superResolution = appSettings.rtxSuperResolution,
+                            onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                            hdr = appSettings.rtxHdr.takeIf { viewModel.player.supportsRtxHdr },
+                            onHdrChange = viewModel::setRtxHdr,
+                        ) else null,
+                        engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
+                        onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
                     )
                 }
 

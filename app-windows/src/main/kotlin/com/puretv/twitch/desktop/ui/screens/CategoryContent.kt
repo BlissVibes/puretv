@@ -51,6 +51,7 @@ import com.puretv.twitch.desktop.ui.components.LivePill
 import com.puretv.twitch.desktop.ui.components.Skeleton
 import com.puretv.twitch.desktop.ui.components.expressiveSurface
 import com.puretv.twitch.desktop.ui.components.formatViewerCount
+import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import com.puretv.twitch.desktop.ui.theme.StaggerLedger
@@ -131,7 +132,9 @@ fun CategoryContent(
             else -> itemsIndexed(state.streams, key = { _, it -> it.id }) { index, stream ->
                 CategoryStreamCard(
                     stream = stream,
-                    modifier = Modifier.animateItem().staggerIn(index, stream.id, stagger),
+                    // staggerIn owns the entrance; the item's own fade-in would fade it twice.
+                    modifier = Modifier.animateItem(fadeInSpec = null, placementSpec = PureTvMotion.itemPlacement(), fadeOutSpec = PureTvMotion.itemFadeOut())
+                        .staggerIn(index, stream.id, stagger),
                     onClick = {
                         // PageUp/PageDown in the player flip through this category.
                         flipOrigin.record(state.streams.map { it.userLogin })

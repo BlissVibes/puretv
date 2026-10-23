@@ -180,6 +180,10 @@ class DesktopSettingsStore(
         val showSevenTvPaints: Boolean = true,
         // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
         val audioNormalizer: Boolean = false,
+        // NVIDIA RTX Video. Missing from older files, which then load with Super
+        // Resolution on and HDR off (see AppSettings).
+        val rtxSuperResolution: Boolean = true,
+        val rtxHdr: Boolean = false,
         // Per-channel go-live alerts. Missing from older files, which then load with none.
         val notifyChannels: List<String> = emptyList(),
         val perChannelNoteDismissed: Boolean = false,
@@ -212,6 +216,8 @@ class DesktopSettingsStore(
         trayNoticeShown = trayNoticeShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        rtxSuperResolution = rtxSuperResolution,
+        rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
         perChannelNoteDismissed = perChannelNoteDismissed,
         // `accessToken`/`username`/`userId` live in the encrypted token store
@@ -245,6 +251,8 @@ class DesktopSettingsStore(
         trayNoticeShown = trayNoticeShown,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        rtxSuperResolution = rtxSuperResolution,
+        rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.sorted(),
         perChannelNoteDismissed = perChannelNoteDismissed,
     )

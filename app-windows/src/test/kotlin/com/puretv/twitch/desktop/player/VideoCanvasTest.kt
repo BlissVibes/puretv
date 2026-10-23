@@ -18,6 +18,20 @@ class VideoCanvasTest {
     }
 
     @Test
+    fun `the surface is never zero-sized, so VLC never divides by zero`() {
+        val canvas = VideoCanvas()
+        canvas.setSize(0, 0)
+        assertEquals(VideoCanvas.MIN_SIDE, canvas.width)
+        assertEquals(VideoCanvas.MIN_SIDE, canvas.height)
+        canvas.setBounds(10, 20, 1280, 0)
+        assertEquals(1280, canvas.width)
+        assertEquals(VideoCanvas.MIN_SIDE, canvas.height)
+        canvas.setBounds(0, 0, 1920, 1080)
+        assertEquals(1920, canvas.width)
+        assertEquals(1080, canvas.height)
+    }
+
+    @Test
     fun `nothing to fit gives an empty box`() {
         assertEquals(VideoCanvas.Box(0, 0, 0, 0), VideoCanvas.fit(0, 1080, 600, 225))
         assertEquals(VideoCanvas.Box(0, 0, 0, 0), VideoCanvas.fit(1920, 1080, 0, 0))

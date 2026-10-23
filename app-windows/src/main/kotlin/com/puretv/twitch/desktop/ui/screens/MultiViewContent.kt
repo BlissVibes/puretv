@@ -2,12 +2,8 @@ package com.puretv.twitch.desktop.ui.screens
 
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -98,6 +94,7 @@ import com.puretv.twitch.desktop.ui.components.formatViewerCount
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.desktop.ui.theme.sidePanelReveal
 import kotlinx.coroutines.delay
 import org.koin.core.Koin
 import java.awt.KeyEventDispatcher
@@ -173,14 +170,21 @@ fun MultiViewContent(
     val appSettings by remember { koin.get<DesktopSettingsStore>() }.settings.collectAsState()
     val shell = LocalAppShell.current
     val chatOpen = shell.isChatOpen
+    // One step for the width, so up to four native video surfaces resize once per toggle
+    // instead of on every frame; the chat card slides and fades inside it.
     val chatWidth by animateDpAsState(
         targetValue = if (chatOpen) CHAT_WIDTH else 0.dp,
-        animationSpec = tween(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.sidePanelSize(chatOpen),
         label = "multiChatWidth",
+    )
+    val chatReveal by animateFloatAsState(
+        targetValue = if (chatOpen) 1f else 0f,
+        animationSpec = PureTvMotion.sidePanelReveal(chatOpen),
+        label = "multiChatReveal",
     )
     val chatGap by animateDpAsState(
         targetValue = if (chatOpen) TILE_GAP else 0.dp,
-        animationSpec = tween(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.sidePanelSize(chatOpen),
         label = "multiChatGap",
     )
 
@@ -305,10 +309,11 @@ fun MultiViewContent(
             // notice strip: a native video surface would paint over anything floating.
             PlayerNoticeStrip(text = notice ?: sleep.ui.warning)
 
+            // Above the video tiles: the panel takes its height in one step (see panelEnter).
             AnimatedVisibility(
                 visible = pickerOpen && layout.canAdd,
-                enter = expandVertically() + fadeIn(),
-                exit = shrinkVertically() + fadeOut(),
+                enter = PureTvMotion.panelEnter(),
+                exit = PureTvMotion.panelExit(),
             ) {
                 AddChannelPanel(
                     koin = koin,
@@ -402,9 +407,9 @@ fun MultiViewContent(
 
         Spacer(Modifier.width(chatGap))
 
-        // Chat for the active tile only; it follows the sound. Width animates to 0 when
+        // Chat for the active tile only; it follows the sound. Width goes to 0 when
         // closed, and the connection stays so reopening shows the room as it is.
-        Box(Modifier.width(chatWidth).fillMaxHeight().clipToBounds()) {
+        Box(Modifier.width(chatWidth).fillMaxHeight().clipToBounds().sidePanelReveal { chatReveal }) {
             MultiChatColumn(
                 viewModel = viewModel,
                 appSettings = appSettings,

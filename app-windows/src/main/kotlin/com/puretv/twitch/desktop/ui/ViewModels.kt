@@ -693,6 +693,17 @@ class StreamViewModel(
         settingsStore.updateSettings { it.copy(upscalingMode = mode) }
     }
 
+    /** NVIDIA RTX Video switches from the player menu: saved, then applied to this stream. */
+    fun setRtxSuperResolution(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxSuperResolution = on) }
+        vlcPlayer.applyRtxVideo()
+    }
+
+    fun setRtxHdr(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxHdr = on) }
+        vlcPlayer.applyRtxVideo()
+    }
+
     /** Apply a scaler to the running player WITHOUT persisting — drives the
      *  hold-to-compare A/B (preview Off while held, restore the saved mode on release). */
     fun previewUpscaling(mode: UpscalingMode) = vlcPlayer.setUpscaling(mode)
@@ -871,6 +882,8 @@ class SettingsViewModel(
     private val settingsStore: DesktopSettingsStore,
     // Tells a running player about the audio normalizer switch (mpv applies it live).
     private val onAudioNormalizerChange: (Boolean) -> Unit = {},
+    // Tells a running main player the RTX Video settings changed.
+    private val onRtxVideoChange: () -> Unit = {},
 ) : DesktopViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
@@ -914,6 +927,16 @@ class SettingsViewModel(
     fun setAudioNormalizer(enabled: Boolean) {
         settingsStore.updateSettings { it.copy(audioNormalizer = enabled) }
         onAudioNormalizerChange(enabled)
+    }
+
+    fun setRtxSuperResolution(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxSuperResolution = on) }
+        onRtxVideoChange()
+    }
+
+    fun setRtxHdr(on: Boolean) {
+        settingsStore.updateSettings { it.copy(rtxHdr = on) }
+        onRtxVideoChange()
     }
 
     // upscalingMode + playbackBackend are now owned by the in-player gear menu

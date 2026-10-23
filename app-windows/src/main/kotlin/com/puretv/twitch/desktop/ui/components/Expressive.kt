@@ -111,12 +111,12 @@ fun Modifier.expressiveSurface(
     )
     val fill by animateColorAsState(
         targetValue = if (hovered) hoverColor else color,
-        animationSpec = PureTvMotion.fade(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.effectsFast(),
         label = "morphFill",
     )
     val stroke by animateColorAsState(
         targetValue = if (hovered) hoverBorderColor else borderColor,
-        animationSpec = PureTvMotion.fade(PureTvMotion.Medium),
+        animationSpec = PureTvMotion.effectsFast(),
         label = "morphStroke",
     )
     val rise by animateDpAsState(
@@ -248,7 +248,7 @@ fun ExpressiveButton(
     // neighbours, on every frame of the press.
     val hPad = size.hPad
     val hovered by interaction.collectIsHoveredAsState()
-    val ink by animateColorAsState(if (hovered) fgHover else fg, PureTvMotion.fade(PureTvMotion.Medium), label = "buttonInk")
+    val ink by animateColorAsState(if (hovered) fgHover else fg, PureTvMotion.effectsFast(), label = "buttonInk")
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -454,7 +454,7 @@ fun ExpressiveFilterChip(
     val interaction = remember { MutableInteractionSource() }
     val fg by animateColorAsState(
         if (selected) c.onSecondaryContainer else c.onSurfaceVariant,
-        PureTvMotion.fade(PureTvMotion.Medium),
+        PureTvMotion.effects(),
         label = "chipFg",
     )
 
@@ -750,7 +750,7 @@ fun ExpressiveSwitch(
 ) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
-    val track by animateColorAsState(if (checked) c.primary else c.surfaceHighest, PureTvMotion.fade(PureTvMotion.Medium), label = "switchTrack")
+    val track by animateColorAsState(if (checked) c.primary else c.surfaceHighest, PureTvMotion.effects(), label = "switchTrack")
     // Resting positions inside a 56x32 track: 4dp inset on the off side for the
     // small thumb, 28dp on the on side for the large one.
     val thumbStart by animateDpAsState(if (checked) 28.dp else 8.dp, PureTvMotion.morph(), label = "switchThumbStart")

@@ -1,5 +1,13 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.puretv.twitch.desktop.platform.RtxGpu
+import com.puretv.twitch.desktop.player.RtxHdrState
+import com.puretv.twitch.desktop.player.RtxVideoStatus
+import com.puretv.twitch.desktop.player.SuperResolutionState
+import com.puretv.twitch.desktop.ui.components.RtxVideoText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -117,6 +125,21 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
                 .runningBackend(state.settings.playbackBackend) == PlaybackBackend.VLC,
         )
         Spacer(Modifier.height(16.dp))
+
+        // Only on a PC with an NVIDIA RTX card. Read off the UI thread: the first read runs `reg query`.
+        val rtxGpuName by produceState<String?>(null) { value = withContext(Dispatchers.IO) { RtxGpu.name } }
+        rtxGpuName?.let { gpu ->
+            val rtxStatus by remember { koin.get<DesktopPlayerProvider>().rtxStatusIfCreated() }.collectAsState()
+            RtxVideoPanel(
+                gpuName = gpu,
+                status = rtxStatus,
+                superResolution = state.settings.rtxSuperResolution,
+                onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                hdr = state.settings.rtxHdr.takeIf { koin.get<DesktopPlayerProvider>().offersRtxHdr() },
+                onHdrChange = viewModel::setRtxHdr,
+            )
+            Spacer(Modifier.height(16.dp))
+        }
 
         ChatPanel(
             textSize = ChatTextSize.from(state.settings.chatFontSize),
@@ -289,7 +312,7 @@ private fun ShapeAndMotionPanel(currentIntensity: ShapeIntensity, onSelect: (Sha
             Spacer(Modifier.height(20.dp))
             SettingsRow(
                 label = "Expressiveness",
-                description = "How far corners round, morph on press, and how springy the motion feels.",
+                description = "How far corners round, and how much they morph when you press them.",
             ) {
                 SegmentedToggle(
                     options = ShapeIntensity.entries,
@@ -358,6 +381,54 @@ private fun PlaybackPanel(
             }
             // Playback backend + GPU upscaling live in the in-player gear menu
             // (per-stream, applied live) rather than here. See PlayerSettingsMenu.
+        }
+    }
+}
+
+// ── NVIDIA RTX Video ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun RtxVideoPanel(
+    gpuName: String,
+    status: RtxVideoStatus,
+    superResolution: Boolean,
+    onSuperResolutionChange: (Boolean) -> Unit,
+    // Null hides the HDR switch: the running player can't do RTX Video HDR (VLC can't).
+    hdr: Boolean?,
+    onHdrChange: (Boolean) -> Unit,
+) {
+    val c = PureTvTheme.colors
+    // Say what it is doing only once a stream has told us; before that the descriptions do the work.
+    fun now(line: String, waiting: Boolean) = if (waiting) "" else " Now: $line"
+    ExpressivePanel {
+        Column {
+            Text("NVIDIA RTX Video", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Uses your $gpuName to make streams look better in the main player. Multi-stream tiles " +
+                    "and extra windows stay as they are. You can also switch these from the player menu.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            SettingsRow(
+                label = "Super Resolution",
+                description = "Sharpens streams shown bigger than they were sent, like 1080p on a 1440p or 4K " +
+                    "screen, or 720p in a big window. Uses more GPU power while it works. " +
+                    RtxVideoText.DRIVER_HINT +
+                    now(RtxVideoText.superResolution(status), status.superResolution in setOf(SuperResolutionState.OFF, SuperResolutionState.WAITING)),
+            ) {
+                ExpressiveSwitch(checked = superResolution, onCheckedChange = onSuperResolutionChange)
+            }
+            if (hdr != null) ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            if (hdr != null) SettingsRow(
+                label = "HDR",
+                description = "Turns normal streams into HDR. It only does something when HDR is on for your " +
+                    "display in Windows." +
+                    now(RtxVideoText.hdr(status), status.hdr in setOf(RtxHdrState.OFF, RtxHdrState.WAITING)),
+            ) {
+                ExpressiveSwitch(checked = hdr, onCheckedChange = onHdrChange)
+            }
         }
     }
 }

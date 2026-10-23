@@ -32,6 +32,9 @@ import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.MpvPlayer
 import com.puretv.twitch.desktop.player.NativeLibs
 import com.puretv.twitch.desktop.player.VlcEngine
+import com.puretv.twitch.desktop.player.RtxVlcEngines
+import com.puretv.twitch.desktop.player.RtxVideoChoice
+import com.puretv.twitch.desktop.platform.RtxGpu
 import com.puretv.twitch.desktop.player.VlcPlayer
 import com.puretv.twitch.desktop.update.UpdateManager
 import com.puretv.twitch.core.follows.FollowedChannelsService
@@ -152,12 +155,23 @@ val desktopModule = module {
         val store = get<DesktopSettingsStore>()
         VlcEngine { if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList() }
     }
+    // NVIDIA RTX Video runs on instances of its own, for the main player only (see
+    // RtxVlcEngines). Without an RTX card the choice is always "nothing".
+    single {
+        val store = get<DesktopSettingsStore>()
+        RtxVlcEngines(
+            standard = get(),
+            extraArgs = { if (store.settings.value.audioNormalizer) AudioNormalizerProfile.vlcArgs() else emptyList() },
+            choice = { RtxVideoChoice.from(store.settings.value, RtxGpu.present) },
+        )
+    }
     single {
         val store = get<DesktopSettingsStore>()
         val engine = get<VlcEngine>()
+        val rtx = get<RtxVlcEngines>()
         DesktopPlayerProvider {
             val mpv = store.settings.value.playbackBackend == PlaybackBackend.MPV && NativeLibs.mpvSupported()
-            if (mpv) MpvPlayer(store) else VlcPlayer(engine)
+            if (mpv) MpvPlayer(store) else VlcPlayer(engine, rtx = rtx)
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }
@@ -229,7 +243,11 @@ val desktopModule = module {
     factory {
         val players = get<DesktopPlayerProvider>()
         // Live on mpv; never builds a player just to tell it about the setting.
-        SettingsViewModel(get(), onAudioNormalizerChange = { on -> players.ifCreated { it.setAudioNormalizer(on) } })
+        SettingsViewModel(
+            get(),
+            onAudioNormalizerChange = { on -> players.ifCreated { it.setAudioNormalizer(on) } },
+            onRtxVideoChange = { players.ifCreated { it.applyRtxVideo() } },
+        )
     }
     // LoginViewModel collaborators: settingsStore, oauthManager, httpClient,
     // tokenHolder (for "set token BEFORE first authed call"), apiClient (for

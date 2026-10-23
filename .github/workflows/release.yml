@@ -79,8 +79,9 @@ jobs:
 
       - name: Install VLC (bundled into the installer so users need nothing extra)
         # Pinned for reproducible installer builds + CVE tracking (3.0.21+ fixes
-        # CVE-2024-46461, which affects VLC <= 3.0.20). Bump deliberately.
-        run: choco install vlc --version=3.0.23 --yes --no-progress
+        # CVE-2024-46461, which affects VLC <= 3.0.20; 3.0.24 fixes CVE-2026-73324, and
+        # RTX Video HDR crashes 3.0.22 and 3.0.23, see RtxVideoChoice.forVlc). Bump deliberately.
+        run: choco install vlc --version=3.0.24 --yes --no-progress
 
       - name: Install Inno Setup (wraps the app with a launch-after-install step)
         run: choco install innosetup --yes --no-progress

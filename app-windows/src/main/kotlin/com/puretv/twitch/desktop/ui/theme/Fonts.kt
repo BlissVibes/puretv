@@ -5,36 +5,32 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.platform.Font
 
 /**
- * The Cinémathèque type system — bundled OFL fonts loaded from the classpath
- * (`src/main/resources/fonts/`, the same place as `icon.ico`).
+ * The type system: Google Sans Flex, the Material 3 Expressive typeface (OFL), bundled
+ * from the classpath (`src/main/resources/fonts/`, the same place as `icon.ico`).
  *
- *  • Bricolage Grotesque — display / mastheads / channel names (the editorial voice)
- *  • Archivo             — every functional UI string (body, labels, buttons)
- *  • IBM Plex Mono       — data, viewer counts, timestamps, kickers (the "instrument" layer)
+ *  - PureTV Sans Display: headings, mastheads, channel names (optical size 40)
+ *  - PureTV Sans:         every other string, data included (optical size 18)
  *
- * Archivo and Bricolage ship upstream as VARIABLE fonts; Compose 1.7's desktop
- * `Font(resource, …)` has no variation-axis support (it would render every weight at
- * the default instance), so static weights were baked from the variable masters with
- * `fontTools.varLib.instancer` (pinning wght/wdth, plus opsz for Bricolage). Each
- * weight is therefore a real static TTF, loaded plainly by [Font].
+ * Google Sans Flex ships as one variable font, and Compose 1.7's desktop
+ * `Font(resource, ...)` cannot pick variation axes (every weight would render at the
+ * default instance), so static weights were baked from it with
+ * `fontTools.varLib.instancer` (wght per file; opsz as above; wdth 100, ROND 0, slnt 0).
+ * They are renamed "PureTV Sans" inside the files, as Google's trademark note asks of
+ * modified versions; the copyright and licence notices are kept, and the licence ships
+ * as `fonts/OFL-PureTvSans.txt`.
  */
 
-val BricolageGrotesque: FontFamily = FontFamily(
-    Font("fonts/BricolageGrotesque-SemiBold.ttf", FontWeight.SemiBold),
-    Font("fonts/BricolageGrotesque-Bold.ttf", FontWeight.Bold),
-    Font("fonts/BricolageGrotesque-ExtraBold.ttf", FontWeight.ExtraBold),
+val PureTvSansDisplay: FontFamily = FontFamily(
+    Font("fonts/PureTvSansDisplay-Medium.ttf", FontWeight.Medium),
+    Font("fonts/PureTvSansDisplay-SemiBold.ttf", FontWeight.SemiBold),
+    Font("fonts/PureTvSansDisplay-Bold.ttf", FontWeight.Bold),
+    Font("fonts/PureTvSansDisplay-ExtraBold.ttf", FontWeight.ExtraBold),
 )
 
-val Archivo: FontFamily = FontFamily(
-    Font("fonts/Archivo-Light.ttf", FontWeight.Light),
-    Font("fonts/Archivo-Regular.ttf", FontWeight.Normal),
-    Font("fonts/Archivo-Medium.ttf", FontWeight.Medium),
-    Font("fonts/Archivo-SemiBold.ttf", FontWeight.SemiBold),
-    Font("fonts/Archivo-Bold.ttf", FontWeight.Bold),
-)
-
-val IBMPlexMono: FontFamily = FontFamily(
-    Font("fonts/IBMPlexMono-Regular.ttf", FontWeight.Normal),
-    Font("fonts/IBMPlexMono-Medium.ttf", FontWeight.Medium),
-    Font("fonts/IBMPlexMono-SemiBold.ttf", FontWeight.SemiBold),
+val PureTvSans: FontFamily = FontFamily(
+    Font("fonts/PureTvSans-Light.ttf", FontWeight.Light),
+    Font("fonts/PureTvSans-Regular.ttf", FontWeight.Normal),
+    Font("fonts/PureTvSans-Medium.ttf", FontWeight.Medium),
+    Font("fonts/PureTvSans-SemiBold.ttf", FontWeight.SemiBold),
+    Font("fonts/PureTvSans-Bold.ttf", FontWeight.Bold),
 )

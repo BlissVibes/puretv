@@ -2,7 +2,10 @@ package com.puretv.twitch.desktop.player
 
 import com.puretv.twitch.core.audio.AudioNormalizerProfile
 import com.puretv.twitch.core.model.UpscalingMode
+import com.puretv.twitch.core.perf.TimingLog
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
+import com.puretv.twitch.desktop.platform.RtxGpu
+import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -39,6 +42,15 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
         runCatching { Native.load(name, MpvLibrary::class.java) }.getOrNull()
     }
 
+    // mpv_request_log_messages, bound here so the RTX Video code stays in this file:
+    // the d3d11vpp failures are only in mpv's log (setting `vf` still returns success).
+    private interface MpvLogApi : Library {
+        fun mpv_request_log_messages(ctx: Pointer, minLevel: String): Int
+    }
+    private val logApi: MpvLogApi? = if (lib == null) null else NativeLibs.mpvLoadNames().firstNotNullOfOrNull { name ->
+        runCatching { Native.load(name, MpvLogApi::class.java) }.getOrNull()
+    }
+
     // Verify mpv can create a context at all (library loads, no missing runtime
     // deps) WITHOUT binding a surface — the real, surface-bound contexts are made
     // per-attach. Keeps the "engine unavailable" signal available before the user
@@ -61,6 +73,17 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
     override val status: StateFlow<PlayerStatus> = _status.asStateFlow()
     override val isAvailable: Boolean get() = available
     override val supportsUpscaling: Boolean get() = available
+
+    // RTX Video needs Windows and an RTX card (RtxGpu.present is false elsewhere); the
+    // bundled libmpv has d3d11vpp. Whether it really runs shows in rtxStatus.
+    override val supportsRtxVideo: Boolean get() = available && rtxGpuPresent()
+
+    // RTX Video HDR through d3d11vpp ran stable on live Twitch here (RTX 4070, 3+
+    // minutes, no crash), unlike VLC's d3d11 HDR path, so mpv offers it.
+    override val supportsRtxHdr: Boolean get() = supportsRtxVideo
+
+    private val _rtxStatus = MutableStateFlow(RtxVideoStatus())
+    override val rtxStatus: StateFlow<RtxVideoStatus> = _rtxStatus.asStateFlow()
 
     @Volatile private var initialized = false
     @Volatile private var pendingUrl: String? = null
@@ -116,6 +139,21 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
 
     private val observedProps = listOf("time-pos", "duration", "pause", "core-idle", "paused-for-cache", "seekable")
 
+    // RTX Video state. rtxChoice is what the settings ask for (volatile, read anywhere);
+    // the rest belongs to the live context and is read/written under [nativeLock] only.
+    // rtxProps are observed with their own reply_userdata so they are read only when
+    // they change, not on every time-pos tick.
+    @Volatile private var rtxChoice = RtxVideoChoice.NONE
+    private val rtxProps = listOf("video-params", "video-out-params", "video-target-params", "osd-dimensions")
+    private var rtxFilter = ""            // the vf value set on the context
+    private var rtxFilterSetAt = 0L       // when it was set (or a new file loaded)
+    private var rtxSettleChecked = true   // the settled check ran for the current filter
+    private var rtxScaleNow = 1.0
+    private var rtxSeen = MpvRtxObserved()
+    private var rtxHealth = MpvRtxHealth()
+    private var rtxGaveUp = false         // fell back to normal playback on this context
+    private var rtxHwdec = MPV_HWDEC_DEFAULT
+
     // Resolve a bundled shader by filename to a forward-slashed absolute path (mpv
     // wants forward slashes on Windows), or "" if the file isn't present so the mode
     // degrades to the base scaler instead of feeding mpv a broken path.
@@ -141,14 +179,31 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
     /** Pre-`mpv_initialize` options, re-applied to every freshly-created context. */
     private fun applyPreInitOptions(l: MpvLibrary, c: Pointer) {
         val mode = settingsStore.settings.value.upscalingMode
+        // RTX Video starts fresh with every context. Read here, on the lifecycle
+        // thread, because the first RtxGpu read can block briefly.
+        val rtxGpu = rtxGpuPresent()
+        val choice = rtxChoiceNow()
+        rtxChoice = choice
+        rtxFilter = ""
+        rtxSettleChecked = true
+        rtxScaleNow = 1.0
+        rtxSeen = MpvRtxObserved()
+        rtxHealth = MpvRtxHealth()
+        rtxGaveUp = false
+        rtxHwdec = mpvRtxHwdec(choice)
+        publishRtxLocked(settled = false)
         // vo is a priority list: prefer gpu-next (libplacebo), fall back to the
         // older, broadly-compatible `gpu` VO so machines that can't bring up a
         // gpu-next context get video instead of a silent black pane.
         l.mpv_set_option_string(c, "vo", NativeLibs.mpvVideoOutputs())
-        l.mpv_set_option_string(c, "hwdec", "auto-safe")
+        // d3d11vpp only works in the Direct3D 11 GPU context, and gpu-api is fixed at
+        // init, so an RTX machine always gets it (even with RTX Video off) to let
+        // applyRtxVideo turn it on live. mpv on Windows picks d3d11 first anyway.
+        if (rtxGpu) l.mpv_set_option_string(c, "gpu-api", "d3d11")
+        l.mpv_set_option_string(c, "hwdec", rtxHwdec)
         l.mpv_set_option_string(c, "keep-open", "yes")
         l.mpv_set_option_string(c, "network-timeout", "10")
-        mpvScalerProps(mode, shaderPaths).forEach { (k, v) -> l.mpv_set_option_string(c, k, v) }
+        mpvScalerPropsWithRtx(mode, shaderPaths, rtxSuperResolutionLocked()).forEach { (k, v) -> l.mpv_set_option_string(c, k, v) }
         // Audio normalizer: a fresh context per surface, so the filter is set here
         // as well as live in setAudioNormalizer.
         if (settingsStore.settings.value.audioNormalizer) {
@@ -223,6 +278,11 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
                 attachedCanvas = panel
                 normalizerOverride?.let { applyNormalizer(l, c, it) }
                 observedProps.forEach { l.mpv_observe_property(c, 0L, it, MpvConst.MPV_FORMAT_NONE) }
+                if (rtxGpuPresent()) {
+                    rtxProps.forEach { l.mpv_observe_property(c, RTX_USERDATA, it, MpvConst.MPV_FORMAT_NONE) }
+                    // Warnings and errors only: the d3d11vpp failures, and little else.
+                    logApi?.let { api -> runCatching { api.mpv_request_log_messages(c, "warn") } }
+                }
                 val handle = EventLoopHandle()
                 loopHandle = handle
                 startEventLoop(l, c, handle)
@@ -296,6 +356,7 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
             // Playback ended with the surface; reflect "not playing" but keep pendingUrl
             // so the re-opened screen (fresh ViewModel re-issues play) drains cleanly.
             _status.update { it.copy(isPlaying = false, isBuffering = false, isReady = false) }
+            _rtxStatus.value = mpvRtxStatus(rtxChoice, "", MpvRtxObserved(), MpvRtxHealth(), settled = false)
         }
         // Join OUTSIDE the lock: the loop may grab the lock for a final stopped
         // recheck, so joining while holding it would deadlock. The stopped flag
@@ -320,13 +381,48 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
                 when (eventId) {
                     MpvConst.MPV_EVENT_NONE -> {}  // timeout tick — loop re-checks stopped
                     MpvConst.MPV_EVENT_SHUTDOWN -> break
-                    MpvConst.MPV_EVENT_FILE_LOADED -> _status.update { it.copy(isReady = true, error = null) }
+                    MpvConst.MPV_EVENT_FILE_LOADED -> {
+                        _status.update { it.copy(isReady = true, error = null) }
+                        // A new video: give the filter its settling time again.
+                        synchronized(nativeLock) {
+                            if (!handle.stopped && rtxFilter.isNotEmpty()) {
+                                rtxFilterSetAt = System.currentTimeMillis()
+                                rtxSettleChecked = false
+                            }
+                        }
+                    }
+                    MPV_EVENT_LOG_MESSAGE -> {
+                        // mpv_event.data@16 is an mpv_event_log_message { prefix@0,
+                        // level@8, text@16 }; read before the next wait_event reuses it.
+                        val msg = runCatching { evPtr.getPointer(16) }.getOrNull() ?: continue
+                        val prefix = runCatching { msg.getPointer(0)?.getString(0) }.getOrNull()
+                        val text = runCatching { msg.getPointer(16)?.getString(0) }.getOrNull() ?: continue
+                        val verdict = mpvRtxLog(prefix, text) ?: continue
+                        synchronized(nativeLock) {
+                            if (handle.stopped) return@synchronized
+                            val srBefore = rtxSuperResolutionLocked()
+                            rtxHealth = rtxHealth.with(verdict)
+                            // Super Resolution gone: the Scaling choice applies again.
+                            if (srBefore != rtxSuperResolutionLocked()) pushScalerLocked(l, c)
+                            updateRtxLocked(l, c)
+                        }
+                    }
                     MpvConst.MPV_EVENT_END_FILE ->
                         if (evPtr.getInt(4) != 0) _status.update { it.copy(error = "Playback error", isPlaying = false, isBuffering = false) }
                     MpvConst.MPV_EVENT_PROPERTY_CHANGE -> synchronized(nativeLock) {
                         // Re-check under the lock: a detach may have freed c while we
                         // were dispatching this event outside the lock.
                         if (handle.stopped) return@synchronized
+                        // mpv_event.reply_userdata@8 says which group changed.
+                        if (evPtr.getLong(8) == RTX_USERDATA) {
+                            refreshRtxLocked(l, c)
+                            return@synchronized
+                        }
+                        // mpv can drop the filter without any property changing; the
+                        // regular ticks give the settled check its chance.
+                        if (!rtxSettleChecked && System.currentTimeMillis() - rtxFilterSetAt >= RTX_SETTLE_MS) {
+                            updateRtxLocked(l, c)
+                        }
                         for (p in observedProps) {
                             val ptr = runCatching { l.mpv_get_property_string(c, p) }.getOrNull()
                             val v = ptr?.getString(0)
@@ -404,9 +500,144 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
      * applies the persisted mode on the next stream instead.
      */
     override fun setUpscaling(mode: UpscalingMode) = withCtx { l, c ->
-        mpvScalerProps(mode, shaderPaths).forEach { (k, v) ->
+        // Through the RTX rule: while Super Resolution is on, the shaders stay out.
+        mpvScalerPropsWithRtx(mode, shaderPaths, rtxSuperResolutionLocked()).forEach { (k, v) ->
             runCatching { l.mpv_set_property_string(c, k, v) }
         }
+    }
+
+    /**
+     * Re-read the RTX Video settings and apply them to the running context: hwdec, the
+     * Scaling shaders (see [mpvScalerPropsWithRtx]) and the d3d11vpp filter. A new try
+     * also clears a failure seen earlier on this context. When not attached the status
+     * just follows the settings; applyPreInitOptions reads them for the next stream.
+     *
+     * Runs on [lifecycleExecutor], not the caller's (UI) thread: the first RtxGpu read
+     * can block on `reg query`, and a vf or hwdec change waits for mpv to rebuild its
+     * chain. FIFO with attach/detach there, so it never meets a half-built context.
+     */
+    override fun applyRtxVideo() {
+        runCatching {
+            lifecycleExecutor.execute {
+                val choice = rtxChoiceNow()
+                rtxChoice = choice
+                var live = false
+                withCtx { l, c ->
+                    live = true
+                    rtxHealth = MpvRtxHealth()
+                    rtxGaveUp = false
+                    setHwdecLocked(l, c, mpvRtxHwdec(choice))
+                    pushScalerLocked(l, c)
+                    refreshRtxLocked(l, c)
+                }
+                if (!live) _rtxStatus.value = mpvRtxStatus(choice, "", MpvRtxObserved(), MpvRtxHealth(), settled = false)
+            }
+        }
+    }
+
+    private fun rtxGpuPresent(): Boolean = runCatching { RtxGpu.present }.getOrDefault(false)
+
+    private fun rtxChoiceNow(): RtxVideoChoice = RtxVideoChoice.from(settingsStore.settings.value, rtxGpuPresent())
+
+    /** Super Resolution is asked for and has not failed on this context. Under [nativeLock]. */
+    private fun rtxSuperResolutionLocked(): Boolean =
+        rtxChoice.superResolution && !rtxGaveUp && !rtxHealth.filterFailed && !rtxHealth.superResolutionFailed
+
+    private fun pushScalerLocked(l: MpvLibrary, c: Pointer) {
+        val mode = settingsStore.settings.value.upscalingMode
+        mpvScalerPropsWithRtx(mode, shaderPaths, rtxSuperResolutionLocked()).forEach { (k, v) ->
+            runCatching { l.mpv_set_property_string(c, k, v) }
+        }
+    }
+
+    // Only when it differs: setting hwdec makes mpv look at the decoder again.
+    private fun setHwdecLocked(l: MpvLibrary, c: Pointer, hwdec: String) {
+        if (hwdec == rtxHwdec) return
+        if (runCatching { l.mpv_set_property_string(c, "hwdec", hwdec) }.getOrDefault(-1) >= 0) rtxHwdec = hwdec
+    }
+
+    /** Read the RTX properties again, then bring the filter and status up to date. Under [nativeLock]. */
+    private fun refreshRtxLocked(l: MpvLibrary, c: Pointer) {
+        fun prop(name: String): String? {
+            val ptr = runCatching { l.mpv_get_property_string(c, name) }.getOrNull() ?: return null
+            val v = ptr.getString(0)
+            runCatching { l.mpv_free(ptr) }
+            return v?.takeIf { it.isNotBlank() }
+        }
+        rtxSeen = mpvRtxObserve(prop("video-params"), prop("video-out-params"), prop("video-target-params"), prop("osd-dimensions"))
+        // d3d11vpp cannot be created outside the Direct3D 11 context (e.g. mpv fell
+        // back to Vulkan), so there is no point setting it there.
+        if (rtxChoice.any && !rtxGaveUp) {
+            val gpuContext = prop("current-gpu-context")
+            if (gpuContext != null && gpuContext != "d3d11") rtxHealth = rtxHealth.copy(filterFailed = true)
+        }
+        updateRtxLocked(l, c)
+    }
+
+    /**
+     * Set (or clear) the d3d11vpp filter to match the choice and what mpv reports, fall
+     * back when it failed, and publish the status. Under [nativeLock].
+     */
+    private fun updateRtxLocked(l: MpvLibrary, c: Pointer) {
+        val choice = rtxChoice
+        if (!rtxGaveUp && !rtxHealth.filterFailed) {
+            rtxScaleNow = rtxScaleNext(rtxScaleNow, rtxSeen.scale)
+            val working = RtxVideoChoice(
+                superResolution = choice.superResolution && !rtxHealth.superResolutionFailed,
+                hdr = choice.hdr && !rtxHealth.hdrFailed,
+            )
+            val wanted = when {
+                !choice.any -> ""
+                // Before the video opens the scale and the display are not known yet.
+                !rtxSeen.videoOpen -> rtxFilter
+                else -> mpvRtxFilter(working, rtxScaleNow, rtxSeen.displayHdr)
+            }
+            if (wanted != rtxFilter) {
+                val rc = runCatching { l.mpv_set_property_string(c, "vf", wanted) }.getOrDefault(-1)
+                if (rc >= 0) {
+                    rtxFilter = wanted
+                    rtxFilterSetAt = System.currentTimeMillis()
+                    rtxSettleChecked = wanted.isEmpty()
+                } else if (wanted.isNotEmpty()) {
+                    rtxHealth = rtxHealth.copy(filterFailed = true)
+                }
+            }
+        }
+        val settled = rtxFilter.isNotEmpty() && System.currentTimeMillis() - rtxFilterSetAt >= RTX_SETTLE_MS
+        if (settled) rtxSettleChecked = true
+        if (!rtxGaveUp && (rtxHealth.filterFailed || mpvRtxFilterIneffective(rtxFilter, rtxSeen, settled))) {
+            fallBackLocked(l, c)
+        }
+        publishRtxLocked(settled)
+    }
+
+    /**
+     * RTX Video did not work on this context: back to exactly what plays without it (no
+     * filter, the normal hwdec, the Scaling choice), so the viewer keeps their video.
+     * The status says UNSUPPORTED until applyRtxVideo tries again or a new surface.
+     */
+    private fun fallBackLocked(l: MpvLibrary, c: Pointer) {
+        rtxGaveUp = true
+        rtxHealth = rtxHealth.copy(filterFailed = true)
+        if (rtxFilter.isNotEmpty()) runCatching { l.mpv_set_property_string(c, "vf", "") }
+        rtxFilter = ""
+        rtxSettleChecked = true
+        setHwdecLocked(l, c, MPV_HWDEC_DEFAULT)
+        pushScalerLocked(l, c)
+    }
+
+    private fun publishRtxLocked(settled: Boolean) {
+        val next = mpvRtxStatus(rtxChoice, rtxFilter, rtxSeen, rtxHealth, settled)
+        val was = _rtxStatus.value
+        if (next.superResolution != was.superResolution || next.hdr != was.hdr) {
+            // Diagnostics, as VlcPlayer logs them: state changes only, not every resize.
+            TimingLog.log(
+                "player.rtx_video", 0,
+                "engine=mpv sr=${next.superResolution} hdr=${next.hdr} filter=${rtxFilter.ifEmpty { "none" }} " +
+                    rtxSizeLabel(next),
+            )
+        }
+        _rtxStatus.value = next
     }
 
     /**
@@ -454,7 +685,10 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
             return@withCtx
         }
         val stats = videoStatsLocked(l, c) ?: return@withCtx  // nothing decoded yet — caller retries
-        val label = upscaleModeLabel(settingsStore.settings.value.upscalingMode)
+        val label = mpvScaleLabel(
+            settingsStore.settings.value.upscalingMode,
+            _rtxStatus.value.superResolution == SuperResolutionState.ACTIVE,
+        )
         runCatching { l.mpv_command(c, arrayOf("show-text", formatStatsOsd(stats, label), "2000", null)) }
         Unit
     }
@@ -510,5 +744,18 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
             if (existing.isNullOrBlank()) dir.absolutePath else "${dir.absolutePath}${File.pathSeparator}$existing",
         )
         return dir.absolutePath
+    }
+
+    private companion object {
+        // reply_userdata for the RTX properties (the transport ones use 0).
+        const val RTX_USERDATA = 1L
+
+        // MPV_EVENT_LOG_MESSAGE (not in MpvConst).
+        const val MPV_EVENT_LOG_MESSAGE = 2
+
+        // How long a new filter gets to show up in video-out-params before a missing
+        // effect counts as a failure. The chain is rebuilt on the next frame, so this
+        // is generous even for a stream that is still buffering.
+        const val RTX_SETTLE_MS = 3000L
     }
 }

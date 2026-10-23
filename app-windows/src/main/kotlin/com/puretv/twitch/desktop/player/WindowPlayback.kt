@@ -98,6 +98,10 @@ class ReleasablePlayer(private val inner: DesktopPlayer) : DesktopPlayer {
     override fun renderStatsOverlay(show: Boolean) { if (!gone.get()) inner.renderStatsOverlay(show) }
     override fun setUpscaling(mode: UpscalingMode) { if (!gone.get()) inner.setUpscaling(mode) }
     override fun setAudioNormalizer(enabled: Boolean) { if (!gone.get()) inner.setAudioNormalizer(enabled) }
+    override val rtxStatus get() = inner.rtxStatus
+    override val supportsRtxVideo: Boolean get() = inner.supportsRtxVideo
+    override val supportsRtxHdr: Boolean get() = inner.supportsRtxHdr
+    override fun applyRtxVideo() { if (!gone.get()) inner.applyRtxVideo() }
 
     override fun release() {
         if (!gone.compareAndSet(false, true)) return

@@ -35,7 +35,7 @@ import com.puretv.twitch.desktop.ui.theme.PureTvTheme
  * that were duplicated across StreamCard / NavItem / WinButton.
  */
 
-/** The tactile press-in cue. A stiff, nearly critically damped spring, so it settles without wobbling. */
+/** The tactile press-in cue, on the fast spatial spring: quick, with a bounce too small to see as a wobble. */
 fun Modifier.pressScale(
     interaction: MutableInteractionSource,
     pressed: Float = PureTvMotion.PressScale,
@@ -75,7 +75,7 @@ fun Modifier.focusRing(
     width: Dp = 2.dp,
 ): Modifier = composed {
     val ringColor = color ?: PureTvTheme.colors.primary
-    val alpha by animateFloatAsState(if (focused) 1f else 0f, PureTvMotion.fade(PureTvMotion.Fast), label = "focusRing")
+    val alpha by animateFloatAsState(if (focused) 1f else 0f, PureTvMotion.effectsFast(), label = "focusRing")
     drawWithContent {
         drawContent()
         if (alpha > 0f) {

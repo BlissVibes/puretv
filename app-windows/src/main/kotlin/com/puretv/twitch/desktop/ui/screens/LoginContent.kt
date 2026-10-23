@@ -289,6 +289,7 @@ private fun AuthenticatingArea(
                         code,
                         style = MaterialTheme.typography.displaySmall.copy(
                             fontFamily = PureTvType.mono,
+                            fontFeatureSettings = PureTvType.tabular,
                             letterSpacing = 8.sp,
                         ),
                         color = c.onSurface,

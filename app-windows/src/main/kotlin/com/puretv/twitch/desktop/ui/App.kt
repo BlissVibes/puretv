@@ -4,12 +4,9 @@ import androidx.compose.runtime.snapshotFlow
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -194,7 +191,9 @@ fun App(
             // by default). One instance app-wide (see DesktopModule), shared with the
             // animated-emote decoder.
             .diskCache { koin.get<DiskCache>() }
-            .crossfade(PureTvMotion.Medium)
+            // Short: a thumbnail landing is not an event, and on a grid that staggers in
+            // a longer one would still be fading pictures after the cards have landed.
+            .crossfade(PureTvMotion.Fast)
             .build()
     }
 
@@ -408,19 +407,12 @@ fun App(
                     // Immersive playback drops the gutter so the video fills the window
                     // edge to edge; the pane's rounding goes with it, since a rounded
                     // corner over a black video surface would just show the ground.
-                    // Not the morph spring: this one is structural, and an overshooting
-                    // spring would drive the value negative on the way to 0, which
-                    // Modifier.padding and Arrangement.spacedBy both reject at layout time.
-                    val gutter by animateDpAsState(
-                        targetValue = if (shell.isImmersive) 0.dp else 8.dp,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
-                        label = "shellGutter",
-                    )
-                    val paneCorner by animateDpAsState(
-                        targetValue = if (shell.isImmersive) 0.dp else shapes.pane,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
-                        label = "paneCorner",
-                    )
+                    // Not animated: only a player screen goes immersive, and easing the
+                    // gutter would resize the native video surface on every frame. The
+                    // rail leaves in the same frame (it has no exit), so the shell
+                    // switches in one step and the video resizes once.
+                    val gutter = if (shell.isImmersive) 0.dp else 8.dp
+                    val paneCorner = if (shell.isImmersive) 0.dp else shapes.pane
 
                     Row(
                         modifier = Modifier
@@ -431,14 +423,15 @@ fun App(
                     ) {
                         AnimatedVisibility(
                             visible = !shell.isImmersive,
-                            enter = if (PureTvMotion.reduced) fadeIn(tween(PureTvMotion.Fast)) else
-                                slideInHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Decelerate)) { -it },
-                            exit = if (PureTvMotion.reduced) fadeOut(tween(PureTvMotion.Fast)) else
-                                slideOutHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Accelerate)) { -it },
+                            enter = PureTvMotion.railEnter(),
+                            exit = ExitTransition.None,
                         ) {
                             NavigationRail(
                                 koin = koin,
                                 expanded = railExpanded,
+                                // Beside a playing video the width change is one step, not a sweep
+                                // that resizes the native surface on every frame.
+                                animateWidth = route !is Route.Stream && route !is Route.Multi && route !is Route.Vod,
                                 onToggleExpanded = { railExpanded = !railExpanded },
                                 selected = destination,
                                 onSelect = {
@@ -860,13 +853,14 @@ private fun MaximizeIcon(isMaximized: Boolean) {
  *
  * Collapsing is a deliberate affordance rather than a breakpoint. On a stream
  * page the rail is dead weight, and 148dp of width matters at 1280px; the user
- * decides, and the width animates on the same spring as every corner in the app
- * so the whole shell moves as one thing.
+ * decides, and the width eases on the shared move curve so the whole shell moves
+ * as one thing. Beside a playing video ([animateWidth] false) it changes in one step.
  */
 @Composable
 private fun NavigationRail(
     koin: Koin,
     expanded: Boolean,
+    animateWidth: Boolean,
     onToggleExpanded: () -> Unit,
     selected: Destination,
     onSelect: (Destination) -> Unit,
@@ -884,7 +878,7 @@ private fun NavigationRail(
     val width by animateDpAsState(
         targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
         // Structural: it feeds layout, so no overshoot (see PureTvMotion.MorphSpring).
-        animationSpec = PureTvMotion.move(),
+        animationSpec = if (animateWidth) PureTvMotion.move() else snap(),
         label = "railWidth",
     )
 

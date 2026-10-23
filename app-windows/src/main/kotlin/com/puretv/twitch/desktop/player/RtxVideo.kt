@@ -230,8 +230,13 @@ class RtxVlcEngines(
     /** The choice for a window on a display with Windows HDR on ([displayHdr]) or not, as VLC can take it. */
     fun choiceFor(displayHdr: Boolean): RtxVideoChoice = choice().forVlc(displayHdr, vlcHdrSafe)
 
-    /** Whether the bundled libVLC runs RTX Video HDR without crashing (see [RtxVideoChoice.forVlc]). */
-    val vlcHdrSafe: Boolean by lazy { vlcHdrSafe(VlcEngine.libVlcVersion()) }
+    /**
+     * Whether the bundled libVLC runs RTX Video HDR without crashing (see
+     * [RtxVideoChoice.forVlc]). Only asked with an RTX card (so only on Windows): reading
+     * the version loads libVLC directly, which on macOS breaks vlcj's own loading (it must
+     * load libvlccore first) and left the Mac build with no player at all.
+     */
+    val vlcHdrSafe: Boolean by lazy { RtxGpu.present && vlcHdrSafe(VlcEngine.libVlcVersion()) }
 
     /** The instance for [wanted]: [standard] when it asks for nothing. Cheap; libVLC loads on first use. */
     fun engineFor(wanted: RtxVideoChoice): VlcEngine =

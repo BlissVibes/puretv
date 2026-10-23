@@ -122,7 +122,11 @@ class VlcEngine(
             )
         }.getOrNull()
 
-        /** libVLC's version ("3.0.24 Vetinari"), read without starting an instance; null when VLC is missing. */
+        /**
+         * libVLC's version ("3.0.24 Vetinari"), read without starting an instance; null when
+         * VLC is missing. Windows only: on macOS this direct load breaks vlcj's (see
+         * RtxVlcEngines.vlcHdrSafe).
+         */
         fun libVlcVersion(): String? = runCatching {
             detectBundledVlc()
             uk.co.caprica.vlcj.binding.lib.LibVlc.libvlc_get_version()

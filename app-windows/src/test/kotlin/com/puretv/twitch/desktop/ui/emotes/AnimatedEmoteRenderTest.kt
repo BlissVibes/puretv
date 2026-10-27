@@ -47,14 +47,18 @@ class AnimatedEmoteRenderTest {
             val seen = HashSet<Int>()
             val deadline = System.nanoTime() + 3_000_000_000L
             var time = 0L
-            while (System.nanoTime() < deadline && seen.size < 2) {
+            val red = Color.Red.toArgb()
+            val blue = Color.Blue.toArgb()
+            // Until both frames were drawn: the first renders can come before the frames are
+            // set and draw nothing (transparent), which must not count as a frame.
+            while (System.nanoTime() < deadline && !(red in seen && blue in seen)) {
                 val image = scene.render(time)
                 val pixels = Bitmap.makeFromImage(image)
                 seen += pixels.getColor(4, 4)
                 time += 16_000_000L
                 Thread.sleep(16)
             }
-            assertTrue(Color.Red.toArgb() in seen && Color.Blue.toArgb() in seen, "frames drawn: $seen, clock at ${clock?.elapsedMs?.value} ms")
+            assertTrue(red in seen && blue in seen, "frames drawn: $seen, clock at ${clock?.elapsedMs?.value} ms")
         } finally {
             scene.close()
         }

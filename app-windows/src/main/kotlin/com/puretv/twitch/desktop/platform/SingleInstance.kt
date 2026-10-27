@@ -123,10 +123,24 @@ class SingleInstance(
 
     private fun consumeRequest(onActivate: (String) -> Unit) {
         if (!listening || !requestFile.exists()) return
-        val text = runCatching { requestFile.readText() }.getOrDefault(LaunchArgs.SHOW)
+        val text = readRequest() ?: LaunchArgs.SHOW
         if (runCatching { requestFile.delete() }.getOrDefault(false)) {
             runCatching { onActivate(text) }
         }
+    }
+
+    /**
+     * The request's text, tried a few times. The watch fires as the second launch renames
+     * the file into place, and on Windows the read can briefly fail then (the rename, or
+     * an antivirus scan, still holds the file). Falling back to "show" at once turned a
+     * `--channel` launch into a plain "show yourself" (seen in CI).
+     */
+    private fun readRequest(): String? {
+        repeat(READ_ATTEMPTS) { attempt ->
+            runCatching { requestFile.readText() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+            if (attempt < READ_ATTEMPTS - 1) sleep(READ_RETRY_MS)
+        }
+        return null
     }
 
     /** Writes the request in one rename, so the running copy never reads half a file. */
@@ -187,6 +201,9 @@ class SingleInstance(
 
         private const val POLL_MS = 250L
         private const val REQUEST_NAME = "show.request"
+        // See readRequest: five tries over about 80 ms.
+        private const val READ_ATTEMPTS = 5
+        private const val READ_RETRY_MS = 20L
 
         /**
          * Restores and focuses the top-level window titled [title], if one is showing.

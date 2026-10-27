@@ -11,6 +11,23 @@ release notes automatically.
 
 ---
 
+## Android 1.3.1 - 2026-10-27
+
+Past broadcasts are one tap away from Following, and chat holds up better on the move. This release includes the first community contribution to the phone app: thank you, [@laryaonyx5-ux](https://github.com/laryaonyx5-ux)!
+
+### Fixed
+- **View channel opens the channel page.** On Following, tapping an offline
+  channel or its View channel button opened the stream screen, so the channel
+  page with past broadcasts and highlights was only reachable through Search.
+  It now opens the channel page, like the TV and Windows apps. Contributed by
+  [@laryaonyx5-ux](https://github.com/laryaonyx5-ux) in
+  [#32](https://github.com/dhawal-ss/puretv/pull/32).
+- **Chat recovers after sleep or a Wi-Fi change.** A dropped chat connection is
+  noticed within about a minute and a half instead of six minutes, and chat no
+  longer redials nonstop when Twitch refuses a sign-in; it keeps reading instead.
+- **Ad breaks.** A backup stream that Twitch had already closed is no longer
+  used, so an ad break falls back cleanly instead of stalling.
+
 ## 1.16.1 - 2026-10-26
 
 Streams start right away after you open PureTV, with no more long freeze, and playback, chat and emotes all got lighter and steadier.

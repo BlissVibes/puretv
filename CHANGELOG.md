@@ -11,6 +11,39 @@ release notes automatically.
 
 ---
 
+## 1.16.0 - 2026-10-26
+
+Streams start right away after you open PureTV, with no more long freeze, and playback, chat and emotes all got lighter and steadier.
+
+### Fixed
+- **No more freeze on the first stream.** Right after turning on your PC, the
+  first stream you opened could freeze the whole window for 10 to 30 seconds.
+  The video player now starts in the background in a fraction of a second, and
+  if it ever needs a moment, you see "Starting the video player..." with a Back
+  button instead of a frozen window.
+- **Chat keeps working in long sessions.** After a few hours, chat could stop
+  receiving messages without telling you. It now signs in again by itself, and
+  after sleep or a Wi-Fi change it reconnects within a minute and a half instead
+  of six.
+- **Fewer frozen pictures mid-stream.** A hiccup on Twitch's side no longer
+  freezes the video for 15 seconds; PureTV rides it out and keeps playing.
+- **Ad breaks.** A backup stream that Twitch had already closed is no longer
+  used, so ad breaks fall back cleanly instead of freezing.
+
+### Improved
+- **Streams open faster.** The first stream after launch starts sooner, and
+  every stream starts fetching the moment you click it.
+- **Smoother with animated emotes.** Busy chats full of animated emotes used to
+  make the whole window redraw as fast as your monitor refreshes. They now use
+  far less of your CPU and GPU, animate in step with each other, and look
+  sharper at chat size.
+- **Hidden chat costs nothing.** With chat closed, or in the mini player, chat
+  no longer keeps working in the background. It is up to date when you open it
+  again. (A message you were typing is cleared when you close chat.)
+- **Updates.** Installing an update takes a little longer at the end, while it
+  prepares the video player. That is the work that used to happen every time
+  you started PureTV.
+
 ## 1.15.0 - 2026-10-23
 
 NVIDIA RTX Video comes to PureTV on Windows, streams open at the quality you pick, and the whole app got a new typeface and quicker, smoother motion.

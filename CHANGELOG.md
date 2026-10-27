@@ -11,7 +11,7 @@ release notes automatically.
 
 ---
 
-## 1.16.0 - 2026-10-26
+## 1.16.1 - 2026-10-26
 
 Streams start right away after you open PureTV, with no more long freeze, and playback, chat and emotes all got lighter and steadier.
 
@@ -29,6 +29,9 @@ Streams start right away after you open PureTV, with no more long freeze, and pl
   freezes the video for 15 seconds; PureTV rides it out and keeps playing.
 - **Ad breaks.** A backup stream that Twitch had already closed is no longer
   used, so ad breaks fall back cleanly instead of freezing.
+- **Opening a channel from a shortcut.** `PureTV for Twitch --channel <name>`
+  sometimes only brought the running window forward instead of opening that
+  channel. It now opens the channel.
 
 ### Improved
 - **Streams open faster.** The first stream after launch starts sooner, and

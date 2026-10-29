@@ -70,10 +70,21 @@ chat need the sign-in.
 
 ## First launch
 
-The `.app` is not code-signed or notarized. macOS will refuse to open it on the
-first double-click: right-click the app, choose **Open**, and confirm once. To sign
-it with a Developer ID, fill in the commented `signing { }` block in
-`app-windows/build.gradle.kts`.
+The `.dmg` is self-contained: it carries its own Java runtime and its own VLC, so
+nothing else needs installing. It runs on Apple Silicon Macs only (M1 and later).
+
+The `.app` is not code-signed with an Apple Developer ID or notarized, so macOS
+blocks the first launch with "Apple could not verify PureTV is free of malware".
+On macOS 15 and later, right-click > Open no longer gets past this. Instead:
+
+1. Drag PureTV into Applications and double-click it. Click **Done** on the warning.
+2. Open **System Settings > Privacy & Security** and scroll to the bottom.
+3. Next to "PureTV for Twitch was blocked", click **Open Anyway**, then confirm
+   with your password or Touch ID.
+
+That is needed once per install. To remove the warning entirely, sign and notarize
+the app with a paid Apple Developer ID: fill in the commented `signing { }` and
+`notarization { }` blocks in `app-windows/build.gradle.kts`.
 
 ## Known limitations
 

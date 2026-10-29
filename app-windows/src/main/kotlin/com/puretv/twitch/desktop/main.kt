@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop
 
+import com.puretv.twitch.desktop.platform.AppPaths
+
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -82,7 +84,7 @@ fun main(args: Array<String>) {
     // One running copy only: a second launch brings the open window forward (or out
     // of the tray) and exits.
     val guard = SingleInstance(
-        lockFile = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/instance.lock"),
+        lockFile = AppPaths.dataDir.resolve("instance.lock"),
         focusExistingWindow = { SingleInstance.focusWindowTitled(PRIMARY_WINDOW_TITLE) },
     )
     if (!guard.acquire()) exitProcess(0)

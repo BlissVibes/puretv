@@ -21,10 +21,12 @@ object WindowsStartup {
     private val launcherExe: String?
         get() = System.getProperty("jpackage.app-path")?.takeIf { it.isNotBlank() }
 
-    val isAvailable: Boolean get() = launcherExe != null
+    /** Windows only: the Run key has no macOS equivalent here (a LaunchAgent would be the port). */
+    val isAvailable: Boolean get() = Platform.isWindows && launcherExe != null
 
     /** Adds or removes the Run value. False when it could not be changed. */
     fun setEnabled(enabled: Boolean): Boolean = runCatching {
+        if (!Platform.isWindows) return false
         if (enabled) {
             val exe = launcherExe ?: return false
             Advapi32Util.registrySetStringValue(WinReg.HKEY_CURRENT_USER, RUN_KEY, VALUE_NAME, "\"$exe\" $BACKGROUND_ARG")

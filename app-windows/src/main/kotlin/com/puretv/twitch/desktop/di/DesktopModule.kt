@@ -1,5 +1,8 @@
 package com.puretv.twitch.desktop.di
 
+import com.puretv.twitch.desktop.platform.AppPaths
+import com.puretv.twitch.desktop.platform.Platform
+
 import com.puretv.twitch.desktop.auth.DesktopOAuthManager
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.data.FollowStore
@@ -129,15 +132,14 @@ val desktopModule = module {
     // can never grow without limit.
     single<DiskCache> {
         DiskCache.Builder()
-            .directory(File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/image_cache").toOkioPath())
+            .directory(AppPaths.cacheDir.resolve("image_cache").toOkioPath())
             .maxSizeBytes(256L * 1024 * 1024)
             .build()
     }
     single { EmoteFrameCache(get(), get()) }
     // Emote lists survive restarts so chat shows emotes on its first lines.
     single<EmoteCache> {
-        val localData = System.getenv("LOCALAPPDATA") ?: System.getenv("APPDATA") ?: System.getProperty("user.home")
-        PersistentEmoteCache(FileTextStore(File(localData, "PureTwitch/cache/emotes")))
+        PersistentEmoteCache(FileTextStore(AppPaths.cacheDir.resolve("cache/emotes")))
     }
 
     // --- Playback ------------------------------------------------------------
@@ -155,7 +157,9 @@ val desktopModule = module {
         val store = get<DesktopSettingsStore>()
         val engine = get<VlcEngine>()
         DesktopPlayerProvider {
-            if (store.settings.value.playbackBackend == PlaybackBackend.MPV) MpvPlayer(store) else VlcPlayer(engine)
+            // mpv is a Windows-only engine in this build (libmpv-2.dll bound to an HWND);
+            // the Mac build always plays through VLC whatever the saved setting says.
+            if (store.settings.value.playbackBackend == PlaybackBackend.MPV && !Platform.isMac) MpvPlayer(store) else VlcPlayer(engine)
         }
     }
     single<DesktopPlayer> { get<DesktopPlayerProvider>().player }

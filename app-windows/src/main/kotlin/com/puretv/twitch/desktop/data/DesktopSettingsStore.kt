@@ -1,5 +1,8 @@
 package com.puretv.twitch.desktop.data
 
+import com.puretv.twitch.desktop.platform.AppPaths
+import com.puretv.twitch.desktop.platform.Platform
+
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.TokenRefreshException
 import com.puretv.twitch.core.di.TokenHolder
@@ -50,7 +53,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 class DesktopSettingsStore(
     private val tokenHolder: TokenHolder,
-    private val appDataDir: File = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch"),
+    private val appDataDir: File = AppPaths.dataDir,
 ) {
 
     private val settingsFile = File(appDataDir, "settings.json")
@@ -397,12 +400,26 @@ class DesktopSettingsStore(
     }
 
     private fun readMachineGuid(): String? = runCatching {
-        val process = ProcessBuilder(
-            "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"
-        ).redirectErrorStream(true).start()
-        val output = process.inputStream.bufferedReader().readText()
-        process.waitFor()
-        Regex("MachineGuid\\s+REG_SZ\\s+(\\S+)").find(output)?.groupValues?.get(1)
+        when {
+            Platform.isWindows -> {
+                val process = ProcessBuilder(
+                    "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"
+                ).redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText()
+                process.waitFor()
+                Regex("MachineGuid\\s+REG_SZ\\s+(\\S+)").find(output)?.groupValues?.get(1)
+            }
+            // The Mac counterpart: the hardware platform UUID, stable for the life of the
+            // machine. Same caveat as MachineGuid: it is not secret, only per-machine.
+            Platform.isMac -> {
+                val process = ProcessBuilder("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
+                    .redirectErrorStream(true).start()
+                val output = process.inputStream.bufferedReader().readText()
+                process.waitFor()
+                Regex("\"IOPlatformUUID\"\\s*=\\s*\"([0-9A-Fa-f-]+)\"").find(output)?.groupValues?.get(1)
+            }
+            else -> null
+        }
     }.getOrNull()
 
     private fun readOrCreateKeySeedFile(): String {

@@ -190,6 +190,36 @@ val bundleMpv by tasks.registering(Copy::class) {
     }
 }
 
+// ── VLC bundling (macOS) ──────────────────────────────────────────────────────
+// Mirrors bundleVlc for the Mac build: copies libvlc + its plugins out of an
+// arm64 VLC.app into resources/macos-arm64/vlc/ (gitignored), which Compose packs
+// into the .app's resources. VlcEngine finds it there at runtime, so users do not
+// need VLC installed. Run as its own Gradle invocation before packageDmg, like
+// bundleVlc. The source is VLC_APP (a path to a VLC.app) or /Applications/VLC.app.
+// It MUST be the Apple Silicon build (an Intel VLC.app loads on an arm64 JVM about
+// as well as a .dll would); the task checks the architecture before copying.
+val bundleVlcMac by tasks.registering(Sync::class) {
+    description = "Syncs an arm64 VLC.app's lib/ and plugins/ into resources/macos-arm64/vlc/ for self-contained packaging."
+    val vlcApp = listOf(System.getenv("VLC_APP"), "/Applications/VLC.app")
+        .filterNotNull().map { File(it) }
+        .firstOrNull { File(it, "Contents/MacOS/lib/libvlc.dylib").exists() }
+    if (vlcApp != null) {
+        from(File(vlcApp, "Contents/MacOS")) { include("lib/**", "plugins/**") }
+    }
+    into(layout.projectDirectory.dir("resources/macos-arm64/vlc"))
+    doFirst {
+        if (vlcApp == null) {
+            throw GradleException("VLC.app not found. Install the Apple Silicon VLC from https://videolan.org/vlc/ or set VLC_APP to a VLC.app path.")
+        }
+        val archs = ProcessBuilder("lipo", "-archs", File(vlcApp, "Contents/MacOS/lib/libvlc.dylib").absolutePath)
+            .redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim()
+        if (!archs.contains("arm64")) {
+            throw GradleException("$vlcApp is an Intel (x86_64) VLC; the Mac build needs the Apple Silicon one. Set VLC_APP to an arm64 VLC.app.")
+        }
+        println("[bundleVlcMac] Copying VLC ($archs) from: ${vlcApp.absolutePath}")
+    }
+}
+
 compose.desktop {
     application {
         mainClass = "com.puretv.twitch.desktop.MainKt"
@@ -223,7 +253,9 @@ compose.desktop {
             // bundles a JVM so end users do not need Java pre-installed.
             // MSI and EXE both require WiX Toolset 3.x on the PATH.
             // Download portable WiX: https://github.com/wixtoolset/wix3/releases
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe)
+            // Dmg is built on a Mac (`:app-windows:packageDmg`), Msi/Exe on Windows;
+            // jpackage only ever offers the formats of the OS it runs on.
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg)
             packageName = "PureTV for Twitch"
             packageVersion = appVersion
             description = "Ad-free Twitch viewing for Windows — desktop companion to PureTV for Twitch."
@@ -244,6 +276,23 @@ compose.desktop {
                 dirChooser = true
                 perUserInstall = true
                 shortcut = true
+            }
+
+            macOS {
+                // icon.icns is derived from icon.ico (same 256px artwork, via iconutil).
+                iconFile.set(project.file("src/main/resources/icon.icns"))
+                bundleID = "com.puretv.twitch.desktop"
+                dockName = "PureTV"
+                // Unsigned, like the Windows build: first launch is right-click > Open.
+                // Fill these in (and `signing { sign.set(true) }`) once a Developer ID exists.
+                // signing { sign.set(true); identity.set("Developer ID Application: ...") }
+                // notarization { appleID.set("..."); password.set("@keychain:AC_PASSWORD") }
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSHighResolutionCapable</key><true/>
+                        <key>LSApplicationCategoryType</key><string>public.app-category.entertainment</string>
+                    """.trimIndent()
+                }
             }
         }
 

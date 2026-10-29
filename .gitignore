@@ -72,3 +72,8 @@ vaft.user.js
 
 # Subagent git worktrees (Claude Code). Separate checkouts, never part of this one.
 /.claude/worktrees/
+
+# Bundled VLC for the macOS build (populated by `gradle :app-windows:bundleVlcMac` or by hand
+# from an arm64 VLC.app: lib/ + plugins/). ~80 MB of binaries, never committed.
+app-windows/resources/macos-arm64/vlc/
+app-windows/resources/macos-x64/vlc/

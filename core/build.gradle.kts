@@ -6,9 +6,14 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
-    alias(libs.plugins.android.library)
+    // Applied below only when an Android SDK exists (see settings.gradle.kts): the
+    // Android target is skipped on a desktop-only checkout, the JVM target stays.
+    alias(libs.plugins.android.library) apply false
     alias(libs.plugins.kotlin.serialization)
 }
+
+val hasAndroidSdk: Boolean = (rootProject.extra["hasAndroidSdk"] as? Boolean) ?: false
+if (hasAndroidSdk) apply(plugin = "com.android.library")
 
 // ── Twitch client secret (kept OUT of version control) ───────────────────────
 // The secret is injected at build time from the `TWITCH_CLIENT_SECRET` env var
@@ -57,10 +62,12 @@ val generateTwitchSecrets by tasks.registering {
 }
 
 kotlin {
-    androidTarget {
-        @OptIn(ExperimentalKotlinGradlePluginApi::class)
-        compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
+    if (hasAndroidSdk) {
+        androidTarget {
+            @OptIn(ExperimentalKotlinGradlePluginApi::class)
+            compilerOptions {
+                jvmTarget.set(JvmTarget.JVM_11)
+            }
         }
     }
     jvm("desktop")
@@ -82,9 +89,11 @@ kotlin {
                 implementation(libs.koin.core)
             }
         }
-        androidMain.dependencies {
-            implementation(libs.ktor.client.okhttp)
-            implementation(libs.kotlinx.coroutines.android)
+        if (hasAndroidSdk) {
+            getByName("androidMain").dependencies {
+                implementation(libs.ktor.client.okhttp)
+                implementation(libs.kotlinx.coroutines.android)
+            }
         }
         val desktopMain by getting {
             dependencies {
@@ -99,14 +108,16 @@ kotlin {
     }
 }
 
-android {
-    namespace = "com.puretv.twitch.core"
-    compileSdk = 35
-    defaultConfig {
-        minSdk = 26
-    }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+if (hasAndroidSdk) {
+    extensions.configure<com.android.build.gradle.LibraryExtension>("android") {
+        namespace = "com.puretv.twitch.core"
+        compileSdk = 35
+        defaultConfig {
+            minSdk = 26
+        }
+        compileOptions {
+            sourceCompatibility = JavaVersion.VERSION_11
+            targetCompatibility = JavaVersion.VERSION_11
+        }
     }
 }

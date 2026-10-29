@@ -189,6 +189,10 @@ class SingleInstance(
          * that copy answers the request file instead.
          */
         fun focusWindowTitled(title: String): Boolean {
+            // user32 is Windows only. On macOS the running copy is woken through the
+            // request file instead (see listenForActivation), which also handles the
+            // hidden-in-tray case, so nothing is lost by returning false here.
+            if (!Platform.isWindows) return false
             val user32 = User32.INSTANCE
             // The title carries the screen being shown ("forsen - PureTV for Twitch"), so an
             // exact match is only the first try; then any Java window whose title matches.

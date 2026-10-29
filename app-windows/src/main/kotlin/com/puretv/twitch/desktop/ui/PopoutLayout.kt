@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.AppPaths
+
 import com.puretv.twitch.desktop.data.AtomicFile
 import java.awt.GraphicsConfiguration
 import java.awt.GraphicsEnvironment
@@ -144,7 +146,7 @@ class PopoutSaveGate {
  * closes. Anything unreadable is simply forgotten.
  */
 class PopoutBoundsStore(
-    private val file: File = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch/popout-windows.txt"),
+    private val file: File = AppPaths.dataDir.resolve("popout-windows.txt"),
 ) {
     private val lock = Any()
     private var bounds: MutableMap<String, MiniRect>? = null

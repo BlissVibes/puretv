@@ -1,5 +1,8 @@
 package com.puretv.twitch.desktop.update
 
+import com.puretv.twitch.desktop.platform.AppPaths
+import com.puretv.twitch.desktop.platform.Platform
+
 import com.puretv.twitch.desktop.AppBuildConfig
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +73,10 @@ class UpdateManager {
      * Any failure (offline, rate-limited, no asset) leaves state at [UpdateState.Idle].
      */
     fun checkForUpdates(force: Boolean = false) {
+        // The releases this checks carry Windows installers signed for the Windows
+        // updater. The Mac build is a fork built locally, so it never offers them
+        // (installing an .exe over a .app is not an update anyone wants).
+        if (Platform.isMac) return
         if (!isPackaged && !force) return
         scope.launch {
             val failedVersion = consumeFailedInstallVersion()
@@ -138,6 +145,7 @@ class UpdateManager {
     fun downloadAndInstall(info: UpdateInfo, exitApplication: () -> Unit) {
         scope.launch {
             runCatching {
+                if (Platform.isMac) error("Self-update is not available in the macOS build; rebuild from source to update.")
                 // Anti-rollback (audit F2): refuse to install a version that is not
                 // strictly newer than the running one — even a validly-signed older
                 // build. Ed25519 signing prevents forgery but NOT replay of a
@@ -289,7 +297,7 @@ class UpdateManager {
     }
 
     private val dataDir: File
-        get() = File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+        get() = AppPaths.dataDir
 
     /** Written by the update script when Setup failed; holds the version it tried. */
     private val failedInstallMarker: File get() = File(dataDir, "update-failed.txt")

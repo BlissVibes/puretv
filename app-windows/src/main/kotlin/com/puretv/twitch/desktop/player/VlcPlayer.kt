@@ -194,7 +194,11 @@ class VlcPlayer(
      * component fails the `attachedComponent` short-circuit). The interface
      * requires this hook for mpv, whose set-once `wid` cannot survive HWND teardown.
      */
-    override fun detachFromPanel() { /* VLC re-attaches; nothing to release early. */ }
+    override fun detachFromPanel() {
+        // VLC re-attaches; nothing to release early. The Mac callback surface only drops
+        // its last frame so a reused component never shows a stale picture.
+        (attachedComponent as? MacVideoSurfacePanel)?.clear()
+    }
 
     /**
      * Starts playback of [streamUrl] — typically the local proxy's `/stream?...` URL (Section 8.3).

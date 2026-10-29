@@ -16,7 +16,7 @@ object Diagnostics {
     private const val MAX_CRASH_LOG_BYTES = 512 * 1024L
 
     private val dataDir: File by lazy {
-        File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+        AppPaths.dataDir
     }
 
     /** Records every uncaught exception, then hands it to whatever handler was there before. */
@@ -46,7 +46,7 @@ object Diagnostics {
     fun report(sections: List<Pair<String, String>>): String = scrub(
         buildString {
             appendLine("PureTV diagnostics, ${LocalDateTime.now()}")
-            appendLine("Windows: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
+            appendLine("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})")
             appendLine("Java: ${System.getProperty("java.version")}, max memory ${Runtime.getRuntime().maxMemory() / (1024 * 1024)} MB")
             for ((name, value) in sections) {
                 appendLine()

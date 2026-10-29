@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.data
 
+import com.puretv.twitch.desktop.platform.AppPaths
+
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -81,6 +83,6 @@ class ViewerHistoryStore(appDataDir: File = defaultDir()) {
         private const val MAX_CHANNELS = 200
 
         private fun defaultDir(): File =
-            File(System.getenv("APPDATA") ?: System.getProperty("user.home"), "PureTwitch")
+            AppPaths.dataDir
     }
 }

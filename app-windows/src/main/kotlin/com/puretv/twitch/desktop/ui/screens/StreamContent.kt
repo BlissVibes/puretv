@@ -1,14 +1,12 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.AppRestart
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -67,6 +65,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
@@ -86,7 +85,10 @@ import com.puretv.twitch.core.chat.completeWord
 import com.puretv.twitch.core.chat.labels
 import com.puretv.twitch.core.chat.composerSuggestions
 import com.puretv.twitch.core.chat.insertAtCursor
+import com.puretv.twitch.core.chat.TabCompletion
+import com.puretv.twitch.core.chat.isCurrent
 import com.puretv.twitch.core.chat.recentChatters
+import com.puretv.twitch.core.chat.tabComplete
 import com.puretv.twitch.core.chat.wordAtCursor
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.ChatTextSize
@@ -125,7 +127,10 @@ import com.puretv.twitch.desktop.ui.chat.ComposerKeyAction
 import com.puretv.twitch.desktop.ui.chat.composerKeyAction
 import com.puretv.twitch.desktop.ui.chat.nextFollowing
 import com.puretv.twitch.desktop.ui.chat.scrollAnchor
+import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
+import com.puretv.twitch.desktop.ui.components.PlayerGate
 import com.puretv.twitch.desktop.ui.components.AdBlockPill
+import com.puretv.twitch.desktop.ui.components.RtxMenuState
 import com.puretv.twitch.desktop.ui.components.Avatar
 import com.puretv.twitch.desktop.ui.components.ChatMessageRow
 import com.puretv.twitch.desktop.ui.components.CountBadge
@@ -152,6 +157,7 @@ import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
+import com.puretv.twitch.desktop.ui.theme.sidePanelReveal
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -204,6 +210,25 @@ fun StreamContent(
     sleep: SleepSession = remember { SleepSession() },
 ) {
     val windowPlayback = LocalWindowPlayback.current ?: remember { koin.get<WindowPlayback>() }
+    val prewarm = LocalStreamPrewarm.current
+    // Never wait for the player on the UI thread (see PlayerGate). While it starts, the
+    // stream itself is resolved (token and playlist), so the two do not run one after the other.
+    PlayerGate(windowPlayback, onBack, whileStarting = { prewarm?.invoke(channelLogin) }) {
+        StreamScreen(koin, channelLogin, windowPlayback, onBack, onRequestSignIn, onFlip, onOpenMultiView, sleep)
+    }
+}
+
+@Composable
+private fun StreamScreen(
+    koin: Koin,
+    channelLogin: String,
+    windowPlayback: WindowPlayback,
+    onBack: () -> Unit,
+    onRequestSignIn: () -> Unit,
+    onFlip: (String) -> Unit,
+    onOpenMultiView: () -> Unit,
+    sleep: SleepSession,
+) {
     val viewModel = rememberDesktopViewModel(channelLogin) {
         koin.get<StreamViewModel> { parametersOf(channelLogin, windowPlayback) }
     }
@@ -225,7 +250,9 @@ fun StreamContent(
             .distinctUntilChanged()
     }.collectAsState(initial = vlcPlayer.status.value.copy(positionMs = 0L, durationMs = 0L))
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
+    val playerProvider = remember { koin.get<DesktopPlayerProvider>() }
     val appSettings by settingsStore.settings.collectAsState()
+    val rtxStatus by vlcPlayer.rtxStatus.collectAsState()
     val bell = rememberAlertBell(settingsStore, channelLogin, state.channel?.displayName ?: channelLogin)
     val shell = LocalAppShell.current
     val mode = shell.playerMode
@@ -235,23 +262,31 @@ fun StreamContent(
 
     // The App shell itself collapses its own outer inset and pane rounding to 0 in
     // THEATER/FULLSCREEN (see App.kt's paneCorner). Mirror that here so the player
-    // chrome goes fully edge-to-edge when immersive, and springs back into the
-    // "separate rounded cards" look the moment the user returns to DEFAULT.
+    // chrome goes fully edge-to-edge when immersive, and back into the "separate
+    // rounded cards" look the moment the user returns to DEFAULT. In one step, like
+    // the shell: easing the padding would resize the video surface on every frame.
     val immersive = mode != PlayerMode.DEFAULT
-    val groundPad by animateDpAsState(if (immersive) 0.dp else 8.dp, PureTvMotion.move(), label = "groundPad")
-    val panelRadius by animateDpAsState(if (immersive) 0.dp else 24.dp, PureTvMotion.move(), label = "panelRadius")
+    val groundPad = if (immersive) 0.dp else 8.dp
+    val panelRadius = if (immersive) 0.dp else 24.dp
 
+    // Chat takes or gives back its width in one step (see PureTvMotion.sidePanelSize),
+    // so the video beside it resizes once per toggle; the card itself slides and fades.
     val chatWidth by animateDpAsState(
         targetValue = if (isChatOpen) CHAT_WIDTH else 0.dp,
-        animationSpec = PureTvMotion.move(),
+        animationSpec = PureTvMotion.sidePanelSize(isChatOpen, instant = mini),
         label = "chatWidth",
+    )
+    val chatReveal by animateFloatAsState(
+        targetValue = if (isChatOpen) 1f else 0f,
+        animationSpec = PureTvMotion.sidePanelReveal(isChatOpen, instant = mini),
+        label = "chatReveal",
     )
     // The breathing room between the player column and the chat card. Tied to
     // isChatOpen (not the immersive ground padding) so chat keeps its own gap even
     // when the player chrome has gone edge-to-edge.
     val chatGap by animateDpAsState(
         targetValue = if (isChatOpen) 8.dp else 0.dp,
-        animationSpec = PureTvMotion.move(),
+        animationSpec = PureTvMotion.sidePanelSize(isChatOpen, instant = mini),
         label = "chatGap",
     )
 
@@ -385,6 +420,9 @@ fun StreamContent(
             focusManager.clearFocus(force = true)
         }
     }
+    // A closed chat panel leaves composition (see the chat panel below), and its text field
+    // may not report losing focus as it goes: let the keys reach the player again.
+    LaunchedEffect(isChatOpen) { if (!isChatOpen) chatInputFocused = false }
     val miniDoubleClick = remember { DoubleClickDetector() }
     val latestHelpOpen = rememberUpdatedState(helpOpen)
     val latestVolume = rememberUpdatedState(playerStatus.volume)
@@ -392,6 +430,22 @@ fun StreamContent(
     val latestMenuOpen = rememberUpdatedState(settingsMenuOpen)
     var heldKey = 0
     val latestViewModel = rememberUpdatedState(viewModel)
+
+    // "Even out loud and quiet audio" from the controls bar or the A key: a short note
+    // says which way it went, since the only other sign is the sound (and on VLC a second
+    // or two of rebuffering while the stream starts again with or without it).
+    var audioNote by remember { mutableStateOf<String?>(null) }
+    var audioNoteJob by remember { mutableStateOf<Job?>(null) }
+    fun setAudioNormalizer(on: Boolean) {
+        latestViewModel.value.setAudioNormalizer(on)
+        audioNote = if (on) "Evening out loud and quiet audio (${settingsStore.settings.value.audioLevelling.label})" else "Audio levelling off"
+        audioNoteJob?.cancel()
+        audioNoteJob = scope.launch {
+            delay(2_500)
+            audioNote = null
+        }
+    }
+
     val myWindow = LocalAwtWindow.current
     DisposableEffect(Unit) {
         val dispatcher = KeyEventDispatcher { e ->
@@ -431,7 +485,7 @@ fun StreamContent(
             val action = PlayerShortcuts.actionFor(
                 keyCode = e.keyCode,
                 keyChar = e.keyChar,
-                ctrlOrAlt = e.isControlDown || e.isAltDown,
+                ctrlOrAlt = e.isControlDown || e.isMetaDown || e.isAltDown,
                 immersive = m != PlayerMode.DEFAULT,
                 helpOpen = latestHelpOpen.value,
                 textInputFocused = latestChatFocused.value,
@@ -462,6 +516,10 @@ fun StreamContent(
                 }
                 ShortcutAction.ToggleMute -> { latestViewModel.value.toggleMute(); resetControls() }
                 ShortcutAction.CycleSleepTimer -> { sleep.cycle(); resetControls() }
+                ShortcutAction.ToggleAudioNormalizer -> {
+                    setAudioNormalizer(!settingsStore.settings.value.audioNormalizer)
+                    resetControls() // the controls bar's audio button lights up with it
+                }
                 ShortcutAction.ToggleMini -> shell.setPlayerMode(if (m == PlayerMode.MINI) PlayerMode.DEFAULT else PlayerMode.MINI)
             }
             true
@@ -626,13 +684,26 @@ fun StreamContent(
                             onBackendSelected = viewModel::setPlaybackBackend,
                             sleepMinutes = sleep.ui.minutes,
                             onSleepSelected = sleep::set,
+                            rtx = if (vlcPlayer.supportsRtxVideo) RtxMenuState(
+                                status = rtxStatus,
+                                superResolution = appSettings.rtxSuperResolution,
+                                onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                                hdr = appSettings.rtxHdr.takeIf { vlcPlayer.supportsRtxHdr },
+                                onHdrChange = viewModel::setRtxHdr,
+                            ) else null,
+                            engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
+                            onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
+                            audioNormalizer = appSettings.audioNormalizer,
+                            onAudioNormalizerChange = viewModel::setAudioNormalizer,
+                            audioLevelling = appSettings.audioLevelling,
+                            onAudioLevellingSelected = viewModel::setAudioLevelling,
                         )
                     }
 
                     // Flip banner and the sleep timer's last-minute warning, then the
                     // shortcuts list: between the video and the controls like the menu above.
                     PlayerNoticeStrip(
-                        text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: sleep.ui.warning,
+                        text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: audioNote ?: sleep.ui.warning,
                     )
                     ShortcutsSheet(visible = helpOpen)
                 }
@@ -650,9 +721,11 @@ fun StreamContent(
                         settingsOpen = settingsMenuOpen,
                         mode = mode,
                         isChatOpen = isChatOpen,
+                        audioNormalizer = appSettings.audioNormalizer,
                         onTogglePlayPause = viewModel::togglePlayPause,
                         onVolumeChange = viewModel::setVolume,
                         onToggleMute = viewModel::toggleMute,
+                        onToggleAudioNormalizer = { setAudioNormalizer(!appSettings.audioNormalizer) },
                         onToggleSettings = { settingsMenuOpen = !settingsMenuOpen },
                         onToggleChat = { shell.toggleChat() },
                         onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
@@ -681,19 +754,24 @@ fun StreamContent(
             Spacer(Modifier.width(chatGap))
 
             // ── Chat panel ─────────────────────────────────────────────────────
-            // Width animates 0↔392dp. clipToBounds() ensures content clips clean.
+            // Width is 0 or 392dp; the card slides and fades inside it. clipToBounds()
+            // keeps the slide inside the panel.
+            // Outside the panel, so closing chat keeps the tab it was on.
+            var chatTab by remember { mutableStateOf(ChatTab.Chat) }
             Box(
                 modifier = Modifier
                     .width(chatWidth)
                     .fillMaxHeight()
                     .clipToBounds(),
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
+                // Composed only while it can be seen. A closed chat (and the mini player)
+                // kept laying out new rows at zero width ten times a second, loading their
+                // images and animating their emotes. The view model keeps collecting, so
+                // chat is current the moment it reopens.
+                if (isChatOpen || chatReveal > 0f) Column(
+                    modifier = Modifier.fillMaxSize().sidePanelReveal { chatReveal },
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    var chatTab by remember { mutableStateOf(ChatTab.Chat) }
-
                     ChatHeader(
                         selected = chatTab,
                         mentionCount = state.mentionMessages.size,
@@ -809,6 +887,13 @@ private fun TopBar(
     radius: Dp,
 ) {
     val c = PureTvTheme.colors
+    // The buttons are measured before the name takes what is left, so in a narrow bar (the
+    // default 1280x720 window with chat open) the name was squeezed to one letter. A narrow
+    // bar drops the labels of its two widest buttons instead; their names stay for screen
+    // readers.
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    val compactMulti = maxWidth < TOP_BAR_FULL_WIDTH
+    val compactFollow = maxWidth < TOP_BAR_COMPACT_WIDTH
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -838,11 +923,20 @@ private fun TopBar(
                 overflow = TextOverflow.Ellipsis,
             )
             if (streamInfo != null) {
-                Row {
-                    val game = streamInfo.gameName.takeIf { it.isNotBlank() } ?: "No category"
-                    Text("$game · ", style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant, maxLines = 1)
-                    Text("${formatViewerCount(streamInfo.viewerCount)} viewers", style = PureTvType.data, color = c.onSurfaceVariant, maxLines = 1)
-                }
+                // One line that ellipsizes as a whole: as two texts, a narrow bar cut the
+                // category short and pushed the viewer count out of the bar.
+                val game = streamInfo.gameName.takeIf { it.isNotBlank() } ?: "No category"
+                val countStyle = PureTvType.data.toSpanStyle()
+                Text(
+                    buildAnnotatedString {
+                        append("$game · ")
+                        withStyle(countStyle) { append("${formatViewerCount(streamInfo.viewerCount)} viewers") }
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
         AdBlockPill(adBlockStatus)
@@ -858,23 +952,49 @@ private fun TopBar(
             contentDescription = "Open this channel's page in a new window",
             onClick = onOpenInNewWindow,
         )
-        ExpressiveButton(
-            text = "Watch with another channel",
-            onClick = onOpenMultiView,
-            style = ExpressiveButtonStyle.Tonal,
-            size = ExpressiveButtonSize.Medium,
-            icon = ExpressiveIcons.Grid,
-        )
-        ExpressiveButton(
-            text = if (isFollowed) "Following" else "Follow",
-            onClick = onToggleFollow,
-            style = ExpressiveButtonStyle.Tonal,
-            size = ExpressiveButtonSize.Medium,
-            icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
-            enabled = canFollow,
-        )
+        if (compactMulti) {
+            ExpressiveIconButton(
+                icon = ExpressiveIcons.Grid,
+                contentDescription = "Watch with another channel",
+                onClick = onOpenMultiView,
+                style = ExpressiveButtonStyle.Tonal,
+            )
+        } else {
+            ExpressiveButton(
+                text = "Watch with another channel",
+                onClick = onOpenMultiView,
+                style = ExpressiveButtonStyle.Tonal,
+                size = ExpressiveButtonSize.Medium,
+                icon = ExpressiveIcons.Grid,
+            )
+        }
+        if (compactFollow) {
+            ExpressiveIconButton(
+                icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
+                contentDescription = if (isFollowed) "Following" else "Follow",
+                onClick = onToggleFollow,
+                style = ExpressiveButtonStyle.Tonal,
+                enabled = canFollow,
+            )
+        } else {
+            ExpressiveButton(
+                text = if (isFollowed) "Following" else "Follow",
+                onClick = onToggleFollow,
+                style = ExpressiveButtonStyle.Tonal,
+                size = ExpressiveButtonSize.Medium,
+                icon = if (isFollowed) ExpressiveIcons.Check else ExpressiveIcons.Add,
+                enabled = canFollow,
+            )
+        }
+    }
     }
 }
+
+/** At or above this width the stream's top bar has room for every button label and the name. */
+private val TOP_BAR_FULL_WIDTH = 1000.dp
+
+/** Below this width Follow also shows only its icon. */
+private val TOP_BAR_COMPACT_WIDTH = 760.dp
 
 // ── Playback controls ─────────────────────────────────────────────────────────
 
@@ -886,9 +1006,11 @@ private fun PlaybackControls(
     settingsOpen: Boolean,
     mode: PlayerMode,
     isChatOpen: Boolean,
+    audioNormalizer: Boolean,
     onTogglePlayPause: () -> Unit,
     onVolumeChange: (Int) -> Unit,
     onToggleMute: () -> Unit,
+    onToggleAudioNormalizer: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
@@ -921,6 +1043,8 @@ private fun PlaybackControls(
             settingsOpen = settingsOpen,
             isChatOpen = isChatOpen,
             mode = mode,
+            audioNormalizer = audioNormalizer,
+            onToggleAudioNormalizer = onToggleAudioNormalizer,
             onToggleSettings = onToggleSettings,
             onToggleChat = onToggleChat,
             onToggleTheater = onToggleTheater,
@@ -983,7 +1107,7 @@ private fun VolumeButton(isMuted: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** The welded quality/settings/chat/theater/fullscreen cluster: one 28dp-radius bar,
+/** The welded audio/quality/settings/chat/theater/fullscreen cluster: one 28dp-radius bar,
  *  1dp outlineVariant dividers between square segments. The segments themselves
  *  never round; only the group's outer silhouette does. */
 @Composable
@@ -991,6 +1115,8 @@ private fun ConnectedControlsGroup(
     settingsOpen: Boolean,
     isChatOpen: Boolean,
     mode: PlayerMode,
+    audioNormalizer: Boolean,
+    onToggleAudioNormalizer: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
@@ -1004,6 +1130,15 @@ private fun ConnectedControlsGroup(
             .clip(RoundedCornerShape(28.dp))
             .background(c.surfaceHigh),
     ) {
+        // "Even out loud and quiet audio" (A): lit while it is on, like chat and theater.
+        // The sliders glyph reads as audio levels; the icon pack has no compressor symbol.
+        ControlsGroupButton(
+            ExpressiveIcons.Tune,
+            if (audioNormalizer) "Stop evening out audio" else "Even out loud and quiet audio",
+            onToggleAudioNormalizer,
+            tint = if (audioNormalizer) c.primary else null,
+        )
+        GroupDivider()
         // No dedicated quick-quality flow exists in the ViewModel: resolution lives
         // inside the same combined playback menu the gear opens, so this is a second
         // entry point into that one menu rather than a distinct feature.
@@ -1317,9 +1452,34 @@ internal fun ChatInputBar(
         composerSuggestions(word, emotes, recentChatters(recentMessages, selfLogin))
     }
 
+    // Tab completion in progress: pressing Tab again swaps in the next suggestion
+    // (Shift+Tab the previous one), Chatterino style. The strip keeps showing the
+    // suggestions the cycle started from, with the one in the text highlighted.
+    var tab by remember { mutableStateOf<TabCompletion?>(null) }
+    var tabItems by remember { mutableStateOf<List<ComposerSuggestion>>(emptyList()) }
+    val cycling = tab?.takeIf { it.isCurrent(value.text, value.selection.start) && tabItems.size == it.options.size }
+    val stripItems = if (cycling != null) tabItems else suggestions
+    // The chip Tab lands on: the one in the text while cycling, otherwise the first.
+    val highlighted = cycling?.index ?: 0
+
     fun applyCompletion(code: String) {
-        val (t, cur) = completeWord(value.text, value.selection.start, code)
+        val current = cycling
+        val (t, cur) = if (current != null) {
+            // Swap out the completion Tab put in rather than adding after it.
+            val inserted = code + " "
+            (value.text.substring(0, current.start) + inserted + value.text.substring(current.end)) to (current.start + inserted.length)
+        } else {
+            completeWord(value.text, value.selection.start, code)
+        }
+        tab = null
         value = TextFieldValue(t, TextRange(cur))
+    }
+
+    fun tabPress(backwards: Boolean) {
+        val r = tabComplete(value.text, value.selection.start, suggestions.map { it.completion }, cycling, backwards) ?: return
+        if (cycling == null) tabItems = suggestions
+        tab = r.state
+        value = TextFieldValue(r.text, TextRange(r.cursor))
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
@@ -1366,38 +1526,56 @@ internal fun ChatInputBar(
             Spacer(Modifier.height(8.dp))
         }
 
-        // Autocomplete chip strip, only while typing a recognised partial.
-        if (suggestions.isNotEmpty() && fieldFocused) {
+        // Autocomplete chip strip, only while typing a recognised partial (or cycling
+        // with Tab). The chip Tab picks is highlighted, and a hint names the key so
+        // Tab completion is easy to find.
+        if (stripItems.isNotEmpty() && fieldFocused) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 14.dp)
-                    .horizontalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                suggestions.forEach { s ->
-                    val chipInteraction = remember(s.completion) { MutableInteractionSource() }
-                    Row(
-                        modifier = Modifier
-                            .expressiveClickable(
-                                interaction = chipInteraction,
-                                onClick = { applyCompletion(s.completion) },
-                                restRadius = PureTvTheme.shapes.pill,
-                                hoverRadius = PureTvTheme.shapes.pillMorph,
-                                color = c.surfaceHigh,
-                                hoverColor = c.surfaceHighest,
+                Row(
+                    modifier = Modifier
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    stripItems.forEachIndexed { i, s ->
+                        val chipInteraction = remember(s.completion) { MutableInteractionSource() }
+                        val selected = i == highlighted
+                        Row(
+                            modifier = Modifier
+                                .expressiveClickable(
+                                    interaction = chipInteraction,
+                                    onClick = { applyCompletion(s.completion) },
+                                    restRadius = PureTvTheme.shapes.pill,
+                                    hoverRadius = PureTvTheme.shapes.pillMorph,
+                                    color = if (selected) c.secondaryContainer else c.surfaceHigh,
+                                    hoverColor = if (selected) c.secondaryContainer else c.surfaceHighest,
+                                )
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (s is ComposerSuggestion.Emote) {
+                                EmoteImage(s.emote.imageUrl, s.emote.code, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(5.dp))
+                            }
+                            Text(
+                                s.completion,
+                                color = if (selected) c.onSecondaryContainer else c.onSurfaceVariant,
+                                style = PureTvType.dataSmall,
                             )
-                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        if (s is ComposerSuggestion.Emote) {
-                            EmoteImage(s.emote.imageUrl, s.emote.code, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(5.dp))
                         }
-                        Text(s.completion, color = c.onSurfaceVariant, style = PureTvType.dataSmall)
                     }
                 }
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (cycling != null) "Tab: next" else "Tab to complete",
+                    color = c.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                )
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -1431,7 +1609,11 @@ internal fun ChatInputBar(
                     }
                     BasicTextField(
                         value = value,
-                        onValueChange = { value = it },
+                        onValueChange = {
+                            // Any edit of their own ends a Tab cycle.
+                            if (it.text != value.text) tab = null
+                            value = it
+                        },
                         singleLine = true,
                         textStyle = TextStyle(color = c.onSurface, fontSize = MaterialTheme.typography.bodyMedium.fontSize),
                         cursorBrush = SolidColor(c.primary),
@@ -1443,14 +1625,15 @@ internal fun ChatInputBar(
                                 fieldFocused = it.isFocused
                                 onFocusChanged(it.isFocused || searchFocused)
                             }
-                            // Enter sends the message; Tab accepts the first emote or
-                            // @username suggestion when one is offered (see composerKeyAction).
+                            // Enter sends the message; Tab fills in the first emote or
+                            // @username suggestion and each further Tab cycles to the next
+                            // (Shift+Tab back), see composerKeyAction and tabComplete.
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 val isEnter = ev.key == Key.Enter || ev.key == Key.NumPadEnter
-                                when (composerKeyAction(isEnter, ev.key == Key.Tab, suggestions.isNotEmpty())) {
+                                when (composerKeyAction(isEnter, ev.key == Key.Tab, suggestions.isNotEmpty() || cycling != null)) {
                                     ComposerKeyAction.SEND -> { submit(); true }
-                                    ComposerKeyAction.COMPLETE -> { applyCompletion(suggestions.first().completion); true }
+                                    ComposerKeyAction.COMPLETE -> { tabPress(backwards = ev.isShiftPressed); true }
                                     ComposerKeyAction.NONE -> false
                                 }
                             },

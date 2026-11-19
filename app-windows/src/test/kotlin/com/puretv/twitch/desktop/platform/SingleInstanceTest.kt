@@ -73,6 +73,22 @@ class SingleInstanceTest {
     }
 
     @Test
+    fun aSecondLaunchHandsItsRequestToTheRunningCopy() {
+        // --channel on a second launch: the running copy receives the channel, not just show.
+        val primary = SingleInstance(lockFile, focusExistingWindow = { false })
+        assertTrue(primary.acquire())
+        val received = java.util.concurrent.ArrayBlockingQueue<String>(1)
+        primary.listenForActivation { received.offer(it) }
+        try {
+            val second = SingleInstance(lockFile, focusExistingWindow = { false }, request = "channel:forsen")
+            assertFalse(second.acquire(waitForClosingCopyMs = 5_000))
+            assertEquals("channel:forsen", received.poll(5, TimeUnit.SECONDS))
+        } finally {
+            primary.stopListening()
+        }
+    }
+
+    @Test
     fun aRequestNobodyAnsweredIsClearedByTheNextCopy() {
         // A launch that gave up waiting on a copy that was closing leaves its request
         // behind. The copy that runs next must not treat it as a fresh "show yourself".

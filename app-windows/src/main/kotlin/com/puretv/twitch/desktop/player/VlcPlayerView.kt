@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.player
 
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -8,11 +9,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color as ComposeColor
-import com.puretv.twitch.desktop.platform.Platform
 import java.awt.BorderLayout
-import java.awt.Canvas
 import java.awt.Color
-import java.awt.Component
 import java.awt.event.HierarchyEvent
 import java.awt.event.HierarchyListener
 import java.awt.event.MouseAdapter
@@ -76,20 +74,7 @@ fun VlcPlayerView(
     // wedges the GPU/render path, freezing the whole window. removeNotify runs on
     // the EDT immediately before peer disposal, so detaching here stops mpv in
     // time. For VLC this is a no-op (it tolerates re-attach).
-    val canvas: Component = remember {
-        if (Platform.isMac) {
-            // No native window handle to hand libVLC on macOS: VLC renders into this
-            // lightweight component's image instead (see MacVideoSurfacePanel).
-            MacVideoSurfacePanel(onRemoveNotify = { vlcPlayer.detachFromPanel() })
-        } else {
-            object : Canvas() {
-                override fun removeNotify() {
-                    vlcPlayer.detachFromPanel()
-                    super.removeNotify()
-                }
-            }.apply { background = Color.BLACK; isFocusable = false }
-        }
-    }
+    val canvas = remember { VideoCanvas(onRemove = { vlcPlayer.detachFromPanel() }) }
     val panel = remember {
         JPanel(BorderLayout()).apply {
             background = Color.BLACK
@@ -171,7 +156,10 @@ fun VlcPlayerView(
         // Canvas + JPanel are already BLACK; this is the one background Compose
         // itself paints, so it must be black too.
         background = ComposeColor.Black,
-        modifier = modifier,
+        // Out of keyboard traversal: nothing in the video panel takes focus (see above), so
+        // Tab moving into it stopped there, and every control after a video (the Home hero's
+        // Watch now, the stream page) was out of the keyboard's reach.
+        modifier = modifier.focusProperties { canFocus = false },
         factory = { panel },
     )
 }

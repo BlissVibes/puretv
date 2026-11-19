@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.NativeFullscreenExit
+import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -30,7 +32,7 @@ enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
 /**
  * Owns window-chrome state (player mode, chat, maximize/minimize/fullscreen).
  *
- * FULLSCREEN: we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
+ * FULLSCREEN on Windows: we deliberately do NOT use `WindowPlacement.Fullscreen`. On an
  * undecorated window that combination drives Windows *exclusive* fullscreen,
  * whose Direct3D surface fights the heavyweight VLC video Canvas and leaves a
  * blank/white screen, most reliably when entered from a maximized window.
@@ -40,6 +42,10 @@ enum class PlayerMode { DEFAULT, THEATER, FULLSCREEN, MINI }
  * to cover the whole monitor, taskbar included. No exclusive mode, no surface
  * hand-off, no white flash. On exit we restore the exact pre-fullscreen geometry
  * through [WindowState] so its size/placement memory stays correct.
+ *
+ * On macOS and Linux the window has the system's frame, so fullscreen is the system's
+ * (`WindowPlacement.Fullscreen`, see [WindowChrome.nativeFullscreen]); when the OS ends it
+ * on its own, [onPlacementChanged] brings the player back to its normal layout.
  */
 class AppShellController(
     private val windowState: WindowState,
@@ -71,6 +77,18 @@ class AppShellController(
 
     /** The geometry to give back when the mini player closes (the window before it, or before fullscreen). */
     private var miniRestore: FullscreenRestore? = null
+
+    private val nativeExit = NativeFullscreenExit()
+
+    /** Fed every window placement (see App): follows the OS leaving its fullscreen. */
+    fun onPlacementChanged(placement: WindowPlacement) {
+        if (!WindowChrome.nativeFullscreen()) return
+        if (nativeExit.left(playerModeState == PlayerMode.FULLSCREEN, placement)) {
+            // The OS already put the window back; only the player's layout follows.
+            fullscreenRestore = null
+            playerModeState = PlayerMode.DEFAULT
+        }
+    }
 
     fun setPlayerMode(mode: PlayerMode) {
         val previous = playerModeState
@@ -136,6 +154,11 @@ class AppShellController(
         // Capture geometry through WindowState (it holds the *floating* size even
         // while maximized, so restore is exact in either case).
         fullscreenRestore = currentGeometry()
+        // macOS and Linux: the system's fullscreen, which hides their window frame too.
+        if (WindowChrome.nativeFullscreen()) {
+            windowState.placement = WindowPlacement.Fullscreen
+            return
+        }
         windowState.placement = WindowPlacement.Floating
         (window as? Frame)?.let { frame ->
             // Clear MAXIMIZED_BOTH, since a maximized frame ignores setBounds, then
@@ -148,6 +171,11 @@ class AppShellController(
     private fun exitFullscreen() {
         val restore = fullscreenRestore ?: return
         fullscreenRestore = null
+        if (WindowChrome.nativeFullscreen()) {
+            // The system puts the window back where it was; sizing it mid-transition fights that.
+            windowState.placement = restore.placement
+            return
+        }
         (window as? Frame)?.extendedState = Frame.NORMAL
         // Replay through WindowState so CMP re-applies geometry and keeps its own
         // size/placement memory consistent (important if restoring to Maximized).

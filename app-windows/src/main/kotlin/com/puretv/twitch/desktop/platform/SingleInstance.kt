@@ -41,6 +41,9 @@ class SingleInstance(
     private val sleep: (Long) -> Unit = Thread::sleep,
     private val nowMs: () -> Long = System::currentTimeMillis,
     private val activationDir: File = File(lockFile.parentFile ?: File("."), "activate"),
+    // What a second launch asks of the running copy: "show", or what LaunchArgs.request
+    // makes of its command line (e.g. a channel to open).
+    private val request: String = LaunchArgs.SHOW,
 ) {
     private var channel: FileChannel? = null
     private var lock: FileLock? = null
@@ -74,10 +77,10 @@ class SingleInstance(
     }
 
     /**
-     * Calls [onActivate] (on a background thread) each time another launch asks this
-     * copy to show itself. Only the copy that won [acquire] should listen.
+     * Calls [onActivate] (on a background thread) with the request each time another launch
+     * asks this copy to show itself. Only the copy that won [acquire] should listen.
      */
-    fun listenForActivation(onActivate: () -> Unit) {
+    fun listenForActivation(onActivate: (String) -> Unit) {
         val service = runCatching {
             activationDir.mkdirs()
             FileSystems.getDefault().newWatchService().also {
@@ -118,17 +121,33 @@ class SingleInstance(
         watcher = null
     }
 
-    private fun consumeRequest(onActivate: () -> Unit) {
-        if (listening && requestFile.exists() && runCatching { requestFile.delete() }.getOrDefault(false)) {
-            runCatching(onActivate)
+    private fun consumeRequest(onActivate: (String) -> Unit) {
+        if (!listening || !requestFile.exists()) return
+        val text = readRequest() ?: LaunchArgs.SHOW
+        if (runCatching { requestFile.delete() }.getOrDefault(false)) {
+            runCatching { onActivate(text) }
         }
+    }
+
+    /**
+     * The request's text, tried a few times. The watch fires as the second launch renames
+     * the file into place, and on Windows the read can briefly fail then (the rename, or
+     * an antivirus scan, still holds the file). Falling back to "show" at once turned a
+     * `--channel` launch into a plain "show yourself" (seen in CI).
+     */
+    private fun readRequest(): String? {
+        repeat(READ_ATTEMPTS) { attempt ->
+            runCatching { requestFile.readText() }.getOrNull()?.takeIf { it.isNotBlank() }?.let { return it }
+            if (attempt < READ_ATTEMPTS - 1) sleep(READ_RETRY_MS)
+        }
+        return null
     }
 
     /** Writes the request in one rename, so the running copy never reads half a file. */
     private fun requestActivation(): Boolean = runCatching {
         activationDir.mkdirs()
         val temp = File.createTempFile("show", ".tmp", activationDir)
-        temp.writeText("show")
+        temp.writeText(request)
         Files.move(temp.toPath(), requestFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
         true
     }.getOrDefault(false)
@@ -182,6 +201,9 @@ class SingleInstance(
 
         private const val POLL_MS = 250L
         private const val REQUEST_NAME = "show.request"
+        // See readRequest: five tries over about 80 ms.
+        private const val READ_ATTEMPTS = 5
+        private const val READ_RETRY_MS = 20L
 
         /**
          * Restores and focuses the top-level window titled [title], if one is showing.
@@ -189,10 +211,6 @@ class SingleInstance(
          * that copy answers the request file instead.
          */
         fun focusWindowTitled(title: String): Boolean {
-            // user32 is Windows only. On macOS the running copy is woken through the
-            // request file instead (see listenForActivation), which also handles the
-            // hidden-in-tray case, so nothing is lost by returning false here.
-            if (!Platform.isWindows) return false
             val user32 = User32.INSTANCE
             // The title carries the screen being shown ("forsen - PureTV for Twitch"), so an
             // exact match is only the first try; then any Java window whose title matches.

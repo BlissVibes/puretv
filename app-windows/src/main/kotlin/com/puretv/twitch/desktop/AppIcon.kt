@@ -40,7 +40,7 @@ fun createAppIcon(): BitmapPainter {
 
     // Centred bold "P" in white
     g.color = java.awt.Color(255, 255, 255, 235)
-    g.font = Font("SansSerif", Font.BOLD, 152)
+    g.font = iconFont(152f)
     val fm = g.fontMetrics
     val tx = (size - fm.stringWidth("P")) / 2
     val ty = (size - fm.height) / 2 + fm.ascent
@@ -49,3 +49,10 @@ fun createAppIcon(): BitmapPainter {
     g.dispose()
     return BitmapPainter(img.toComposeImageBitmap())
 }
+
+/** The app's display face (PureTV Sans Display ExtraBold), so the icon's "P" matches the in-app mark. */
+private fun iconFont(size: Float): Font = runCatching {
+    Thread.currentThread().contextClassLoader.getResourceAsStream("fonts/PureTvSansDisplay-ExtraBold.ttf")!!.use {
+        Font.createFont(Font.TRUETYPE_FONT, it).deriveFont(size)
+    }
+}.getOrElse { Font("SansSerif", Font.BOLD, size.toInt()) }

@@ -1,7 +1,11 @@
 package com.puretv.twitch.desktop
 
-import com.puretv.twitch.desktop.platform.AppPaths
-
+import com.puretv.twitch.desktop.player.audioLevellingInUse
+import com.puretv.twitch.desktop.platform.NativePreload
+import com.puretv.twitch.desktop.platform.MacAppEvents
+import com.puretv.twitch.desktop.platform.LaunchArgs
+import com.puretv.twitch.desktop.platform.WindowChrome
+import com.puretv.twitch.desktop.platform.AppDirs
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,10 +48,14 @@ import com.puretv.twitch.desktop.platform.Diagnostics
 import com.puretv.twitch.desktop.platform.SingleInstance
 import com.puretv.twitch.desktop.platform.TimingFileSink
 import com.puretv.twitch.desktop.platform.WindowsNative
-import com.puretv.twitch.desktop.platform.WindowsStartup
+import com.puretv.twitch.desktop.platform.LoginStartup
 import com.puretv.twitch.desktop.player.LocalStreamProxy
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
-import com.puretv.twitch.desktop.player.VlcEngine
+import com.puretv.twitch.desktop.player.VlcEngines
+import com.puretv.twitch.desktop.player.VlcPlayer
+import com.puretv.twitch.desktop.platform.RtxGpu
+import com.puretv.twitch.desktop.platform.UiStallWatch
+import com.puretv.twitch.desktop.platform.AppRestart
 import androidx.compose.runtime.DisposableEffect
 import com.puretv.twitch.desktop.ui.App
 import com.puretv.twitch.desktop.ui.AppWindows
@@ -79,13 +87,20 @@ import org.koin.core.context.GlobalContext.startKoin
 import org.koin.dsl.koinApplication
 
 fun main(args: Array<String>) {
+    // Before anything can load Skia: see NativePreload (Linux only).
+    NativePreload.linuxCxxRuntime()
+    AppDirs.createPrivate()
+    // Which GPUs Windows lists (for the RTX Video settings), read in the background.
+    RtxGpu.warmUp()
+    javax.swing.SwingUtilities.invokeLater { UiStallWatch.installIfAsked() }
     TimingFileSink.install()
     Diagnostics.installCrashLog()
     // One running copy only: a second launch brings the open window forward (or out
     // of the tray) and exits.
     val guard = SingleInstance(
-        lockFile = AppPaths.dataDir.resolve("instance.lock"),
+        lockFile = File(AppDirs.data, "instance.lock"),
         focusExistingWindow = { SingleInstance.focusWindowTitled(PRIMARY_WINDOW_TITLE) },
+        request = LaunchArgs.request(args),
     )
     if (!guard.acquire()) exitProcess(0)
     instanceGuard = guard
@@ -97,7 +112,12 @@ fun main(args: Array<String>) {
     val navRequests = koinApp.koin.get<NavigationRequests>()
     // Also installs the registry that openInNewWindow() uses.
     val registry = koinApp.koin.get<WindowRegistry>()
-    guard.listenForActivation { navRequests.requestShow() }
+    guard.listenForActivation { request ->
+        val channel = LaunchArgs.channelFromRequest(request)
+        if (channel != null) navRequests.requestStream(channel) else navRequests.requestShow()
+    }
+    // `--channel <login>`: start on that stream (a launcher shortcut, a script, a smoke test).
+    LaunchArgs.channel(args)?.let { navRequests.requestStream(it) }
 
     val settingsStore = koinApp.koin.get<DesktopSettingsStore>()
     val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -135,15 +155,35 @@ fun main(args: Array<String>) {
                 }
             }
     }
-    // "Start with Windows" points at the launcher exe; rewrite it on each start so it
-    // follows the app if it was reinstalled somewhere else.
+    // "Start at login" points at the launcher; rewrite it on each start so it follows the app
+    // if it was reinstalled somewhere else. Removed through the OS (macOS, Linux): turn it off.
     if (settingsStore.settings.value.startWithWindows) {
-        backgroundScope.launch { WindowsStartup.setEnabled(true) }
+        backgroundScope.launch {
+            if (!LoginStartup.refresh()) settingsStore.updateSettings { it.copy(startWithWindows = false) }
+        }
     }
 
     val playerProvider = koinApp.koin.get<DesktopPlayerProvider>()
     val localStreamProxy = koinApp.koin.get<LocalStreamProxy>()
-    val vlcEngine = koinApp.koin.get<VlcEngine>()
+    val vlcEngines = koinApp.koin.get<VlcEngines>()
+    // "Even out loud and quiet audio" (on, off, or its strength) switches live: VLC
+    // takes it only when an instance starts, so every VLC player (the main one,
+    // multi-stream tiles, extra windows) is told and moves to the instance with that
+    // level, or without it. Watching the settings themselves
+    // means a change from anywhere (Settings, any window's player controls, the A key)
+    // reaches every VLC player, not only the one in front. Players already on the right
+    // instance ignore it; the main player is also told here, in case it is mpv.
+    backgroundScope.launch {
+        settingsStore.settings
+            .map { it.audioLevellingInUse() }
+            .distinctUntilChanged()
+            .collect { level ->
+                vlcEngines.levellingChanged(level)
+                // The main player may be mpv, which a change in another window (always VLC)
+                // would not reach otherwise. A VLC main player already on it ignores this.
+                playerProvider.ifCreated { runCatching { it.setAudioLevelling(level) } }
+            }
+    }
     Runtime.getRuntime().addShutdownHook(Thread {
         // The stores now persist off the UI thread via a conflated async writer; flush
         // any pending snapshot so a change made right before quitting is still durable.
@@ -155,7 +195,8 @@ fun main(args: Array<String>) {
         runCatching { koinApp.koin.get<LiveNotifyFileStore>().flush() }
         runCatching { runBlocking { localStreamProxy.stop() } }
         runCatching { playerProvider.releaseIfCreated() }
-        runCatching { vlcEngine.releaseIfBuilt() }
+        runCatching { VlcPlayer.awaitAllReleased(3_000) }
+        runCatching { vlcEngines.releaseIfBuilt() }
     })
 
     // Create icon once before the Compose application loop so it isn't
@@ -165,7 +206,7 @@ fun main(args: Array<String>) {
     val notifier = koinApp.koin.get<DesktopLiveNotifier>()
     // Started by Windows at sign-in: stay in the tray. Without a tray there would be
     // no way to reach a hidden window, so the window shows after all.
-    val startHidden = WindowsStartup.BACKGROUND_ARG in args && isTraySupported
+    val startHidden = LoginStartup.BACKGROUND_ARG in args && isTraySupported
 
     application {
         val windowState: WindowState = rememberWindowState(width = 1280.dp, height = 720.dp)
@@ -175,7 +216,7 @@ fun main(args: Array<String>) {
 
         // The window's close (title bar X, Alt+F4) always quits, hidden or not (a close
         // that arrives while hidden is Windows signing out or an installer). Minimizing
-        // is what goes to the tray, see the minimize watcher below.
+        // goes to the tray only when chosen in Settings, see the minimize watcher below.
         // The updater and the tray's Quit never come through here: they call
         // exitApplication directly, so an update always really exits.
         // Every real exit stops answering a second launch first: application{} only
@@ -188,6 +229,10 @@ fun main(args: Array<String>) {
             guard.stopListening()
             exitApplication()
         }
+        AppRestart.quit = quit
+        // macOS: Cmd+Q and the Dock's Quit take the same way out, and the Dock icon brings
+        // back a window that is hidden.
+        LaunchedEffect(Unit) { MacAppEvents.install(onQuit = quit, onReopen = { navRequests.requestShow() }) }
         val closeWindow: () -> Unit = {
             when (registry.closeAction(WindowRegistry.PRIMARY_ID)) {
                 CloseAction.QUIT -> quit()
@@ -197,9 +242,11 @@ fun main(args: Array<String>) {
         // Where the window last sat in a normal state, so a minimize that makes Windows
         // report a parked position (-32000) cannot become the place it comes back to.
         val lastNormalPosition = remember { arrayOfNulls<java.awt.Point>(1) }
-        // Minimizing the main window sends PureTV to the tray: the window is put back to
-        // normal at once (so it comes back un-iconified) and then everything hides, the
-        // same way as any hide: each window stops what it plays and leaves mini/fullscreen.
+        // Minimizing is the ordinary taskbar minimize and the stream keeps playing (issue #40).
+        // Only with "Minimize to tray" turned on does minimizing the main window send PureTV
+        // to the tray: the window is put back to normal at once (so it comes back un-iconified)
+        // and then everything hides, the same way as any hide: each window stops what it plays
+        // and leaves mini/fullscreen, and the main window picks its stream back up when shown.
         // Our own restore flips isMinimized back to false, which this ignores, so there is
         // no loop; the show path also clears it. Without a tray it stays a taskbar minimize.
         // Fullscreen, mini and theater leave through App, which exits them as soon as the
@@ -211,7 +258,8 @@ fun main(args: Array<String>) {
             snapshotFlow { windowState.isMinimized }.collect { minimized ->
                 if (!minimized) return@collect
                 val updating = updateManager.state.value is UpdateState.Downloading
-                if (registry.minimizeAction(WindowRegistry.PRIMARY_ID, windowVisible, trayIconPresent(), updating) != MinimizeAction.HIDE_ALL) return@collect
+                val trayChosen = settingsStore.settings.value.minimizeToTray
+                if (registry.minimizeAction(WindowRegistry.PRIMARY_ID, windowVisible, trayIconPresent(), updating, trayChosen) != MinimizeAction.HIDE_ALL) return@collect
                 windowState.isMinimized = false
                 rescuePosition(windowState, lastNormalPosition[0])
                 windowVisible = false
@@ -252,8 +300,8 @@ fun main(args: Array<String>) {
             }
         }
 
-        // The tray icon is there for as long as PureTV runs: minimizing hides the window
-        // to it, and it is also where go-live alerts arrive.
+        // The tray icon is there for as long as PureTV runs: go-live alerts arrive from it,
+        // and with "Minimize to tray" on, minimizing hides the window to it.
         if (isTraySupported) {
             // The icon is added to the system tray as Tray enters composition; this runs
             // right after, so a go-live toast that had nowhere to go yet appears now.
@@ -287,8 +335,9 @@ fun main(args: Array<String>) {
             state = windowState,
             title = mainTitle,
             icon = appIcon,
-            undecorated = true,
+            undecorated = WindowChrome.customFrame(),
         ) {
+            remember(window) { WindowChrome.styleNativeFrame(window) }
             DisposableEffect(window) {
                 AppWindows.add(window)
                 onDispose { AppWindows.remove(window) }
@@ -317,9 +366,15 @@ fun main(args: Array<String>) {
                 if (!windowVisible || shownOnce) return@LaunchedEffect
                 shownOnce = true
                 TimingLog.log("app.first_window", TimingFileSink.sinceProcessStartMs())
+                // Logged once the UI thread is free again, after the first frame's work.
+                SwingUtilities.invokeLater { TimingLog.log("app.ui_ready", TimingFileSink.sinceProcessStartMs()) }
                 // The window is up: now build the player in the background, so the
                 // first stream open finds it ready without having delayed startup.
                 launch(Dispatchers.IO) { runCatching { playerProvider.warmUp() } }
+                // And the local stream proxy, which the first stream otherwise waited on
+                // (Netty start, 180 to 300 ms). Idempotent: the stream screen's own start
+                // is then a no-op, and still reports a port conflict if this one failed.
+                launch(Dispatchers.IO) { runCatching { localStreamProxy.start() } }
                 if (!WindowsNative.enableBorderlessSnap(window)) {
                     SwingUtilities.invokeLater { WindowsNative.enableBorderlessSnap(window) }
                 }
@@ -382,7 +437,13 @@ fun main(args: Array<String>) {
     runCatching { koinApp.koin.get<MultiSession>().end() }
     runCatching { runBlocking { withTimeoutOrNull(3_000) { localStreamProxy.stop() } } }
     runCatching { playerProvider.releaseIfCreated() }
-    runCatching { vlcEngine.releaseIfBuilt() }
+    // Players stop and free their libVLC work on their own threads: let that finish
+    // before libVLC itself is released (this is main(), never the UI thread).
+    runCatching { VlcPlayer.awaitAllReleased(3_000) }
+    // Every libVLC instance that was started, the ones players moved away from included.
+    runCatching { vlcEngines.releaseIfBuilt() }
+    // "Restart now" (an engine switch): start the launcher again; it waits for this copy to go.
+    AppRestart.relaunchIfRequested()
     exitProcess(0)
 }
 
@@ -397,7 +458,7 @@ private const val PARKED_BELOW = -30_000
  * dropped it) minimizing must not hide the app, as there would be no way back.
  */
 private fun trayIconPresent(): Boolean =
-    isTraySupported && runCatching { SystemTray.getSystemTray().trayIcons.isNotEmpty() }.getOrDefault(false)
+    WindowChrome.minimizeToTray() && isTraySupported && runCatching { SystemTray.getSystemTray().trayIcons.isNotEmpty() }.getOrDefault(false)
 
 /**
  * Keeps the main window where the viewer can reach it: a parked position (left behind by

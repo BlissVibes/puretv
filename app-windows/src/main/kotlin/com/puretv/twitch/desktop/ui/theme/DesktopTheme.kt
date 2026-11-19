@@ -262,56 +262,62 @@ val shapeScale: Map<ShapeIntensity, PureTvShapes> = mapOf(
 // ── Typography ─────────────────────────────────────────────────────────────────
 
 /**
- * Bricolage Grotesque carries display + section voice with tight negative
- * tracking, Archivo carries every functional string, IBM Plex Mono (see
- * [PureTvType]) carries data. Sizes follow the Material 3 Expressive type scale,
- * which runs noticeably larger than baseline M3, because expressive layouts lean on a
- * big display step to anchor a page.
+ * The Material 3 Expressive type scale (sizes and line heights from the M3 tokens) set in
+ * PureTV Sans. Headings use the display cut with tighter tracking and emphasized weights,
+ * the expressive way of letting a page's title anchor it; everything else uses the text
+ * cut. Numbers in data styles are tabular (see [PureTvType]).
  */
 private val PureTvDesktopTypography = Typography(
     // Display: hero titles only. One per screen at most.
-    displayLarge = TextStyle(fontFamily = BricolageGrotesque, fontSize = 57.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1.8).sp, lineHeight = 60.sp),
-    displayMedium = TextStyle(fontFamily = BricolageGrotesque, fontSize = 45.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-1.2).sp, lineHeight = 52.sp),
-    displaySmall = TextStyle(fontFamily = BricolageGrotesque, fontSize = 36.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp, lineHeight = 44.sp),
+    displayLarge = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 57.sp, fontWeight = FontWeight.Bold, letterSpacing = (-1.0).sp, lineHeight = 64.sp),
+    displayMedium = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 45.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp, lineHeight = 52.sp),
+    displaySmall = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 36.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp, lineHeight = 44.sp),
     // Headline: section headings.
-    headlineLarge = TextStyle(fontFamily = BricolageGrotesque, fontSize = 32.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.6).sp, lineHeight = 40.sp),
-    headlineMedium = TextStyle(fontFamily = BricolageGrotesque, fontSize = 28.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp, lineHeight = 36.sp),
-    headlineSmall = TextStyle(fontFamily = BricolageGrotesque, fontSize = 24.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.3).sp, lineHeight = 32.sp),
+    headlineLarge = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 32.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.3).sp, lineHeight = 40.sp),
+    headlineMedium = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.2).sp, lineHeight = 36.sp),
+    headlineSmall = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 24.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.1).sp, lineHeight = 32.sp),
     // Title: panel headings and card titles.
-    titleLarge = TextStyle(fontFamily = BricolageGrotesque, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp, lineHeight = 28.sp),
-    titleMedium = TextStyle(fontFamily = Archivo, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.15.sp, lineHeight = 22.sp),
-    titleSmall = TextStyle(fontFamily = Archivo, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.1.sp, lineHeight = 20.sp),
+    titleLarge = TextStyle(fontFamily = PureTvSansDisplay, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp, lineHeight = 28.sp),
+    titleMedium = TextStyle(fontFamily = PureTvSans, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.15.sp, lineHeight = 24.sp),
+    titleSmall = TextStyle(fontFamily = PureTvSans, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.1.sp, lineHeight = 20.sp),
     // Body.
-    bodyLarge = TextStyle(fontFamily = Archivo, fontSize = 16.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.5.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = Archivo, fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.25.sp, lineHeight = 20.sp),
-    bodySmall = TextStyle(fontFamily = Archivo, fontSize = 12.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.4.sp, lineHeight = 16.sp),
+    bodyLarge = TextStyle(fontFamily = PureTvSans, fontSize = 16.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.5.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontFamily = PureTvSans, fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.25.sp, lineHeight = 20.sp),
+    bodySmall = TextStyle(fontFamily = PureTvSans, fontSize = 12.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.4.sp, lineHeight = 16.sp),
     // Label: buttons, chips, nav.
-    labelLarge = TextStyle(fontFamily = Archivo, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.1.sp, lineHeight = 20.sp),
-    labelMedium = TextStyle(fontFamily = Archivo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, lineHeight = 16.sp),
-    labelSmall = TextStyle(fontFamily = Archivo, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, lineHeight = 16.sp),
+    labelLarge = TextStyle(fontFamily = PureTvSans, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.1.sp, lineHeight = 20.sp),
+    labelMedium = TextStyle(fontFamily = PureTvSans, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, lineHeight = 16.sp),
+    labelSmall = TextStyle(fontFamily = PureTvSans, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, lineHeight = 16.sp),
 )
 
+// Tabular figures: digits all the same width, so a ticking viewer count or timestamp
+// does not shuffle its neighbours. What the monospace data font used to give.
+private const val TABULAR = "tnum"
+
 /**
- * Material's [Typography] has no monospace slot, so the IBM Plex Mono styles that
- * give data its instrument-panel precision live here, alongside direct family
- * handles for the rare component that must set a family explicitly.
+ * Styles Material's [Typography] has no slot for (data, kickers, badges), all in the
+ * same typeface as the rest of the app, plus direct family handles for the rare
+ * component that must set a family explicitly.
  */
 object PureTvType {
-    val display: FontFamily = BricolageGrotesque
-    val ui: FontFamily = Archivo
-    val mono: FontFamily = IBMPlexMono
+    val display: FontFamily = PureTvSansDisplay
+    val ui: FontFamily = PureTvSans
+
+    /** Codes and figures that line up (the sign-in code): the text cut; pair with [tabular]. */
+    val mono: FontFamily = PureTvSans
+    const val tabular: String = TABULAR
 
     /** Eyebrow / section kicker. Apply `.uppercase()` at the call site. */
-    val kicker = TextStyle(fontFamily = Archivo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp, lineHeight = 16.sp)
+    val kicker = TextStyle(fontFamily = PureTvSans, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.6.sp, lineHeight = 16.sp)
 
     /** Viewer counts, datelines, durations. */
-    val data = TextStyle(fontFamily = IBMPlexMono, fontSize = 14.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.3.sp, lineHeight = 20.sp)
+    val data = TextStyle(fontFamily = PureTvSans, fontSize = 14.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.1.sp, lineHeight = 20.sp, fontFeatureSettings = TABULAR)
 
     /** Badge text: LIVE pills, quality labels, timestamps. */
-    val dataSmall = TextStyle(fontFamily = IBMPlexMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.8.sp, lineHeight = 14.sp)
+    val dataSmall = TextStyle(fontFamily = PureTvSans, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.4.sp, lineHeight = 14.sp, fontFeatureSettings = TABULAR)
 
     /** The all-caps status voice on hero overlays. */
-    val badge = TextStyle(fontFamily = IBMPlexMono, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp, lineHeight = 14.sp)
+    val badge = TextStyle(fontFamily = PureTvSans, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.8.sp, lineHeight = 14.sp, fontFeatureSettings = TABULAR)
 }
 
 // ── Composition locals ─────────────────────────────────────────────────────────

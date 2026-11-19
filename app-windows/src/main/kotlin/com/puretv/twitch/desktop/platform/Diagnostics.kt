@@ -16,7 +16,7 @@ object Diagnostics {
     private const val MAX_CRASH_LOG_BYTES = 512 * 1024L
 
     private val dataDir: File by lazy {
-        AppPaths.dataDir
+        AppDirs.data
     }
 
     /** Records every uncaught exception, then hands it to whatever handler was there before. */

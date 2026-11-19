@@ -2,7 +2,6 @@ package com.puretv.twitch.desktop.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -19,7 +18,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -56,7 +57,14 @@ import androidx.compose.runtime.LaunchedEffect
 import org.koin.core.Koin
 
 @Composable
-fun SearchContent(koin: Koin, onOpenChannel: (String) -> Unit, initialQuery: String? = null) {
+fun SearchContent(
+    koin: Koin,
+    onOpenChannel: (String) -> Unit,
+    initialQuery: String? = null,
+    // A category picked from the results, with the query that found it, so coming back
+    // from the category finds the same search still there.
+    onOpenCategory: (gameId: String, gameName: String, query: String) -> Unit = { _, _, _ -> },
+) {
     val viewModel = rememberDesktopViewModel { koin.get<SearchViewModel>() }
     // A window opened on a search starts with its words already typed.
     LaunchedEffect(initialQuery) { initialQuery?.let { viewModel.onQueryChange(it) } }
@@ -97,34 +105,62 @@ fun SearchContent(koin: Koin, onOpenChannel: (String) -> Unit, initialQuery: Str
                 }
             }
 
-            state.results.isEmpty() -> {
+            state.results.isEmpty() && state.categories.isEmpty() -> {
                 EditorialEmptyState(
                     kicker = "Search",
-                    title = "Find a channel",
-                    message = "Search for streamers and categories.",
+                    title = if (state.query.length >= 2) "No matches" else "Find a channel",
+                    message = if (state.query.length >= 2) {
+                        "No channels or categories match \"${state.query}\"."
+                    } else {
+                        "Search for streamers and categories."
+                    },
                     modifier = Modifier.padding(top = 24.dp),
                 )
             }
 
             else -> {
-                Spacer(Modifier.height(24.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(RoundedCornerShape(PureTvTheme.shapes.card))
-                        .background(c.surfaceLow),
-                ) {
-                    // Container clips its children, so the first and last row inherit
-                    // its rounding without each row needing its own corner logic.
-                    LazyColumn(modifier = Modifier.fillMaxSize()) {
-                        items(state.results, key = { it.id }) { result ->
-                            SearchResultRow(result = result, onClick = { onOpenChannel(result.broadcaster_login) })
+                // Categories first (issue #41: search used to find channels only), as a
+                // row of posters that open the category's live streams.
+                if (state.categories.isNotEmpty()) {
+                    SectionLabel("Categories", Modifier.padding(top = 24.dp, bottom = 12.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        items(state.categories, key = { it.id }) { game ->
+                            GameTile(
+                                name = game.name,
+                                boxArtUrl = game.boxArtUrl,
+                                onClick = { onOpenCategory(game.id, game.name, state.query) },
+                                modifier = Modifier.width(132.dp),
+                                gameId = game.id,
+                                viewers = game.viewers,
+                            )
+                        }
+                    }
+                }
+                if (state.results.isNotEmpty()) {
+                    SectionLabel("Channels", Modifier.padding(top = 24.dp, bottom = 12.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .clip(RoundedCornerShape(PureTvTheme.shapes.card))
+                            .background(c.surfaceLow),
+                    ) {
+                        // Container clips its children, so the first and last row inherit
+                        // its rounding without each row needing its own corner logic.
+                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                            items(state.results, key = { it.id }) { result ->
+                                SearchResultRow(result = result, onClick = { onOpenChannel(result.broadcaster_login) })
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SectionLabel(text: String, modifier: Modifier = Modifier) {
+    Text(text, style = MaterialTheme.typography.titleMedium, color = PureTvTheme.colors.onSurface, modifier = modifier)
 }
 
 /**
@@ -140,7 +176,7 @@ private fun SearchField(query: String, onQueryChange: (String) -> Unit, modifier
     val focused by interaction.collectIsFocusedAsState()
     val radius by animateDpAsState(
         targetValue = if (hovered || focused) 20.dp else 32.dp,
-        animationSpec = PureTvMotion.MorphSpring,
+        animationSpec = PureTvMotion.morph(),
         label = "searchFieldRadius",
     )
 
@@ -201,7 +237,7 @@ private fun SearchResultRow(result: ChannelSearchResult, onClick: () -> Unit) {
     val hovered by interaction.collectIsHoveredAsState()
     val rowColor by animateColorAsState(
         targetValue = if (hovered) c.surfaceHigh else Color.Transparent,
-        animationSpec = tween(PureTvMotion.Fast),
+        animationSpec = PureTvMotion.effectsFast(),
         label = "rowHover",
     )
 

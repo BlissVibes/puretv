@@ -1,7 +1,6 @@
 package com.puretv.twitch.desktop.data
 
-import com.puretv.twitch.desktop.platform.AppPaths
-
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.core.notify.LiveNotifyState
 import com.puretv.twitch.core.notify.LiveNotifyStateCodec
 import com.puretv.twitch.core.notify.LiveNotifyStateStore
@@ -36,6 +35,6 @@ class LiveNotifyFileStore(appDataDir: File = defaultDir()) : LiveNotifyStateStor
     fun flush() = writer.flush()
 
     private companion object {
-        fun defaultDir(): File = AppPaths.dataDir
+        fun defaultDir(): File = AppDirs.data
     }
 }

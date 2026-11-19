@@ -26,6 +26,9 @@ app-windows/resources/windows/vlc/
 # The Anime4K shader source lives (committed) in app-windows/shaders/.
 app-windows/resources/windows/mpv/
 
+# macOS VLC bundle (populated by `gradle :app-windows:bundleVlc` on a Mac from VLC.app).
+app-windows/resources/macos-arm64/vlc/
+
 # Secrets — injected at build time, never committed (see secrets.properties.example)
 secrets.properties
 
@@ -72,8 +75,3 @@ vaft.user.js
 
 # Subagent git worktrees (Claude Code). Separate checkouts, never part of this one.
 /.claude/worktrees/
-
-# Bundled VLC for the macOS build (populated by `gradle :app-windows:bundleVlcMac` or by hand
-# from an arm64 VLC.app: lib/ + plugins/). ~80 MB of binaries, never committed.
-app-windows/resources/macos-arm64/vlc/
-app-windows/resources/macos-x64/vlc/

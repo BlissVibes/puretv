@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.update
 
+import com.puretv.twitch.desktop.platform.HostOs
 import kotlinx.serialization.Serializable
 
 /** A newer release the user can install. */
@@ -43,12 +44,27 @@ data class GithubAsset(
 )
 
 /**
- * The Windows installer asset to download. Prefers the MSI (it carries the
- * `upgradeUuid` for a clean in-place upgrade); falls back to the EXE installer.
+ * The installer asset for [os] and the CPU [arch] (`os.arch`). On Windows it prefers
+ * the MSI (it carries the `upgradeUuid` for a clean in-place upgrade) and falls back to
+ * the EXE installer. On macOS it is the `.dmg` and on Linux the `.deb` whose file name
+ * names the same CPU, so an Intel Mac is never offered the Apple Silicon build.
  */
-fun GithubRelease.installerAsset(): GithubAsset? =
-    assets.firstOrNull { it.name.endsWith(".msi", ignoreCase = true) }
-        ?: assets.firstOrNull { it.name.endsWith(".exe", ignoreCase = true) }
+fun GithubRelease.installerAsset(os: HostOs = HostOs.WINDOWS, arch: String = "amd64"): GithubAsset? = when (os) {
+    HostOs.WINDOWS ->
+        assets.firstOrNull { it.name.endsWith(".msi", ignoreCase = true) }
+            ?: assets.firstOrNull { it.name.endsWith(".exe", ignoreCase = true) }
+    HostOs.MACOS -> assets.firstOrNull { it.name.endsWith(".dmg", ignoreCase = true) && namesArch(it.name, arch) }
+    HostOs.LINUX -> assets.firstOrNull { it.name.endsWith(".deb", ignoreCase = true) && namesArch(it.name, arch) }
+}
+
+private val ARM64_NAMES = listOf("arm64", "aarch64")
+private val X64_NAMES = listOf("amd64", "x86_64", "x64")
+
+private fun namesArch(fileName: String, arch: String): Boolean {
+    val n = fileName.lowercase()
+    val wanted = if (arch.lowercase() in ARM64_NAMES) ARM64_NAMES else X64_NAMES
+    return wanted.any { it in n }
+}
 
 /**
  * The detached Ed25519 signature for [installer], published as `<installer>.sig`
@@ -61,7 +77,7 @@ fun GithubRelease.signatureAsset(installer: GithubAsset): GithubAsset? =
 /**
  * From a `/releases` list (any order), the release the desktop updater should
  * offer: the highest-version PUBLISHED (non-draft, non-prerelease) release that
- * actually carries a Windows installer asset ([installerAsset]).
+ * actually carries an installer for this OS and CPU ([installerAsset]).
  *
  * Deliberately NOT "whatever `/releases/latest` returns". Windows, Android, and TV
  * all publish from one repo and share GitHub's single "Latest" pointer, so a newer
@@ -74,9 +90,13 @@ fun GithubRelease.signatureAsset(installer: GithubAsset): GithubAsset? =
  * returns releases out of created-at order; the caller's [Semver.isNewer] gate still
  * decides whether the result is actually newer than the running build.
  */
-fun latestInstallerRelease(releases: List<GithubRelease>): GithubRelease? =
+fun latestInstallerRelease(
+    releases: List<GithubRelease>,
+    os: HostOs = HostOs.WINDOWS,
+    arch: String = "amd64",
+): GithubRelease? =
     releases
-        .filter { !it.draft && !it.prerelease && it.installerAsset() != null }
+        .filter { !it.draft && !it.prerelease && it.installerAsset(os, arch) != null }
         .maxWithOrNull { a, b ->
             // isNewer(current, candidate) is true when candidate > current, so
             // isNewer(b, a) means a is the newer of the two → a sorts greater.

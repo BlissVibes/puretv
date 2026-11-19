@@ -1,9 +1,9 @@
 package com.puretv.twitch.desktop.update
 
-import com.puretv.twitch.desktop.platform.AppPaths
-import com.puretv.twitch.desktop.platform.Platform
-
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.desktop.AppBuildConfig
+import com.puretv.twitch.desktop.platform.HostOs
+import com.puretv.twitch.desktop.platform.openInBrowser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -40,7 +40,10 @@ class UpdateManager {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val json = Json { ignoreUnknownKeys = true }
-    private val http = HttpClient.newBuilder()
+    // Built on first use (a check runs in the background): building the JDK client cost
+    // 106 to 170 ms on the UI thread while the first window was being shown.
+    private val http by lazy {
+        HttpClient.newBuilder()
         .connectTimeout(Duration.ofSeconds(10))
         // Force HTTP/1.1. The JDK client defaults to HTTP/2, and GitHub's API +
         // asset CDN recycle h2 connections aggressively (GOAWAY). The client will
@@ -58,11 +61,18 @@ class UpdateManager {
         // while still refusing any HTTPS->HTTP downgrade.
         .followRedirects(HttpClient.Redirect.NORMAL)
         .build()
+    }
 
     private val _state = MutableStateFlow<UpdateState>(UpdateState.Idle)
     val state: StateFlow<UpdateState> = _state.asStateFlow()
 
     val currentVersion: String get() = AppBuildConfig.VERSION
+
+    /**
+     * True only on Windows, where the updater downloads, verifies and runs the installer
+     * itself. Elsewhere an update is announced and opens the release page.
+     */
+    val canSelfInstall: Boolean = HostOs.current == HostOs.WINDOWS
 
     private val isPackaged: Boolean =
         System.getProperty("compose.application.resources.dir") != null
@@ -73,10 +83,6 @@ class UpdateManager {
      * Any failure (offline, rate-limited, no asset) leaves state at [UpdateState.Idle].
      */
     fun checkForUpdates(force: Boolean = false) {
-        // The releases this checks carry Windows installers signed for the Windows
-        // updater. The Mac build is a fork built locally, so it never offers them
-        // (installing an .exe over a .app is not an update anyone wants).
-        if (Platform.isMac) return
         if (!isPackaged && !force) return
         scope.launch {
             val failedVersion = consumeFailedInstallVersion()
@@ -122,8 +128,10 @@ class UpdateManager {
         // Unauthenticated list-releases never returns drafts; latestInstallerRelease
         // still filters draft/prerelease defensively and requires an installer asset.
         val releases = json.decodeFromString(ListSerializer(GithubRelease.serializer()), response.body())
-        val release = latestInstallerRelease(releases) ?: return@withContext null
-        val asset = release.installerAsset() ?: return@withContext null
+        val os = HostOs.current
+        val arch = System.getProperty("os.arch", "")
+        val release = latestInstallerRelease(releases, os, arch) ?: return@withContext null
+        val asset = release.installerAsset(os, arch) ?: return@withContext null
         UpdateInfo(
             version = release.tag_name,
             downloadUrl = asset.browser_download_url,
@@ -143,9 +151,14 @@ class UpdateManager {
      * locked files.
      */
     fun downloadAndInstall(info: UpdateInfo, exitApplication: () -> Unit) {
+        if (!canSelfInstall) {
+            // macOS and Linux: the new .dmg or .deb is installed by the viewer (a
+            // package manager or a drag to Applications), so the update opens its page.
+            openInBrowser(resolveReleaseUrl(info.htmlUrl))
+            return
+        }
         scope.launch {
             runCatching {
-                if (Platform.isMac) error("Self-update is not available in the macOS build; rebuild from source to update.")
                 // Anti-rollback (audit F2): refuse to install a version that is not
                 // strictly newer than the running one — even a validly-signed older
                 // build. Ed25519 signing prevents forgery but NOT replay of a
@@ -297,7 +310,7 @@ class UpdateManager {
     }
 
     private val dataDir: File
-        get() = AppPaths.dataDir
+        get() = AppDirs.data
 
     /** Written by the update script when Setup failed; holds the version it tried. */
     private val failedInstallMarker: File get() = File(dataDir, "update-failed.txt")

@@ -12,7 +12,7 @@ plugins {
 // ── App version (single source of truth) ─────────────────────────────────────
 // Drives both the MSI `packageVersion` AND the generated AppBuildConfig the
 // in-app updater compares against GitHub Releases — so the two can never drift.
-val appVersion = "1.13.0"
+val appVersion = "1.17.0"
 
 val generateAppBuildConfig by tasks.registering {
     val outDir = layout.buildDirectory.dir("generated/buildconfig/kotlin")
@@ -77,6 +77,11 @@ dependencies {
     // listener (port 3000, Section 03.2/10).
     implementation(libs.ktor.server.core)
     implementation(libs.ktor.server.netty)
+    // Ktor 3.1.1 brings Netty 4.1.118, which has published advisories (HTTP/1 request
+    // smuggling, decoder DoS, HTTP/2 floods) fixed in 4.1.124 to 4.1.136. The proxy only
+    // listens on 127.0.0.1, but a web page can still send it requests, so pin a patched
+    // 4.1 release (same API) until Ktor ships one. Check with an OSV scan before raising.
+    implementation(platform("io.netty:netty-bom:4.1.139.Final"))
 
     implementation(libs.koin.core)
     implementation(libs.koin.compose)
@@ -114,8 +119,38 @@ dependencies {
 // loaded alongside the real ones. Nothing else lives in that folder; mpv has
 // its own sibling folder (bundleMpv).
 
+// Which desktop OS this build runs on: each one packages its own installer (see the
+// native runners in release.yml), so the bundling below is per OS too.
+val buildOs: String = System.getProperty("os.name", "").lowercase().let {
+    when {
+        it.startsWith("windows") -> "windows"
+        it.startsWith("mac") -> "macos"
+        else -> "linux"
+    }
+}
+
 val bundleVlc by tasks.registering(Sync::class) {
-    description = "Syncs local VLC files into resources/windows/vlc/ for self-contained packaging, removing stale ones. Run once before packageMsi/createDistributable."
+    description = "Syncs the local VLC into the app resources for self-contained packaging (Windows, macOS), removing stale files. Run once before createDistributable."
+    // Linux uses the distro's libVLC, which the .deb depends on; nothing is bundled.
+    onlyIf { buildOs != "linux" }
+
+    if (buildOs == "macos") {
+        // macOS: VLC.app's lib/ and plugins/ side by side, the layout vlcj's macOS discovery
+        // expects (VLC_PLUGIN_PATH = lib/../plugins). Every plugin is kept: the app's size
+        // does not matter, a missing demuxer or codec does.
+        val app = listOf(System.getenv("VLC_APP"), "/Applications/VLC.app").filterNotNull().map { File(it) }
+            .firstOrNull { File(it, "Contents/MacOS/lib/libvlc.dylib").exists() }
+        if (app != null) {
+            from(File(app, "Contents/MacOS/lib")) { include("*.dylib"); into("lib") }
+            from(File(app, "Contents/MacOS/plugins")) { into("plugins") }
+        }
+        into(layout.projectDirectory.dir("resources/macos-arm64/vlc"))
+        doFirst {
+            if (app == null) throw GradleException("VLC.app not found. Install VLC (brew install --cask vlc) or set VLC_APP.")
+            println("[bundleVlc] Copying VLC from: ${app.absolutePath}")
+        }
+        return@registering
+    }
 
     val vlcDir = listOf(
         System.getenv("VLC_DIR"),
@@ -125,8 +160,9 @@ val bundleVlc by tasks.registering(Sync::class) {
      .firstOrNull { it.exists() && File(it, "libvlc.dll").exists() }
 
     if (vlcDir != null) {
-        // Core DLLs
-        from(vlcDir) { include("libvlc.dll", "libvlccore.dll") }
+        // Core DLLs, and the tool the installer runs to write libVLC's plugin cache
+        // (puretv.iss): without the cache libVLC opens every plugin DLL on each start.
+        from(vlcDir) { include("libvlc.dll", "libvlccore.dll", "vlc-cache-gen.exe") }
         // Only the plugin categories needed for HLS live-stream playback on Windows.
         // Excluded: gui (skins), stream_out, visualization, meta_engine,
         // services_discovery, access_output, mux, keystore, logger, video_splitter.
@@ -158,6 +194,7 @@ val bundleVlc by tasks.registering(Sync::class) {
     into(layout.projectDirectory.dir("resources/windows/vlc"))
 
     doFirst {
+        if (buildOs == "linux") return@doFirst
         if (vlcDir == null) {
             throw GradleException(
                 "VLC not found. Install VLC from https://videolan.org/vlc/ or set the VLC_DIR env var.",
@@ -190,36 +227,6 @@ val bundleMpv by tasks.registering(Copy::class) {
     }
 }
 
-// ── VLC bundling (macOS) ──────────────────────────────────────────────────────
-// Mirrors bundleVlc for the Mac build: copies libvlc + its plugins out of an
-// arm64 VLC.app into resources/macos-arm64/vlc/ (gitignored), which Compose packs
-// into the .app's resources. VlcEngine finds it there at runtime, so users do not
-// need VLC installed. Run as its own Gradle invocation before packageDmg, like
-// bundleVlc. The source is VLC_APP (a path to a VLC.app) or /Applications/VLC.app.
-// It MUST be the Apple Silicon build (an Intel VLC.app loads on an arm64 JVM about
-// as well as a .dll would); the task checks the architecture before copying.
-val bundleVlcMac by tasks.registering(Sync::class) {
-    description = "Syncs an arm64 VLC.app's lib/ and plugins/ into resources/macos-arm64/vlc/ for self-contained packaging."
-    val vlcApp = listOf(System.getenv("VLC_APP"), "/Applications/VLC.app")
-        .filterNotNull().map { File(it) }
-        .firstOrNull { File(it, "Contents/MacOS/lib/libvlc.dylib").exists() }
-    if (vlcApp != null) {
-        from(File(vlcApp, "Contents/MacOS")) { include("lib/**", "plugins/**") }
-    }
-    into(layout.projectDirectory.dir("resources/macos-arm64/vlc"))
-    doFirst {
-        if (vlcApp == null) {
-            throw GradleException("VLC.app not found. Install the Apple Silicon VLC from https://videolan.org/vlc/ or set VLC_APP to a VLC.app path.")
-        }
-        val archs = ProcessBuilder("lipo", "-archs", File(vlcApp, "Contents/MacOS/lib/libvlc.dylib").absolutePath)
-            .redirectErrorStream(true).start().inputStream.bufferedReader().readText().trim()
-        if (!archs.contains("arm64")) {
-            throw GradleException("$vlcApp is an Intel (x86_64) VLC; the Mac build needs the Apple Silicon one. Set VLC_APP to an arm64 VLC.app.")
-        }
-        println("[bundleVlcMac] Copying VLC ($archs) from: ${vlcApp.absolutePath}")
-    }
-}
-
 compose.desktop {
     application {
         mainClass = "com.puretv.twitch.desktop.MainKt"
@@ -249,16 +256,15 @@ compose.desktop {
             // bundleMpv populates resources/windows/mpv/ with libmpv + the Anime4K shader.
             appResourcesRootDir.set(layout.projectDirectory.dir("resources"))
 
-            // SECTION 12.4 — both installer formats per the spec; jpackage
-            // bundles a JVM so end users do not need Java pre-installed.
-            // MSI and EXE both require WiX Toolset 3.x on the PATH.
-            // Download portable WiX: https://github.com/wixtoolset/wix3/releases
-            // Dmg is built on a Mac (`:app-windows:packageDmg`), Msi/Exe on Windows;
-            // jpackage only ever offers the formats of the OS it runs on.
-            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg)
+            // jpackage bundles a JVM so end users do not need Java pre-installed, and only
+            // builds the formats of the OS it runs on. MSI and EXE need WiX Toolset 3.x
+            // (the shipped Windows installer is Inno Setup over the app image, see
+            // release.yml). The macOS .dmg is made by release.yml too, after an ad-hoc
+            // signature, since there is no Developer ID to let jpackage sign it.
+            targetFormats(TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Dmg, TargetFormat.Deb)
             packageName = "PureTV for Twitch"
             packageVersion = appVersion
-            description = "Ad-free Twitch viewing for Windows — desktop companion to PureTV for Twitch."
+            description = "Ad-free Twitch viewing on the desktop."
             copyright = "© 2026 PureTV for Twitch. Unaffiliated with Twitch Interactive, Inc."
             vendor = "PureTV for Twitch"
 
@@ -277,22 +283,21 @@ compose.desktop {
                 perUserInstall = true
                 shortcut = true
             }
-
             macOS {
-                // icon.icns is derived from icon.ico (same 256px artwork, via iconutil).
-                iconFile.set(project.file("src/main/resources/icon.icns"))
-                bundleID = "com.puretv.twitch.desktop"
+                iconFile.set(project.file("packaging/icon.icns"))
+                bundleID = "com.puretv.twitch"
                 dockName = "PureTV"
-                // Unsigned, like the Windows build: first launch is right-click > Open.
-                // Fill these in (and `signing { sign.set(true) }`) once a Developer ID exists.
-                // signing { sign.set(true); identity.set("Developer ID Application: ...") }
-                // notarization { appleID.set("..."); password.set("@keychain:AC_PASSWORD") }
-                infoPlist {
-                    extraKeysRawXml = """
-                        <key>NSHighResolutionCapable</key><true/>
-                        <key>LSApplicationCategoryType</key><string>public.app-category.entertainment</string>
-                    """.trimIndent()
-                }
+                appCategory = "public.app-category.entertainment"
+                minimumSystemVersion = "12.0"
+            }
+            linux {
+                iconFile.set(project.file("packaging/icon.png"))
+                // Debian package names are lower case without spaces.
+                packageName = "puretv-for-twitch"
+                debMaintainer = "dhawal-ss@users.noreply.github.com"
+                appCategory = "video"
+                menuGroup = "AudioVideo;Video;Player;"
+                shortcut = true
             }
         }
 

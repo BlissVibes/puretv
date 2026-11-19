@@ -17,7 +17,9 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.call
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
@@ -27,7 +29,9 @@ import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.net.URLDecoder
+import io.ktor.client.plugins.timeout
+import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
@@ -66,14 +70,81 @@ class LocalStreamProxy(
     lowLatency: () -> Boolean = { false },
 ) {
     companion object {
-        const val PORT = 7979
+        // A playlist refresh normally takes 100 to 300 ms; see fetchVariant.
+        private const val VARIANT_TIMEOUT_MS = 3_000L
+        private const val VARIANT_ATTEMPTS = 2
+
+        /** One attribute of an `#EXT-X-STREAM-INF` line (quotes removed), or "". */
+        internal fun hlsAttr(line: String, name: String): String =
+            Regex("(?:^|[,:])$name=([^,]+)").find(line)?.groupValues?.get(1)?.trim()?.trim('"').orEmpty()
+
+        /**
+         * Whether a master playlist's `#EXT-X-STREAM-INF` line is the rendition for [quality].
+         * By name first (VIDEO="720p60"), then by height: Twitch names its top rendition
+         * "chunked" (Source) even when it is the 1080p60 one, so on most channels a 1080p60
+         * pick matched nothing by name, VLC got every rendition, and it started at 160p and
+         * climbed, rebuilding its video output at each step.
+         */
+        internal fun variantMatches(streamInf: String, quality: StreamQuality): Boolean {
+            val name = hlsAttr(streamInf, "VIDEO")
+            if (name.isNotBlank() && StreamQuality.fromVariantName(name) == quality) return true
+            val height = hlsAttr(streamInf, "RESOLUTION").substringAfter('x', "").toIntOrNull() ?: return false
+            return when (quality) {
+                StreamQuality.P1080P60 -> height == 1080
+                StreamQuality.P720P60 -> height == 720
+                StreamQuality.P480P -> height == 480
+                StreamQuality.P360P -> height == 360
+                else -> false
+            }
+        }
+
+        /**
+         * Which of a master playlist's `#EXT-X-STREAM-INF` lines plays [quality], by index,
+         * or null when there is nothing to choose from.
+         *  - Source: the "chunked" rendition when Twitch names one, otherwise the highest
+         *    bandwidth (many channels name their top rendition "1080p60", and Twitch may
+         *    list 360p first).
+         *  - A height (1080p60 ... 360p): that rendition (see [variantMatches]); when the
+         *    channel has none, the nearest one below it, else the lowest above it.
+         *  - Anything else (Auto, audio only): null, the caller keeps its own handling.
+         */
+        internal fun chooseVariant(streamInfs: List<String>, quality: StreamQuality): Int? {
+            if (streamInfs.isEmpty()) return null
+            fun height(line: String) = hlsAttr(line, "RESOLUTION").substringAfter('x', "").toIntOrNull() ?: 0
+            fun bandwidth(line: String) = hlsAttr(line, "BANDWIDTH").toLongOrNull() ?: 0L
+            val wanted = when (quality) {
+                StreamQuality.SOURCE -> return streamInfs.indexOfFirst { hlsAttr(it, "VIDEO").equals("chunked", ignoreCase = true) }
+                    .takeIf { it >= 0 } ?: streamInfs.indices.maxByOrNull { bandwidth(streamInfs[it]) }
+                StreamQuality.P1080P60 -> 1080
+                StreamQuality.P720P60 -> 720
+                StreamQuality.P480P -> 480
+                StreamQuality.P360P -> 360
+                else -> return null
+            }
+            streamInfs.indexOfFirst { variantMatches(it, quality) }.takeIf { it >= 0 }?.let { return it }
+            val video = streamInfs.indices.filter { height(streamInfs[it]) > 0 }
+            return video.filter { height(streamInfs[it]) <= wanted }.maxByOrNull { height(streamInfs[it]) * 10_000_000L + bandwidth(streamInfs[it]) }
+                ?: video.minByOrNull { height(streamInfs[it]) }
+        }
+
+        // Fixed, so a second launch finds it busy (see SingleInstance). The property is only
+        // for running a test copy beside an installed PureTV.
+        val PORT: Int = System.getProperty("puretv.proxy.port")?.toIntOrNull() ?: 7979
 
         /** @see StreamResolver.PRIMARY_PLAYER_TYPE */
         const val PRIMARY_PLAYER_TYPE = StreamResolver.PRIMARY_PLAYER_TYPE
 
+        /**
+         * The address the proxy listens on. URLs name it as 127.0.0.1, not `localhost`:
+         * `localhost` can resolve to IPv6 ::1 first, where another program may hold the same
+         * port (seen with WSL, whose localhost forwarding listens on [::1]:7979 while a Linux
+         * PureTV runs), and the player would then talk to that program instead.
+         */
+        const val HOST = "127.0.0.1"
+
         /** Builds the URL VLCJ should be pointed at for [channelLogin]/[quality]. */
         fun streamUrl(channelLogin: String, quality: StreamQuality = StreamQuality.AUTO): String =
-            "http://localhost:$PORT/stream?channel=$channelLogin&quality=${quality.name}"
+            "http://$HOST:$PORT/stream?channel=$channelLogin&quality=${quality.name}"
 
         /**
          * The URL for a multi-stream tile: one rendition, the best one at or below
@@ -81,7 +152,7 @@ class LocalStreamProxy(
          * channel, and the proxy serves all of them at once.
          */
         fun tileStreamUrl(channelLogin: String, maxHeight: Int): String =
-            "http://localhost:$PORT/stream?channel=$channelLogin&quality=AUTO&cap=$maxHeight"
+            "http://$HOST:$PORT/stream?channel=$channelLogin&quality=AUTO&cap=$maxHeight"
 
         /**
          * The /variant route fetches an upstream URL on the player's behalf, so
@@ -95,6 +166,18 @@ class LocalStreamProxy(
         fun isAllowedVariantHost(url: String): Boolean {
             val host = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase() ?: return false
             return host == "ttvnw.net" || host.endsWith(".ttvnw.net")
+        }
+
+        /**
+         * True when a request's Host header names this machine's loopback address. A web page
+         * can reach 127.0.0.1 through its own domain (DNS rebinding) and would then be
+         * "same origin" with the proxy, able to read /diag and the playlists and to drive
+         * /simulate; its requests carry that domain as Host, so anything else is refused.
+         * The players always send 127.0.0.1:7979 (see [HOST]).
+         */
+        fun isAllowedHostHeader(host: String?): Boolean {
+            val name = host?.trim()?.lowercase()?.substringBeforeLast(':') ?: return false
+            return name == HOST || name == "localhost"
         }
 
         /**
@@ -131,6 +214,41 @@ class LocalStreamProxy(
     private val variantSequenceNormalizations = AtomicInteger(0)
     private val variantTimelineSegmentsTrimmed = AtomicInteger(0)
     private val variantFailures = AtomicInteger(0)
+    private val variantFallback = VariantFallback()
+
+    private sealed interface VariantFetch {
+        class Playlist(val body: String) : VariantFetch
+        class Failed(val status: HttpStatusCode, val reason: String) : VariantFetch
+    }
+
+    /**
+     * One media playlist refresh from Twitch. A status other than 2xx, or a body that is
+     * not a playlist, is a failure: it has no ad markers, so it used to pass for a clean
+     * playlist and reach VLC with a 200. Each try gets [VARIANT_TIMEOUT_MS] instead of the
+     * client's 15 s, since the buffer ahead of the picture is only a few seconds with low
+     * latency on; a timeout or a 5xx is tried once more (usually on a fresh connection).
+     */
+    private suspend fun fetchVariant(url: String): VariantFetch {
+        var outcome: VariantFetch = VariantFetch.Failed(HttpStatusCode.BadGateway, "not fetched")
+        repeat(VARIANT_ATTEMPTS) {
+            outcome = try {
+                val response = httpClient.get(url) { timeout { requestTimeoutMillis = VARIANT_TIMEOUT_MS } }
+                val body = response.bodyAsText()
+                when {
+                    !response.status.isSuccess() -> VariantFetch.Failed(response.status, "HTTP ${response.status.value}")
+                    !body.trimStart().startsWith("#EXTM3U") -> VariantFetch.Failed(HttpStatusCode.BadGateway, "not a playlist")
+                    else -> return VariantFetch.Playlist(body)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                VariantFetch.Failed(HttpStatusCode.BadGateway, e.message ?: e::class.simpleName.orEmpty())
+            }
+            // A 4xx (an expired or ended session) answers the same on a retry.
+            if ((outcome as VariantFetch.Failed).status.value in 400..499) return outcome
+        }
+        return outcome
+    }
     private val lastSuccess = AtomicReference<FetchSnapshot?>(null)
     private val lastFailure = AtomicReference<FetchSnapshot?>(null)
     private val lastVariant = AtomicReference<FetchSnapshot?>(null)
@@ -179,7 +297,13 @@ class LocalStreamProxy(
 
     suspend fun start() = lifecycleLock.withLock {
         if (engine != null) return@withLock
-        val server = embeddedServer(Netty, port = PORT, host = "127.0.0.1") {
+        val server = embeddedServer(Netty, port = PORT, host = HOST) {
+            intercept(ApplicationCallPipeline.Plugins) {
+                if (!isAllowedHostHeader(call.request.headers[HttpHeaders.Host])) {
+                    call.respondText("Forbidden", status = HttpStatusCode.Forbidden)
+                    finish()
+                }
+            }
             routing {
                 get("/stream") {
                     val channel = call.request.queryParameters["channel"]
@@ -303,8 +427,10 @@ class LocalStreamProxy(
                         call.respondText("Missing 'url' query parameter", status = HttpStatusCode.BadRequest)
                         return@get
                     }
-                    val originalUrl = runCatching { URLDecoder.decode(encoded, StandardCharsets.UTF_8) }.getOrNull()
-                    if (originalUrl.isNullOrBlank() || !originalUrl.startsWith("http")) {
+                    // Ktor already decoded the query parameter. Decoding it again turned any
+                    // '+' or '%xx' inside Twitch's URL into something else.
+                    val originalUrl = encoded
+                    if (!originalUrl.startsWith("http")) {
                         call.respondText("Invalid 'url' query parameter", status = HttpStatusCode.BadRequest)
                         return@get
                     }
@@ -318,9 +444,33 @@ class LocalStreamProxy(
                     val resolution = call.request.queryParameters["res"].orEmpty()
                     val frameRate = call.request.queryParameters["fps"]?.toDoubleOrNull() ?: 0.0
                     variantFetches.incrementAndGet()
-                    runCatching {
-                        httpClient.get(originalUrl).bodyAsText()
-                    }.onSuccess { raw ->
+                    val fetched = fetchVariant(originalUrl)
+                    if (fetched is VariantFetch.Failed) {
+                        variantFailures.incrementAndGet()
+                        val stale = variantFallback.fallback(originalUrl)
+                        lastVariant.set(
+                            FetchSnapshot(
+                                channel = channel.ifBlank { "(variant)" },
+                                strategy = if (stale != null) "LAST_GOOD" else "FAILED",
+                                contentLength = stale?.length ?: 0,
+                                containsStitchedAdMarker = false,
+                                sample = "",
+                                timestampMs = System.currentTimeMillis(),
+                                errorMessage = fetched.reason,
+                            ),
+                        )
+                        if (stale != null) {
+                            call.respondText(text = stale, contentType = ContentType.parse("application/vnd.apple.mpegurl"))
+                        } else {
+                            call.respondText(
+                                text = "# Variant fetch failed: ${fetched.reason}",
+                                contentType = ContentType.parse("application/vnd.apple.mpegurl"),
+                                status = fetched.status,
+                            )
+                        }
+                        return@get
+                    }
+                    (fetched as VariantFetch.Playlist).body.let { raw ->
                         // Backup swap, strip, and the timeline normalization that keeps
                         // VLC's view continuous across player-type sessions (a backup's
                         // MEDIA-SEQUENCE can differ by thousands from the primary's).
@@ -359,16 +509,10 @@ class LocalStreamProxy(
                                 errorMessage = null,
                             ),
                         )
+                        variantFallback.remember(originalUrl, deliveredText)
                         call.respondText(
                             text = deliveredText,
                             contentType = ContentType.parse("application/vnd.apple.mpegurl"),
-                        )
-                    }.onFailure { e ->
-                        variantFailures.incrementAndGet()
-                        call.respondText(
-                            text = "# Variant fetch failed: ${e.message}",
-                            contentType = ContentType.parse("application/vnd.apple.mpegurl"),
-                            status = HttpStatusCode.BadGateway,
                         )
                     }
                 }
@@ -471,40 +615,37 @@ class LocalStreamProxy(
     }
 
     /**
-     * Return a copy of [masterPlaylist] that contains only the single
-     * `#EXT-X-STREAM-INF` + URL pair whose VIDEO= attribute maps to [quality].
-     * All header/tag lines (including `#EXTM3U`, `#EXT-X-TWITCH-INFO`,
-     * `#EXT-X-MEDIA`) are preserved so VLC still parses a valid HLS master.
-     *
-     * Falls back to the unfiltered master if no exact match is found (e.g.
-     * the requested quality isn't available for this broadcaster).
+     * Return a copy of [masterPlaylist] with only the one `#EXT-X-STREAM-INF` + URL pair
+     * [chooseVariant] picks for [quality]. All header/tag lines (including `#EXTM3U`,
+     * `#EXT-X-TWITCH-INFO`, `#EXT-X-MEDIA`) are preserved so VLC still parses a valid
+     * HLS master. Only a master with no variants at all comes back unfiltered: handing
+     * VLC every rendition makes it start at the lowest (160p) and climb.
      */
     private fun filterMasterToQuality(masterPlaylist: String, quality: StreamQuality): String {
         val lines = masterPlaylist.lines()
+        val variants = buildList {
+            lines.forEachIndexed { i, line ->
+                val trimmed = line.trim()
+                val url = lines.getOrNull(i + 1)?.trim().orEmpty()
+                if (trimmed.startsWith("#EXT-X-STREAM-INF") && url.isNotEmpty() && !url.startsWith("#")) add(i to trimmed)
+            }
+        }
+        val chosen = chooseVariant(variants.map { it.second }, quality)?.let { variants[it].first } ?: return masterPlaylist
         val out = StringBuilder(masterPlaylist.length)
-        var foundMatch = false
         var i = 0
         while (i < lines.size) {
             val line = lines[i]
-            val trimmed = line.trim()
-            if (trimmed.startsWith("#EXT-X-STREAM-INF")) {
-                val url = lines.getOrNull(i + 1)?.trim().orEmpty()
-                val nameHint = streamInfAttr(trimmed, "VIDEO")
-                    .ifBlank { streamInfAttr(trimmed, "RESOLUTION") }
-                val variantQuality = StreamQuality.fromVariantName(nameHint)
-                if (variantQuality == quality && url.isNotEmpty() && !url.startsWith("#")) {
-                    out.append(line).append('\n').append(url).append('\n')
-                    foundMatch = true
-                }
-                // Skip past the URL line regardless (it's consumed here)
-                if (url.isNotEmpty() && !url.startsWith("#")) i++
-            } else {
-                // Keep all non-variant lines: headers, EXT-X-MEDIA, blanks, etc.
-                out.append(line).append('\n')
+            if (variants.any { it.first == i }) {
+                // A variant and its URL line: keep only the chosen one.
+                if (i == chosen) out.append(line).append('\n').append(lines[i + 1]).append('\n')
+                i += 2
+                continue
             }
+            // Keep all non-variant lines: headers, EXT-X-MEDIA, blanks, etc.
+            out.append(line).append('\n')
             i++
         }
-        return if (foundMatch) out.toString() else masterPlaylist
+        return out.toString()
     }
 
     /**
@@ -567,8 +708,7 @@ class LocalStreamProxy(
      * safe. Anchored on a `:`/`,` boundary so e.g. FRAME-RATE isn't matched
      * inside another token.
      */
-    private fun streamInfAttr(line: String, name: String): String =
-        Regex("(?:^|[,:])$name=([^,]+)").find(line)?.groupValues?.get(1)?.trim()?.trim('"').orEmpty()
+    private fun streamInfAttr(line: String, name: String): String = hlsAttr(line, name)
 
     private fun renderDiag(success: FetchSnapshot?, failure: FetchSnapshot?): String {
         // Hand-rolled JSON to avoid pulling kotlinx-serialization into this

@@ -4,7 +4,6 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -128,7 +127,7 @@ fun LiveDot(modifier: Modifier = Modifier, size: Dp = 6.dp, color: Color? = null
         rememberInfiniteTransition(label = "liveDot").animateFloat(
             initialValue = 1f,
             targetValue = 0.35f,
-            animationSpec = infiniteRepeatable(tween(1400, easing = PureTvMotion.Standard), RepeatMode.Reverse),
+            animationSpec = infiniteRepeatable(tween(PureTvMotion.LivePulseMs, easing = PureTvMotion.Standard), RepeatMode.Reverse),
             label = "liveDotAlpha",
         )
     } else {
@@ -410,17 +409,15 @@ fun ChatMessageRow(
     // Every row is its own rounded container rather than a flat line in a list. A
     // mention fills with the primary container so being pinged is legible at a
     // glance while scrolling; everything else stays transparent until hovered.
+    // The hover fill is instant on purpose: chat rows are created many times a second,
+    // and an animated colour per row is a state holder and a coroutine per message.
     val rowInteraction = remember { MutableInteractionSource() }
     val rowHovered by rowInteraction.collectIsHoveredAsState()
-    val rowFill by animateColorAsState(
-        targetValue = when {
-            message.mentionsSelf -> c.primaryContainer
-            rowHovered -> c.surfaceHigh
-            else -> Color.Transparent
-        },
-        animationSpec = tween(PureTvMotion.Fast),
-        label = "chatRowFill",
-    )
+    val rowFill = when {
+        message.mentionsSelf -> c.primaryContainer
+        rowHovered -> c.surfaceHigh
+        else -> Color.Transparent
+    }
     val rowModifier = modifier
         .fillMaxWidth()
         .clip(PureTvTheme.shapes.mdShape)

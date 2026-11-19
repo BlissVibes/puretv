@@ -1,10 +1,13 @@
 package com.puretv.twitch.desktop.player
 
+import com.puretv.twitch.core.audio.AudioLevelling
 import com.puretv.twitch.core.perf.TimingLog
 
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.awt.Component
 
 /**
@@ -73,14 +76,45 @@ interface DesktopPlayer {
     fun setUpscaling(mode: UpscalingMode) {}
 
     /**
-     * Turn the audio normalizer (AudioNormalizerProfile) on or off for the LIVE
-     * audio. mpv swaps its audio filter on the running context. Default no-op:
-     * VLC only takes audio filters when its instance is built (see VlcPlayer's
-     * `extraArgs`), so there the setting applies after a restart. The caller
-     * persists the setting either way.
+     * Turn the audio normalizer (AudioNormalizerProfile) on at [level], off (null),
+     * or to another strength, for the LIVE audio. mpv swaps its audio filter on the
+     * running context; VLC, which only takes audio filters when an instance starts,
+     * moves the player to the libVLC instance with that level's arguments (or none)
+     * and starts the stream again (see VlcEngines). Default no-op. The caller
+     * persists the settings either way.
      */
-    fun setAudioNormalizer(enabled: Boolean) {}
+    fun setAudioLevelling(level: AudioLevelling?) {}
+
+    /**
+     * What NVIDIA RTX Video is doing for this player's video (see [RtxVideoChoice]).
+     * Stays at its default, everything off, for players that never use it.
+     */
+    val rtxStatus: StateFlow<RtxVideoStatus> get() = RTX_VIDEO_OFF
+
+    /**
+     * How many times the player has opened a video output, so a stream screen can time
+     * its first picture (a stream's "playing" comes before any frame is drawn). Null for
+     * a player that cannot tell.
+     */
+    val videoOutputs: StateFlow<Int>? get() = null
+
+    /** Whether this player can run NVIDIA RTX Video at all, so the menu offers it. */
+    val supportsRtxVideo: Boolean get() = false
+
+    /** Whether RTX Video HDR is offered too (it then applies on displays with Windows HDR on; see RtxVideoChoice.forVlc). */
+    val supportsRtxHdr: Boolean get() = false
+
+    /**
+     * Reads the RTX Video settings again and applies them to the playing video. VLC
+     * takes them only when an instance starts, so a change moves the video to another
+     * instance and starts it again (a second or two of rebuffering). Default no-op.
+     * Call from the UI thread.
+     */
+    fun applyRtxVideo() {}
 }
+
+/** The [DesktopPlayer.rtxStatus] of a player that never uses RTX Video. */
+val RTX_VIDEO_OFF: StateFlow<RtxVideoStatus> = MutableStateFlow(RtxVideoStatus()).asStateFlow()
 
 /**
  * A point-in-time snapshot of what the video backend is actually rendering —
@@ -119,7 +153,12 @@ data class PlayerStatus(
  * free it.
  */
 class DesktopPlayerProvider(create: () -> DesktopPlayer) {
-    private val lazyPlayer = lazy(create)
+    private val lazyPlayer = lazy {
+        // -Dpuretv.diag.playerDelayMs=<ms>: a slow build on demand, to check that nothing
+        // waits for it on the UI thread (with -Dpuretv.diag.stalls=true).
+        Integer.getInteger("puretv.diag.playerDelayMs")?.let { Thread.sleep(it.toLong()) }
+        create()
+    }
 
     val player: DesktopPlayer get() = lazyPlayer.value
 
@@ -135,6 +174,14 @@ class DesktopPlayerProvider(create: () -> DesktopPlayer) {
         )
     }
 
+    /** Whether the player exists, so reading [player] costs nothing. */
+    val isBuilt: Boolean get() = lazyPlayer.isInitialized()
+
+    /** Builds the player if needed, or waits for the build already running. Call off the UI thread. */
+    fun awaitBuilt() {
+        lazyPlayer.value
+    }
+
     fun releaseIfCreated() {
         if (lazyPlayer.isInitialized()) lazyPlayer.value.release()
     }
@@ -147,6 +194,13 @@ class DesktopPlayerProvider(create: () -> DesktopPlayer) {
     fun runningBackend(saved: PlaybackBackend): PlaybackBackend =
         if (!lazyPlayer.isInitialized()) saved
         else if (lazyPlayer.value is MpvPlayer) PlaybackBackend.MPV else PlaybackBackend.VLC
+
+    /** The player's RTX Video status, or all off while there is no player yet (settings never build one). */
+    fun rtxStatusIfCreated(): StateFlow<RtxVideoStatus> =
+        if (lazyPlayer.isInitialized()) lazyPlayer.value.rtxStatus else RTX_VIDEO_OFF
+
+    /** Whether the running player offers RTX Video HDR; false until there is a player. */
+    fun offersRtxHdr(): Boolean = lazyPlayer.isInitialized() && lazyPlayer.value.supportsRtxHdr
 
     /** Runs [block] on the player only if it already exists, so settings never build one. */
     fun ifCreated(block: (DesktopPlayer) -> Unit) {

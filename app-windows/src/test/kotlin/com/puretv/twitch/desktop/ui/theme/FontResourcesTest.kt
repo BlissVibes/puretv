@@ -15,18 +15,23 @@ import kotlin.test.assertTrue
 class FontResourcesTest {
 
     private val bundledFonts = listOf(
-        "fonts/BricolageGrotesque-SemiBold.ttf",
-        "fonts/BricolageGrotesque-Bold.ttf",
-        "fonts/BricolageGrotesque-ExtraBold.ttf",
-        "fonts/Archivo-Light.ttf",
-        "fonts/Archivo-Regular.ttf",
-        "fonts/Archivo-Medium.ttf",
-        "fonts/Archivo-SemiBold.ttf",
-        "fonts/Archivo-Bold.ttf",
-        "fonts/IBMPlexMono-Regular.ttf",
-        "fonts/IBMPlexMono-Medium.ttf",
-        "fonts/IBMPlexMono-SemiBold.ttf",
+        "fonts/PureTvSansDisplay-Medium.ttf",
+        "fonts/PureTvSansDisplay-SemiBold.ttf",
+        "fonts/PureTvSansDisplay-Bold.ttf",
+        "fonts/PureTvSansDisplay-ExtraBold.ttf",
+        "fonts/PureTvSans-Light.ttf",
+        "fonts/PureTvSans-Regular.ttf",
+        "fonts/PureTvSans-Medium.ttf",
+        "fonts/PureTvSans-SemiBold.ttf",
+        "fonts/PureTvSans-Bold.ttf",
     )
+
+    @Test
+    fun theOpenFontLicenceShipsWithTheFonts() {
+        val text = javaClass.classLoader.getResourceAsStream("fonts/OFL-PureTvSans.txt")?.use { it.readBytes().decodeToString() }
+        assertNotNull(text, "The OFL must ship with the fonts it covers")
+        assertTrue(text.contains("SIL Open Font License"))
+    }
 
     @Test
     fun allBundledFontsResolveOnClasspathAsValidTrueType() {

@@ -2,7 +2,7 @@
 
 <h1>PureTV</h1>
 
-**Live streams without the ads. On your PC, your phone, and your TV.**
+**Live streams without the ads. On Windows, Mac, Linux, your phone, and your TV.**
 
 Ads get filtered out on your own device before the player ever sees them.
 No relay server, no account with us, no logging of what you watch.
@@ -10,6 +10,8 @@ No relay server, no account with us, no logging of what you watch.
 <br>
 
 [![Windows](https://img.shields.io/badge/Windows-Download-0078D4?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/latest)
+[![macOS](https://img.shields.io/badge/macOS-Download-000000?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/latest)
+[![Linux](https://img.shields.io/badge/Linux-Download-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dhawal-ss/puretv/releases/latest)
 [![Android](https://img.shields.io/badge/Android-Download-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/download/android-latest/PureTV-for-Twitch-Android.apk)
 [![Android TV](https://img.shields.io/badge/Android_TV_&_Fire_TV-Download-6441A5?style=for-the-badge&logo=androidtv&logoColor=white)](https://github.com/dhawal-ss/puretv/releases/download/tv-latest/PureTV-FireTV-AndroidTV.apk)
 
@@ -28,8 +30,9 @@ No relay server, no account with us, no logging of what you watch.
 | **No ads** | Mid-rolls are stripped from the stream on your device. A small pill on the player tells you it is working. |
 | **Five themes** | Violet Dusk, Ember, Teal Deep, Pure Black and Midnight Forest. Each one re-tones the whole app, not just an accent. |
 | **Your follows, front and centre** | Live channels first, offline below, on every platform. |
-| **Chat beside the stream** | With emotes, on all three apps. |
-| **Updates itself** | It checks on launch and installs in one tap. No re-downloading. |
+| **Chat beside the stream** | With emotes, on desktop, phone and TV. |
+| **NVIDIA RTX Video on Windows** | With an RTX card, Super Resolution sharpens streams shown bigger than they were sent, and RTX HDR turns them into HDR on a display with Windows HDR on. Both are switches in Settings and the player menu. |
+| **Keeps you up to date** | It checks for new versions on launch. On Windows, phone and TV it installs in one tap; on Mac and Linux it takes you to the download. |
 | **Nothing phones home** | Sign-in goes straight to Twitch. Your session stays encrypted on your device. |
 
 <br>
@@ -72,6 +75,34 @@ No relay server, no account with us, no logging of what you watch.
 3. Open PureTV and sign in.
 
 Everything it needs, including the video engine, is in the installer.
+
+</details>
+
+<details>
+<summary><b>macOS (Apple Silicon)</b></summary>
+
+<br>
+
+1. [Download the `.dmg`](https://github.com/dhawal-ss/puretv/releases/latest) (`PureTV-for-Twitch-<version>-macos-arm64.dmg`), open it and drag **PureTV for Twitch** into **Applications**.
+2. The app is not notarized by Apple yet, so the first time you open it macOS refuses. Go to **System Settings, Privacy & Security**, scroll down and click **Open Anyway**.
+3. Open PureTV and sign in.
+
+VLC is inside the app. Intel Macs are not supported yet. New versions are announced in the app; installing one is the same drag into Applications.
+
+</details>
+
+<details>
+<summary><b>Linux (Ubuntu, Debian, Mint, Pop!_OS)</b></summary>
+
+<br>
+
+Needs Ubuntu 22.04, Debian 12 or newer, on a 64-bit PC.
+
+1. [Download the `.deb`](https://github.com/dhawal-ss/puretv/releases/latest) (`puretv-for-twitch_<version>_amd64.deb`).
+2. Install it with `sudo apt install ./puretv-for-twitch_*_amd64.deb`. That also installs VLC, which PureTV plays through.
+3. Open **PureTV for Twitch** from your applications menu and sign in.
+
+Go-live alerts need a system tray. GNOME has none unless you add the AppIndicator extension; KDE, Cinnamon and Xfce have one. New versions are announced in the app.
 
 </details>
 
@@ -121,7 +152,7 @@ A separate build with a 10-foot layout you drive entirely with the remote. It in
 
 ## Build it yourself
 
-Kotlin Multiplatform. A shared `core` module holds the API client, sign-in, ad-block engine and chat; each app builds its own UI on top. Windows uses Compose Multiplatform with VLC, Android and TV use Jetpack Compose with ExoPlayer.
+Kotlin Multiplatform. A shared `core` module holds the API client, sign-in, ad-block engine and chat; each app builds its own UI on top. The desktop app (Windows, macOS, Linux; the module is still called `app-windows`) uses Compose Multiplatform with VLC, Android and TV use Jetpack Compose with ExoPlayer.
 
 ```bash
 ./gradlew :app-windows:run          # desktop, needs JDK 17 and VLC

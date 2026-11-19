@@ -1,5 +1,14 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.core.audio.AudioLevelling
+import androidx.compose.runtime.produceState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import com.puretv.twitch.desktop.platform.RtxGpu
+import com.puretv.twitch.desktop.player.RtxHdrState
+import com.puretv.twitch.desktop.player.RtxVideoStatus
+import com.puretv.twitch.desktop.player.SuperResolutionState
+import com.puretv.twitch.desktop.ui.components.RtxVideoText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -33,16 +42,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
-import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.notify.GoLiveAlerts
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.desktop.data.DesktopSettingsStore
 import com.puretv.twitch.desktop.platform.Diagnostics
-import com.puretv.twitch.desktop.platform.WindowsStartup
+import com.puretv.twitch.desktop.platform.LoginStartup
+import com.puretv.twitch.desktop.platform.WindowChrome
 import com.puretv.twitch.desktop.platform.openInBrowser
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
 import androidx.compose.ui.window.isTraySupported
@@ -112,11 +122,25 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onLowLatencyChange = viewModel::setLowLatency,
             audioNormalizer = state.settings.audioNormalizer,
             onAudioNormalizerChange = viewModel::setAudioNormalizer,
-            // The engine running now, not the saved one: an engine switch itself waits for a restart.
-            normalizerNeedsRestart = koin.get<DesktopPlayerProvider>()
-                .runningBackend(state.settings.playbackBackend) == PlaybackBackend.VLC,
+            audioLevelling = state.settings.audioLevelling,
+            onAudioLevellingSelect = viewModel::setAudioLevelling,
         )
         Spacer(Modifier.height(16.dp))
+
+        // Only on a PC with an NVIDIA RTX card. Read off the UI thread: the first read runs `reg query`.
+        val rtxGpuName by produceState<String?>(null) { value = withContext(Dispatchers.IO) { RtxGpu.name } }
+        rtxGpuName?.let { gpu ->
+            val rtxStatus by remember { koin.get<DesktopPlayerProvider>().rtxStatusIfCreated() }.collectAsState()
+            RtxVideoPanel(
+                gpuName = gpu,
+                status = rtxStatus,
+                superResolution = state.settings.rtxSuperResolution,
+                onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                hdr = state.settings.rtxHdr.takeIf { koin.get<DesktopPlayerProvider>().offersRtxHdr() },
+                onHdrChange = viewModel::setRtxHdr,
+            )
+            Spacer(Modifier.height(16.dp))
+        }
 
         ChatPanel(
             textSize = ChatTextSize.from(state.settings.chatFontSize),
@@ -135,9 +159,11 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
         NotificationsPanel(
             liveAlerts = state.settings.liveNotifications,
             onLiveAlerts = { on -> settingsStore.updateSettings { it.copy(liveNotifications = on) } },
+            minimizeToTray = state.settings.minimizeToTray,
+            onMinimizeToTray = { on -> settingsStore.updateSettings { it.copy(minimizeToTray = on) } },
             startWithWindows = state.settings.startWithWindows,
             onStartWithWindows = { on ->
-                if (WindowsStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
+                if (LoginStartup.setEnabled(on)) settingsStore.updateSettings { it.copy(startWithWindows = on) }
             },
             showNote = GoLiveAlerts.showPerChannelNote(state.settings),
             onDismissNote = { settingsStore.updateSettings { it.copy(perChannelNoteDismissed = true) } },
@@ -177,6 +203,7 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onCheckForUpdates = { updateManager.checkForUpdates(force = true) },
             onDownloadAndInstall = { info -> updateManager.downloadAndInstall(info, onExit) },
             onOpenDownloadPage = { url -> openInBrowser(url) },
+            canSelfInstall = updateManager.canSelfInstall,
         )
     }
 }
@@ -288,7 +315,7 @@ private fun ShapeAndMotionPanel(currentIntensity: ShapeIntensity, onSelect: (Sha
             Spacer(Modifier.height(20.dp))
             SettingsRow(
                 label = "Expressiveness",
-                description = "How far corners round, morph on press, and how springy the motion feels.",
+                description = "How far corners round, and how much they morph when you press them.",
             ) {
                 SegmentedToggle(
                     options = ShapeIntensity.entries,
@@ -313,7 +340,8 @@ private fun PlaybackPanel(
     onLowLatencyChange: (Boolean) -> Unit,
     audioNormalizer: Boolean,
     onAudioNormalizerChange: (Boolean) -> Unit,
-    normalizerNeedsRestart: Boolean,
+    audioLevelling: AudioLevelling,
+    onAudioLevellingSelect: (AudioLevelling) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -343,10 +371,33 @@ private fun PlaybackPanel(
             SettingsRow(
                 label = "Even out loud and quiet audio",
                 description = "Turns down sudden loud moments and lifts quiet voices a little, so you can " +
-                    "leave the volume alone. Music can sound flatter with it on." +
-                    if (normalizerNeedsRestart) " Applies after restart." else "",
+                    "leave the volume alone. Music can sound flatter with it on. Switches right away, " +
+                    "and you can also flip it from the player controls or with the A key while watching.",
             ) {
                 ExpressiveSwitch(checked = audioNormalizer, onCheckedChange = onAudioNormalizerChange)
+            }
+            // How strong it is: every level with its one line, the chosen one brighter, so
+            // the difference is clear before trying them. Offered while it is off too (a
+            // strength picked then is kept for when it is turned on), dimmed to say so.
+            Spacer(Modifier.height(16.dp))
+            Column(
+                modifier = Modifier.alpha(if (audioNormalizer) 1f else 0.6f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                SegmentedToggle(
+                    options = AudioLevelling.entries,
+                    selected = audioLevelling,
+                    label = { it.label },
+                    onSelect = onAudioLevellingSelect,
+                )
+                Spacer(Modifier.height(8.dp))
+                AudioLevelling.entries.forEach { level ->
+                    Text(
+                        "${level.label}: ${level.description}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (audioNormalizer && level == audioLevelling) c.onSurface else c.onSurfaceVariant,
+                    )
+                }
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(
@@ -357,6 +408,54 @@ private fun PlaybackPanel(
             }
             // Playback backend + GPU upscaling live in the in-player gear menu
             // (per-stream, applied live) rather than here. See PlayerSettingsMenu.
+        }
+    }
+}
+
+// ── NVIDIA RTX Video ─────────────────────────────────────────────────────────────
+
+@Composable
+private fun RtxVideoPanel(
+    gpuName: String,
+    status: RtxVideoStatus,
+    superResolution: Boolean,
+    onSuperResolutionChange: (Boolean) -> Unit,
+    // Null hides the HDR switch: the running player can't do RTX Video HDR (VLC can't).
+    hdr: Boolean?,
+    onHdrChange: (Boolean) -> Unit,
+) {
+    val c = PureTvTheme.colors
+    // Say what it is doing only once a stream has told us; before that the descriptions do the work.
+    fun now(line: String, waiting: Boolean) = if (waiting) "" else " Now: $line"
+    ExpressivePanel {
+        Column {
+            Text("NVIDIA RTX Video", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Uses your $gpuName to make streams look better in the main player. Multi-stream tiles " +
+                    "and extra windows stay as they are. You can also switch these from the player menu.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = c.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(20.dp))
+            SettingsRow(
+                label = "Super Resolution",
+                description = "Sharpens streams shown bigger than they were sent, like 1080p on a 1440p or 4K " +
+                    "screen, or 720p in a big window. Uses more GPU power while it works. " +
+                    RtxVideoText.DRIVER_HINT +
+                    now(RtxVideoText.superResolution(status), status.superResolution in setOf(SuperResolutionState.OFF, SuperResolutionState.WAITING)),
+            ) {
+                ExpressiveSwitch(checked = superResolution, onCheckedChange = onSuperResolutionChange)
+            }
+            if (hdr != null) ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            if (hdr != null) SettingsRow(
+                label = "HDR",
+                description = "Turns normal streams into HDR. It only does something when HDR is on for your " +
+                    "display in Windows." +
+                    now(RtxVideoText.hdr(status), status.hdr in setOf(RtxHdrState.OFF, RtxHdrState.WAITING)),
+            ) {
+                ExpressiveSwitch(checked = hdr, onCheckedChange = onHdrChange)
+            }
         }
     }
 }
@@ -419,14 +518,16 @@ private fun ChatPanel(
 
 /**
  * Go-live alerts and the tray. Alerts arrive as Windows notifications from the tray
- * icon while PureTV is running; minimizing PureTV keeps it in the tray, which is what
- * lets them keep coming (closing the window quits). Without a system tray (rare on Windows) neither works, so
+ * icon while PureTV is running (closing the window quits). Minimizing goes to the taskbar
+ * unless "Minimize to tray" is on. Without a system tray (rare on Windows) neither works, so
  * the panel says so instead of offering switches that would do nothing.
  */
 @Composable
 private fun NotificationsPanel(
     liveAlerts: Boolean,
     onLiveAlerts: (Boolean) -> Unit,
+    minimizeToTray: Boolean,
+    onMinimizeToTray: (Boolean) -> Unit,
     startWithWindows: Boolean,
     onStartWithWindows: (Boolean) -> Unit,
     showNote: Boolean,
@@ -437,7 +538,7 @@ private fun NotificationsPanel(
 ) {
     val c = PureTvTheme.colors
     val trayAvailable = remember { isTraySupported }
-    val startupAvailable = remember { WindowsStartup.isAvailable }
+    val startupAvailable = remember { LoginStartup.isAvailable }
     ExpressivePanel {
         Column {
             Text("Notifications", style = MaterialTheme.typography.titleLarge, color = c.onSurface)
@@ -455,7 +556,7 @@ private fun NotificationsPanel(
             }
             if (!trayAvailable) {
                 Text(
-                    "Go-live alerts need the Windows system tray, which is not available here.",
+                    "Go-live alerts need a system tray, which this desktop does not offer.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = c.onSurfaceVariant,
                 )
@@ -463,15 +564,24 @@ private fun NotificationsPanel(
             }
             SettingsRow(
                 label = "Go-live alerts",
-                description = "Tell me when the channels I picked go live. Open a channel and tap the bell to pick it. Alerts appear from the tray icon, and minimizing PureTV keeps it in the tray. Checks about every 90 seconds while PureTV is running.",
+                description = "Tell me when the channels I picked go live. Open a channel and tap the bell to pick it. Alerts appear from the tray icon while PureTV is open or minimized. Checks about every 90 seconds while PureTV is running.",
             ) {
                 ExpressiveSwitch(checked = liveAlerts, onCheckedChange = onLiveAlerts)
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            if (WindowChrome.minimizeToTray()) {
+                SettingsRow(
+                    label = "Minimize to tray",
+                    description = "Minimizing hides PureTV in the tray instead of the taskbar. The stream stops while hidden and picks up again when you open PureTV. Off: minimizing keeps the stream playing.",
+                ) {
+                    ExpressiveSwitch(checked = minimizeToTray, onCheckedChange = onMinimizeToTray)
+                }
+                ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            }
             SettingsRow(
-                label = "Start with Windows",
+                label = LoginStartup.label(),
                 description = if (startupAvailable) {
-                    "Open PureTV in the tray when you sign in to Windows."
+                    "Open PureTV in the tray when you sign in."
                 } else {
                     "Available in the installed app."
                 },
@@ -588,6 +698,7 @@ private fun AboutPanel(
     onCheckForUpdates: () -> Unit,
     onDownloadAndInstall: (UpdateInfo) -> Unit,
     onOpenDownloadPage: (String) -> Unit,
+    canSelfInstall: Boolean,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -644,7 +755,7 @@ private fun AboutPanel(
                     )
                     Spacer(Modifier.height(12.dp))
                     ExpressiveButton(
-                        text = "Download and install ${updateState.info.version}",
+                        text = if (canSelfInstall) "Download and install ${updateState.info.version}" else "Open download page for ${updateState.info.version}",
                         onClick = { onDownloadAndInstall(updateState.info) },
                     )
                 }

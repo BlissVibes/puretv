@@ -54,6 +54,8 @@ fun UpdateBanner(
     onUpdate: () -> Unit,
     onOpenReleasePage: (String) -> Unit,
     onDismiss: () -> Unit,
+    // "Update" installs in place (Windows); "Download" opens the release page (macOS, Linux).
+    updateLabel: String = "Update",
 ) {
     // The last real state stays on screen while the banner leaves, instead of an empty strip.
     var shown by remember { mutableStateOf(state) }
@@ -73,7 +75,7 @@ fun UpdateBanner(
                     SizeTransform { _, _ -> snap() }
             },
             label = "updateBanner",
-        ) { s -> UpdateBannerBody(s, onUpdate, onOpenReleasePage, onDismiss) }
+        ) { s -> UpdateBannerBody(s, onUpdate, onOpenReleasePage, onDismiss, updateLabel) }
     }
 }
 
@@ -83,6 +85,7 @@ private fun UpdateBannerBody(
     onUpdate: () -> Unit,
     onOpenReleasePage: (String) -> Unit,
     onDismiss: () -> Unit,
+    updateLabel: String,
 ) {
     val c = PureTvTheme.colors
     when (state) {
@@ -105,7 +108,7 @@ private fun UpdateBannerBody(
                 )
             }
             ExpressiveButton(
-                text = "Update",
+                text = updateLabel,
                 onClick = onUpdate,
                 style = ExpressiveButtonStyle.Filled,
                 size = ExpressiveButtonSize.Small,

@@ -1,12 +1,12 @@
 package com.puretv.twitch.desktop.ui
 
+import androidx.compose.runtime.snapshotFlow
+import com.puretv.twitch.desktop.platform.ShortcutKey
+import com.puretv.twitch.desktop.platform.WindowChrome
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
@@ -71,6 +71,8 @@ import com.puretv.twitch.desktop.ui.components.LocalStreamPrewarm
 import com.puretv.twitch.desktop.ui.emotes.EmoteFrameCache
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteAnimation
 import com.puretv.twitch.desktop.ui.emotes.LocalEmoteFrameCache
+import com.puretv.twitch.desktop.ui.emotes.LocalEmoteClock
+import com.puretv.twitch.desktop.ui.emotes.rememberEmoteClock
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.platform.openInBrowser
 import com.puretv.twitch.desktop.platform.SystemAnimations
@@ -111,7 +113,6 @@ import com.puretv.twitch.desktop.ui.theme.ThemeVariant
 import com.puretv.twitch.desktop.player.WindowPlayback
 import java.awt.Frame
 import java.awt.KeyEventDispatcher
-import androidx.compose.ui.input.pointer.isCtrlPressed
 import java.awt.KeyboardFocusManager
 import java.awt.MouseInfo
 import java.awt.event.KeyEvent
@@ -152,8 +153,8 @@ private val RAIL_COLLAPSED = 88.dp
  * The window's content.
  *
  * [onClose] is the window's own close (the title bar X): it quits PureTV from the main
- * window and closes just this window from any other. Minimizing the main window is what
- * sends PureTV to the tray (see main.kt). [onQuit] always exits for real; the updater
+ * window and closes just this window from any other. Minimizing the main window sends
+ * PureTV to the tray only when "Minimize to tray" is on (see main.kt). [onQuit] always exits for real; the updater
  * uses it, because an update that only hid the window would leave PureTV running while
  * the installer replaces its files.
  */
@@ -192,7 +193,9 @@ fun App(
             // by default). One instance app-wide (see DesktopModule), shared with the
             // animated-emote decoder.
             .diskCache { koin.get<DiskCache>() }
-            .crossfade(PureTvMotion.Medium)
+            // Short: a thumbnail landing is not an event, and on a grid that staggers in
+            // a longer one would still be fading pictures after the cards have landed.
+            .crossfade(PureTvMotion.Fast)
             .build()
     }
 
@@ -201,6 +204,7 @@ fun App(
     val themeVariant = ThemeVariant.fromKey(settings.theme)
     val shapeIntensity = ShapeIntensity.fromKey(settings.shapeIntensity)
     val shell = rememberAppShellController(windowState, awtWindow)
+    LaunchedEffect(shell) { snapshotFlow { windowState.placement }.collect { shell.onPlacementChanged(it) } }
 
     val updateManager = remember { koin.get<UpdateManager>() }
     val updateState by updateManager.state.collectAsState()
@@ -229,6 +233,8 @@ fun App(
     }
     PureTvDesktopTheme(variant = themeVariant, shapeIntensity = shapeIntensity) {
         val emoteFrameCache = remember { koin.get<EmoteFrameCache>() }
+        // One clock for every animated emote in this window (see EmoteClock).
+        val emoteClock = rememberEmoteClock()
         val streamPrewarm = remember {
             val cache = koin.get<PlayableStreamCache>()
             val prewarm: (String) -> Unit = { login -> cache.prewarm(login) }
@@ -240,6 +246,7 @@ fun App(
             LocalWindowPlayback provides playback,
             LocalEmoteAnimation provides settings.animateEmotes,
             LocalEmoteFrameCache provides emoteFrameCache,
+            LocalEmoteClock provides emoteClock,
             LocalStreamPrewarm provides streamPrewarm,
             // Decoration that loops (the LIVE pulse) stops while a video is playing.
             LocalQuietMotion provides (route is Route.Stream || route is Route.Multi || route is Route.Vod),
@@ -257,9 +264,9 @@ fun App(
             val showTab: (Destination) -> Unit = { destination = it }
             // The OS title names the screen, so Alt+Tab tells the windows apart.
             LaunchedEffect(route, destination) { registry.setTitle(windowId, windowTitle(slot, screenName(route, destination))) }
-            // Ctrl held while a card is clicked opens it in a new window instead of here.
+            // Ctrl (Cmd on macOS) held while a card is clicked opens it in a new window instead of here.
             val windowInfo = LocalWindowInfo.current
-            fun ctrlHeld() = windowInfo.keyboardModifiers.isCtrlPressed
+            fun ctrlHeld() = ShortcutKey.isHeld(windowInfo.keyboardModifiers)
             fun openChannel(login: String) {
                 if (ctrlHeld()) openInNewWindow(WindowDestination.Channel(login)) else route = Route.Channel(login)
             }
@@ -301,7 +308,7 @@ fun App(
             // Ctrl+N opens another window. Only the window that has the keyboard answers.
             DisposableEffect(awtWindow) {
                 val dispatcher = KeyEventDispatcher { e ->
-                    if (e.id != KeyEvent.KEY_PRESSED || e.keyCode != KeyEvent.VK_N || !e.isControlDown || e.isAltDown || e.isShiftDown) {
+                    if (e.id != KeyEvent.KEY_PRESSED || e.keyCode != KeyEvent.VK_N || !ShortcutKey.isDown(e) || e.isAltDown || e.isShiftDown) {
                         return@KeyEventDispatcher false
                     }
                     if (!AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false
@@ -363,12 +370,26 @@ fun App(
             LaunchedEffect(route) { if (route !is Route.Stream) shell.exitMini() }
             LaunchedEffect(frontRequests) { if (frontRequests > 0) shell.exitMini() }
             // Hidden in the tray, nothing should keep playing or keep chat sockets open:
-            // leaving the stream (or VOD) route disposes its player and chat.
+            // leaving the stream (or VOD) route disposes its player and chat. The stream or
+            // VOD is remembered and opens again when the window comes back, so hiding to the
+            // tray never drops someone on Home (issue #40).
+            var resumeRoute by remember { mutableStateOf<Route?>(null) }
             LaunchedEffect(windowVisible) {
+                if (windowVisible) {
+                    // Only while still on the Home the hide left: a go-live toast or a
+                    // `--channel` launch that brought the window back has already opened
+                    // its own stream, and that one wins.
+                    if (route == Route.Top) resumeRoute?.let { route = it }
+                    resumeRoute = null
+                    return@LaunchedEffect
+                }
                 // Streams in their own windows stop too: the session ends and its windows close.
-                if (!windowVisible && isPrimary) multiSession.end()
-                if (!windowVisible && (route is Route.Stream || route is Route.Multi || route is Route.Vod)) {
+                if (isPrimary) multiSession.end()
+                val playing = route
+                if (playing is Route.Stream || playing is Route.Multi || playing is Route.Vod) {
                     shell.exitImmersive()
+                    // Multi-stream ended with its session, so the window comes back on the stream it started from.
+                    resumeRoute = if (playing is Route.Multi) Route.Stream(playing.login) else playing
                     route = Route.Top
                 }
             }
@@ -398,25 +419,19 @@ fun App(
                             },
                             onOpenReleasePage = { url -> openInBrowser(url) },
                             onDismiss = { updateDismissed = true },
+                            updateLabel = if (updateManager.canSelfInstall) "Update" else "Download",
                         )
                     }
 
                     // Immersive playback drops the gutter so the video fills the window
                     // edge to edge; the pane's rounding goes with it, since a rounded
                     // corner over a black video surface would just show the ground.
-                    // Not the morph spring: this one is structural, and an overshooting
-                    // spring would drive the value negative on the way to 0, which
-                    // Modifier.padding and Arrangement.spacedBy both reject at layout time.
-                    val gutter by animateDpAsState(
-                        targetValue = if (shell.isImmersive) 0.dp else 8.dp,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
-                        label = "shellGutter",
-                    )
-                    val paneCorner by animateDpAsState(
-                        targetValue = if (shell.isImmersive) 0.dp else shapes.pane,
-                        animationSpec = PureTvMotion.move(PureTvMotion.Medium),
-                        label = "paneCorner",
-                    )
+                    // Not animated: only a player screen goes immersive, and easing the
+                    // gutter would resize the native video surface on every frame. The
+                    // rail leaves in the same frame (it has no exit), so the shell
+                    // switches in one step and the video resizes once.
+                    val gutter = if (shell.isImmersive) 0.dp else 8.dp
+                    val paneCorner = if (shell.isImmersive) 0.dp else shapes.pane
 
                     Row(
                         modifier = Modifier
@@ -427,14 +442,15 @@ fun App(
                     ) {
                         AnimatedVisibility(
                             visible = !shell.isImmersive,
-                            enter = if (PureTvMotion.reduced) fadeIn(tween(PureTvMotion.Fast)) else
-                                slideInHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Decelerate)) { -it },
-                            exit = if (PureTvMotion.reduced) fadeOut(tween(PureTvMotion.Fast)) else
-                                slideOutHorizontally(tween(PureTvMotion.Medium, easing = PureTvMotion.Accelerate)) { -it },
+                            enter = PureTvMotion.railEnter(),
+                            exit = ExitTransition.None,
                         ) {
                             NavigationRail(
                                 koin = koin,
                                 expanded = railExpanded,
+                                // Beside a playing video the width change is one step, not a sweep
+                                // that resizes the native surface on every frame.
+                                animateWidth = route !is Route.Stream && route !is Route.Multi && route !is Route.Vod,
                                 onToggleExpanded = { railExpanded = !railExpanded },
                                 selected = destination,
                                 onSelect = {
@@ -556,6 +572,10 @@ fun App(
                                             openChannel(login)
                                         },
                                         initialQuery = searchSeed,
+                                        onOpenCategory = { gameId, gameName, query ->
+                                            searchSeed = query
+                                            openCategory(gameId, gameName)
+                                        },
                                     )
                                     Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
@@ -609,8 +629,10 @@ private fun CustomTitleBar(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .padding(start = 16.dp)
+                .padding(start = 16.dp + WindowChrome.leadingInset())
                 .pointerInput(awtWindow) {
+                    // Linux: the window manager's title bar moves and maximizes the window.
+                    if (!WindowChrome.headerMovesWindow()) return@pointerInput
                     var lastDownTime = 0L
                     var manualDrag = false
                     // armed: pressed on the caption and eligible to start a drag (not a
@@ -712,10 +734,13 @@ private fun CustomTitleBar(
 
         // Window control buttons, outside the drag zone so clicks are not swallowed
         WinButton(onClick = onNewWindow) { NewWindowIcon() }
-        WinButton(onClick = { shell.minimize() }) { MinimizeIcon() }
-        WinButton(onClick = { shell.toggleMaximize() }) { MaximizeIcon(shell.isMaximized) }
-        WinButton(onClick = onClose, isClose = true) {
-            Icon(ExpressiveIcons.Close, "Close", tint = PureTvTheme.colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+        // macOS and Linux keep the system's own window buttons (see WindowChrome).
+        if (WindowChrome.customFrame()) {
+            WinButton(onClick = { shell.minimize() }) { MinimizeIcon() }
+            WinButton(onClick = { shell.toggleMaximize() }) { MaximizeIcon(shell.isMaximized) }
+            WinButton(onClick = onClose, isClose = true) {
+                Icon(ExpressiveIcons.Close, "Close", tint = PureTvTheme.colors.onSurfaceVariant, modifier = Modifier.size(18.dp))
+            }
         }
         Spacer(Modifier.width(8.dp))
     }
@@ -851,13 +876,14 @@ private fun MaximizeIcon(isMaximized: Boolean) {
  *
  * Collapsing is a deliberate affordance rather than a breakpoint. On a stream
  * page the rail is dead weight, and 148dp of width matters at 1280px; the user
- * decides, and the width animates on the same spring as every corner in the app
- * so the whole shell moves as one thing.
+ * decides, and the width eases on the shared move curve so the whole shell moves
+ * as one thing. Beside a playing video ([animateWidth] false) it changes in one step.
  */
 @Composable
 private fun NavigationRail(
     koin: Koin,
     expanded: Boolean,
+    animateWidth: Boolean,
     onToggleExpanded: () -> Unit,
     selected: Destination,
     onSelect: (Destination) -> Unit,
@@ -875,7 +901,7 @@ private fun NavigationRail(
     val width by animateDpAsState(
         targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
         // Structural: it feeds layout, so no overshoot (see PureTvMotion.MorphSpring).
-        animationSpec = PureTvMotion.move(),
+        animationSpec = if (animateWidth) PureTvMotion.move() else snap(),
         label = "railWidth",
     )
 

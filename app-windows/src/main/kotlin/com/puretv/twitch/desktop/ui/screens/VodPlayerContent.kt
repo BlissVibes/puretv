@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.platform.AppRestart
+import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -72,6 +74,7 @@ import com.puretv.twitch.desktop.ui.VodLaunch
 import com.puretv.twitch.desktop.ui.VodPlayerViewModel
 import com.puretv.twitch.desktop.ui.chat.nextFollowing
 import com.puretv.twitch.desktop.ui.chat.scrollAnchor
+import com.puretv.twitch.desktop.ui.components.PlayerGate
 import com.puretv.twitch.desktop.ui.components.ChatMessageRow
 import com.puretv.twitch.desktop.ui.components.ExpressiveButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveButtonSize
@@ -80,6 +83,7 @@ import com.puretv.twitch.desktop.ui.components.ExpressiveIconButton
 import com.puretv.twitch.desktop.ui.components.ExpressiveIcons
 import com.puretv.twitch.desktop.ui.components.ExpressiveSlider
 import com.puretv.twitch.desktop.ui.components.PlayerSettingsMenu
+import com.puretv.twitch.desktop.ui.components.RtxMenuState
 import com.puretv.twitch.desktop.ui.components.SeekPreview
 import com.puretv.twitch.desktop.ui.components.expressiveClickable
 import com.puretv.twitch.desktop.ui.rememberDesktopViewModel
@@ -120,6 +124,12 @@ private const val SeekStepLargeMs = 30_000L
 @Composable
 fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val windowPlayback = LocalWindowPlayback.current ?: remember { koin.get<WindowPlayback>() }
+    // Never wait for the player on the UI thread (see PlayerGate).
+    PlayerGate(windowPlayback, onBack) { VodPlayerScreen(koin, launch, windowPlayback, onBack) }
+}
+
+@Composable
+private fun VodPlayerScreen(koin: Koin, launch: VodLaunch, windowPlayback: WindowPlayback, onBack: () -> Unit) {
     val viewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodPlayerViewModel> { parametersOf(launch, windowPlayback) } }
     val state by viewModel.state.collectAsState()
     // Only the error branch below reads `status` at this level; the position slider
@@ -135,7 +145,9 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val chatViewModel = rememberDesktopViewModel(launch.vodId) { koin.get<VodChatViewModel> { parametersOf(launch.vodId, launch.channelLogin, windowPlayback) } }
     val chatMessages by chatViewModel.messages.collectAsState()
     val settingsStore = remember { koin.get<DesktopSettingsStore>() }
+    val playerProvider = remember { koin.get<DesktopPlayerProvider>() }
     val appSettings by settingsStore.settings.collectAsState()
+    val rtxStatus by viewModel.player.rtxStatus.collectAsState()
     var settingsMenuOpen by remember { mutableStateOf(false) }
     val multiSession = remember { koin.get<MultiSession>() }
     // Shown in place of the channel name for a few seconds when multi-stream refused the video.
@@ -170,9 +182,12 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
     val latestMode = rememberUpdatedState(mode)
     val myWindow = LocalAwtWindow.current
     DisposableEffect(Unit) {
+        // A held A sends a KEY_PRESSED per auto-repeat; only the first one toggles.
+        var audioKeyHeld = false
         val dispatcher = KeyEventDispatcher { e ->
             // A key pressed in another PureTV window (a popped-out tile, a second window) is that window's.
             if (!AppWindows.handlesKeys(myWindow)) return@KeyEventDispatcher false
+            if (e.id == KeyEvent.KEY_RELEASED && e.keyCode == KeyEvent.VK_A) audioKeyHeld = false
             if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             val m = latestMode.value
             // Any key brings hidden controls back; the key itself still does its own job below.
@@ -183,6 +198,15 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
                 KeyEvent.VK_C -> { shell.toggleChat(); true }
                 KeyEvent.VK_SPACE -> { viewModel.togglePlayPause(); true }
                 KeyEvent.VK_ESCAPE -> if (m != PlayerMode.DEFAULT) { shell.exitImmersive(); true } else false
+                // A: even out loud and quiet audio, as on the live player. Not with Ctrl or
+                // Alt, so system shortcuts (select all) keep working.
+                KeyEvent.VK_A -> if (!e.isControlDown && !e.isAltDown && !e.isMetaDown) {
+                    if (!audioKeyHeld) viewModel.toggleAudioNormalizer()
+                    audioKeyHeld = true
+                    true
+                } else {
+                    false
+                }
                 // Skip back / forward. Auto-repeat scrubs, since AWT sends a fresh
                 // KEY_PRESSED per repeat. resetControls() rides along so a seek in
                 // an immersive mode brings the timecode back rather than leaving
@@ -296,6 +320,19 @@ fun VodPlayerContent(koin: Koin, launch: VodLaunch, onBack: () -> Unit) {
                         scalingEnabled = viewModel.player.supportsUpscaling,
                         backend = appSettings.playbackBackend,
                         onBackendSelected = viewModel::setPlaybackBackend,
+                        rtx = if (viewModel.player.supportsRtxVideo) RtxMenuState(
+                            status = rtxStatus,
+                            superResolution = appSettings.rtxSuperResolution,
+                            onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                            hdr = appSettings.rtxHdr.takeIf { viewModel.player.supportsRtxHdr },
+                            onHdrChange = viewModel::setRtxHdr,
+                        ) else null,
+                        engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
+                        onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
+                        audioNormalizer = appSettings.audioNormalizer,
+                        onAudioNormalizerChange = viewModel::setAudioNormalizer,
+                        audioLevelling = appSettings.audioLevelling,
+                        onAudioLevellingSelected = viewModel::setAudioLevelling,
                     )
                 }
 

@@ -72,6 +72,7 @@ internal data class GqlGame(
     val name: String? = null,
     val displayName: String? = null,
     val boxArtURL: String? = null,
+    val viewersCount: Long? = null,
 )
 
 @Serializable
@@ -130,7 +131,13 @@ internal data class GqlSearchEdge(val item: GqlSearchUser? = null)
 internal data class GqlSearchChannels(val edges: List<GqlSearchEdge?> = emptyList())
 
 @Serializable
-internal data class GqlSearchFor(val channels: GqlSearchChannels? = null)
+internal data class GqlSearchFor(val channels: GqlSearchChannels? = null, val games: GqlSearchGames? = null)
+
+@Serializable
+internal data class GqlSearchGameEdge(val item: GqlGame? = null)
+
+@Serializable
+internal data class GqlSearchGames(val edges: List<GqlSearchGameEdge?> = emptyList())
 
 @Serializable
 internal data class GqlSearchData(val searchFor: GqlSearchFor? = null)
@@ -254,7 +261,7 @@ private fun GqlGame.displayLabel(): String? = displayName?.takeIf { it.isNotBlan
 internal fun GqlGame.toGameInfo(): GameInfo? {
     val gameId = id?.takeIf { it.isNotBlank() } ?: return null
     val label = displayLabel()?.takeIf { it.isNotBlank() } ?: return null
-    return GameInfo(id = gameId, name = label, boxArtUrl = toSizeTemplate(boxArtURL))
+    return GameInfo(id = gameId, name = label, boxArtUrl = toSizeTemplate(boxArtURL), viewers = viewersCount)
 }
 
 internal fun GqlUser.toChannelInfo(): ChannelInfo? {

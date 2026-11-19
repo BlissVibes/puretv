@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import com.puretv.twitch.desktop.platform.ShortcutKey
 import java.awt.event.KeyEvent
 
 /** What a keyboard shortcut on the live player screen does. */
@@ -18,6 +19,9 @@ enum class ShortcutAction {
     CycleSleepTimer,
     ToggleHelp,
     ToggleMini,
+
+    // "Even out loud and quiet audio" (the audio normalizer), on or off.
+    ToggleAudioNormalizer,
 }
 
 /**
@@ -28,8 +32,8 @@ enum class ShortcutAction {
  *
  * F fullscreen, T theater, C chat, Space play/pause, Esc leaves fullscreen or theater
  * (and closes the shortcuts sheet), F3 upscaling stats (mpv), PageUp/PageDown change
- * channel, Up/Down volume, M mute, Z sleep timer, I mini player (Esc leaves it too),
- * ? (Shift+/) or F1 this list.
+ * channel, Up/Down volume, M mute, A evens out loud and quiet audio, Z sleep timer,
+ * I mini player (Esc leaves it too), ? (Shift+/) or F1 this list.
  * Hold X compares the upscaler off and is handled separately because it needs the
  * release event too.
  */
@@ -92,6 +96,7 @@ object PlayerShortcuts {
             KeyEvent.VK_UP -> ShortcutAction.VolumeUp
             KeyEvent.VK_DOWN -> ShortcutAction.VolumeDown
             KeyEvent.VK_M -> ShortcutAction.ToggleMute
+            KeyEvent.VK_A -> ShortcutAction.ToggleAudioNormalizer
             KeyEvent.VK_Z -> ShortcutAction.CycleSleepTimer
             KeyEvent.VK_I -> ShortcutAction.ToggleMini
             else -> null
@@ -101,7 +106,8 @@ object PlayerShortcuts {
     /**
      * Whether [action] means anything in the mini player, which has no chat, no menus and
      * no room for the shortcuts sheet. Those keys are swallowed there rather than left to
-     * change state the viewer cannot see.
+     * change state the viewer cannot see. Sound keys (volume, mute, A) keep working: the
+     * viewer hears what they do.
      */
     fun worksInMini(action: ShortcutAction): Boolean = when (action) {
         ShortcutAction.ToggleFullscreen,
@@ -130,6 +136,7 @@ object PlayerShortcuts {
         Help("Page Up / Page Down", "Next or previous channel"),
         Help("Up / Down", "Volume"),
         Help("M", "Mute"),
+        Help("A", "Even out loud and quiet audio"),
         Help("Z", "Sleep timer"),
         Help("Hold X", "Compare with upscaling off (mpv)"),
         Help("F3", "Upscaling stats (mpv)"),
@@ -234,10 +241,10 @@ object MultiShortcuts {
     }
 
     /** The one-line hint under the grid, from the same table the keys use. */
-    const val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   Ctrl + Left / Right move the selected channel"
+    val HINT = "Up / Down volume and M mute (selected channel)   Z sleep timer   ${ShortcutKey.label()} + Left / Right move the selected channel"
 
     /** The hint when the selected tile is a past video. */
-    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   Z sleep timer   Ctrl + Left / Right move"
+    val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   Z sleep timer   ${ShortcutKey.label()} + Left / Right move"
 }
 
 /** What a keyboard shortcut does in a popped-out stream window. */
@@ -303,10 +310,10 @@ object PopoutShortcuts {
     }
 
     /** The one-line hint in a popped-out window, from the same table the keys use. */
-    const val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   Ctrl + W close"
+    val HINT = "Up / Down volume   M mute   F fullscreen   Esc leave fullscreen   D dock back   ${ShortcutKey.label()} + W close"
 
     /** The hint in the window of a past video. */
-    const val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   F fullscreen   D dock back   Ctrl + W close"
+    val VOD_HINT = "Space play or pause   Left / Right skip 5 s (Shift 30 s)   J / L skip 10 s   Up / Down volume   M mute   F fullscreen   D dock back   ${ShortcutKey.label()} + W close"
 }
 
 /**

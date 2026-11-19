@@ -1,7 +1,8 @@
 package com.puretv.twitch.desktop.ui
 
-import com.puretv.twitch.desktop.platform.AppPaths
-
+import com.puretv.twitch.desktop.platform.ShortcutKey
+import com.puretv.twitch.desktop.platform.WindowChrome
+import com.puretv.twitch.desktop.platform.AppDirs
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,7 +25,7 @@ import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
 import com.puretv.twitch.desktop.platform.WindowsNative
 import com.puretv.twitch.desktop.player.ChannelClaims
-import com.puretv.twitch.desktop.player.VlcEngine
+import com.puretv.twitch.desktop.player.VlcEngines
 import com.puretv.twitch.desktop.player.WindowPlayback
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -83,7 +84,7 @@ fun SecondaryWindows(koin: Koin, visible: Boolean, frontRequests: Int, icon: Pai
 /** Where each window slot was left, kept next to the other desktop files. */
 internal object WindowBoundsStores {
     val shared: PopoutBoundsStore by lazy {
-        PopoutBoundsStore(AppPaths.dataDir.resolve("app-windows.txt"))
+        PopoutBoundsStore(File(AppDirs.data, "app-windows.txt"))
     }
 }
 
@@ -116,7 +117,7 @@ private fun SecondaryWindow(
     )
 
     // This window's own player, made off the UI thread: the first one loads libVLC, which is slow.
-    val secondary = remember(entry.id) { WindowPlayback.secondary(koin.get<VlcEngine>(), koin.get<ChannelClaims>()) }
+    val secondary = remember(entry.id) { WindowPlayback.secondary(koin.get<VlcEngines>(), koin.get<ChannelClaims>()) }
     var ready by remember(entry.id) { mutableStateOf(false) }
     var failed by remember(entry.id) { mutableStateOf(false) }
     var attempt by remember(entry.id) { mutableStateOf(0) }
@@ -136,9 +137,10 @@ private fun SecondaryWindow(
         state = windowState,
         title = entry.title.ifBlank { windowTitle(entry.slot, null) },
         icon = icon,
-        undecorated = true,
+        undecorated = WindowChrome.customFrame(),
     ) {
         val awtWindow = window
+        remember(awtWindow) { WindowChrome.styleNativeFrame(awtWindow) }
         LaunchedEffect(visible) {
             if (!visible) return@LaunchedEffect
             if (!WindowsNative.enableBorderlessSnap(awtWindow)) {
@@ -156,7 +158,7 @@ private fun SecondaryWindow(
         DisposableEffect(awtWindow) {
             val dispatcher = KeyEventDispatcher { e ->
                 if (e.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
-                val closeKey = (e.keyCode == KeyEvent.VK_W && e.isControlDown && !e.isAltDown) ||
+                val closeKey = (e.keyCode == KeyEvent.VK_W && ShortcutKey.isDown(e) && !e.isAltDown) ||
                     (e.keyCode == KeyEvent.VK_ESCAPE && latestFailed.value)
                 if (!closeKey || !AppWindows.handlesKeys(awtWindow)) return@KeyEventDispatcher false
                 registry.close(entry.id)

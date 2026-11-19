@@ -1,12 +1,12 @@
 package com.puretv.twitch.desktop.data
 
-import com.puretv.twitch.desktop.platform.AppPaths
-import com.puretv.twitch.desktop.platform.Platform
-
+import com.puretv.twitch.core.audio.AudioLevelling
+import com.puretv.twitch.desktop.platform.AppDirs
 import com.puretv.twitch.core.api.DeviceAuth
 import com.puretv.twitch.core.api.TokenRefreshException
 import com.puretv.twitch.core.di.TokenHolder
 import com.puretv.twitch.core.model.AppSettings
+import com.puretv.twitch.core.model.CategorySort
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.UpscalingMode
 import com.puretv.twitch.desktop.auth.CURRENT_AUTH_SCHEMA
@@ -53,7 +53,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 class DesktopSettingsStore(
     private val tokenHolder: TokenHolder,
-    private val appDataDir: File = AppPaths.dataDir,
+    private val appDataDir: File = AppDirs.data,
 ) {
 
     private val settingsFile = File(appDataDir, "settings.json")
@@ -179,9 +179,20 @@ class DesktopSettingsStore(
         val startWithWindows: Boolean = false,
         val trayHintShown: Boolean = false,
         val trayNoticeShown: Boolean = false,
+        // Missing from older files, which then load with it off: minimize goes to the taskbar.
+        val minimizeToTray: Boolean = false,
         val showSevenTvPaints: Boolean = true,
         // Audio normalizer (Wave 4). Missing from older files, which then load with it off.
         val audioNormalizer: Boolean = false,
+        // Its strength, by AudioLevelling.key. Missing from older files, which then load at
+        // Balanced; anything unknown loads at Balanced too (see AudioLevelling.parse).
+        val audioLevelling: String = "balanced",
+        // Browse order (1.17.0). Missing from older files, which then load most viewers first.
+        val browseSort: String = "viewers",
+        // NVIDIA RTX Video. Missing from older files, which then load with Super
+        // Resolution on and HDR off (see AppSettings).
+        val rtxSuperResolution: Boolean = true,
+        val rtxHdr: Boolean = false,
         // Per-channel go-live alerts. Missing from older files, which then load with none.
         val notifyChannels: List<String> = emptyList(),
         val perChannelNoteDismissed: Boolean = false,
@@ -212,8 +223,13 @@ class DesktopSettingsStore(
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
         trayNoticeShown = trayNoticeShown,
+        minimizeToTray = minimizeToTray,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        audioLevelling = AudioLevelling.parse(audioLevelling),
+        browseSort = CategorySort.parse(browseSort),
+        rtxSuperResolution = rtxSuperResolution,
+        rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
         perChannelNoteDismissed = perChannelNoteDismissed,
         // `accessToken`/`username`/`userId` live in the encrypted token store
@@ -245,8 +261,13 @@ class DesktopSettingsStore(
         startWithWindows = startWithWindows,
         trayHintShown = trayHintShown,
         trayNoticeShown = trayNoticeShown,
+        minimizeToTray = minimizeToTray,
         showSevenTvPaints = showSevenTvPaints,
         audioNormalizer = audioNormalizer,
+        audioLevelling = audioLevelling.key,
+        browseSort = browseSort.key,
+        rtxSuperResolution = rtxSuperResolution,
+        rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.sorted(),
         perChannelNoteDismissed = perChannelNoteDismissed,
     )
@@ -400,26 +421,12 @@ class DesktopSettingsStore(
     }
 
     private fun readMachineGuid(): String? = runCatching {
-        when {
-            Platform.isWindows -> {
-                val process = ProcessBuilder(
-                    "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"
-                ).redirectErrorStream(true).start()
-                val output = process.inputStream.bufferedReader().readText()
-                process.waitFor()
-                Regex("MachineGuid\\s+REG_SZ\\s+(\\S+)").find(output)?.groupValues?.get(1)
-            }
-            // The Mac counterpart: the hardware platform UUID, stable for the life of the
-            // machine. Same caveat as MachineGuid: it is not secret, only per-machine.
-            Platform.isMac -> {
-                val process = ProcessBuilder("ioreg", "-rd1", "-c", "IOPlatformExpertDevice")
-                    .redirectErrorStream(true).start()
-                val output = process.inputStream.bufferedReader().readText()
-                process.waitFor()
-                Regex("\"IOPlatformUUID\"\\s*=\\s*\"([0-9A-Fa-f-]+)\"").find(output)?.groupValues?.get(1)
-            }
-            else -> null
-        }
+        val process = ProcessBuilder(
+            "reg", "query", "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Cryptography", "/v", "MachineGuid"
+        ).redirectErrorStream(true).start()
+        val output = process.inputStream.bufferedReader().readText()
+        process.waitFor()
+        Regex("MachineGuid\\s+REG_SZ\\s+(\\S+)").find(output)?.groupValues?.get(1)
     }.getOrNull()
 
     private fun readOrCreateKeySeedFile(): String {

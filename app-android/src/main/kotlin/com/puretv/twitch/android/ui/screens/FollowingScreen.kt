@@ -81,6 +81,7 @@ private enum class FollowingLayout(val label: String) { GRID("Grid"), LIST("List
 @Composable
 fun FollowingScreen(
     onOpenStream: (String) -> Unit,
+    onOpenChannel: (String) -> Unit,
     onOpenLogin: () -> Unit,
     viewModel: FollowingViewModel = koinViewModel(),
 ) {
@@ -184,7 +185,7 @@ fun FollowingScreen(
                                 Spacer(Modifier.height(28.dp))
                                 Text("Offline · ${state.offline.size}", style = MaterialTheme.typography.headlineMedium, color = c.onSurface)
                                 Spacer(Modifier.height(12.dp))
-                                OfflineList(state.offline, onOpenStream, alertSet, toggleAlerts)
+                                OfflineList(state.offline, onOpenChannel, alertSet, toggleAlerts)
                             }
                         }
                     }

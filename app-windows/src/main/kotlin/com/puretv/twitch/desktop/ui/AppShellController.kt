@@ -56,7 +56,21 @@ class AppShellController(
     val playerMode: PlayerMode get() = playerModeState
 
     private var isChatOpenState by mutableStateOf(true)
-    val isChatOpen: Boolean get() = isChatOpenState
+
+    /**
+     * Fullscreen keeps its own chat switch, so "video only" and "video and chat" are two
+     * fullscreens (F and Shift+F) and neither changes whether chat shows in the normal window.
+     * Every fullscreen starts from the choice it was entered with; C changes it while there.
+     */
+    private var fullscreenChatState by mutableStateOf(false)
+
+    /** Chat is showing: the fullscreen choice in fullscreen, the viewer's chat switch otherwise. */
+    val isChatOpen: Boolean
+        get() = if (playerModeState == PlayerMode.FULLSCREEN) fullscreenChatState else isChatOpenState
+
+    /** In fullscreen with chat beside the video (Shift+F). */
+    val isFullscreenWithChat: Boolean
+        get() = playerModeState == PlayerMode.FULLSCREEN && fullscreenChatState
 
     /** Pre-fullscreen geometry, captured on entry and replayed on exit. */
     private data class FullscreenRestore(
@@ -86,8 +100,23 @@ class AppShellController(
         if (nativeExit.left(playerModeState == PlayerMode.FULLSCREEN, placement)) {
             // The OS already put the window back; only the player's layout follows.
             fullscreenRestore = null
+            fullscreenChatState = false
             playerModeState = PlayerMode.DEFAULT
         }
+    }
+
+    /**
+     * The fullscreen buttons and keys: F ([withChat] false) is the video alone, Shift+F the
+     * video with chat beside it. Asking for the fullscreen already showing leaves it; asking
+     * for the other one while fullscreen only shows or hides chat, without leaving the Space.
+     */
+    fun toggleFullscreen(withChat: Boolean) {
+        if (playerModeState == PlayerMode.FULLSCREEN) {
+            if (fullscreenChatState == withChat) setPlayerMode(PlayerMode.DEFAULT) else fullscreenChatState = withChat
+            return
+        }
+        fullscreenChatState = withChat
+        setPlayerMode(PlayerMode.FULLSCREEN)
     }
 
     fun setPlayerMode(mode: PlayerMode) {
@@ -101,10 +130,14 @@ class AppShellController(
             mode == PlayerMode.MINI && previous == PlayerMode.FULLSCREEN -> {
                 miniRestore = fullscreenRestore
                 fullscreenRestore = null
+                fullscreenChatState = false
                 enterMini()
             }
             mode == PlayerMode.FULLSCREEN && previous != PlayerMode.FULLSCREEN -> enterFullscreen()
-            mode != PlayerMode.FULLSCREEN && previous == PlayerMode.FULLSCREEN -> exitFullscreen()
+            mode != PlayerMode.FULLSCREEN && previous == PlayerMode.FULLSCREEN -> {
+                fullscreenChatState = false
+                exitFullscreen()
+            }
             mode == PlayerMode.MINI && previous != PlayerMode.MINI -> {
                 miniRestore = currentGeometry()
                 enterMini()
@@ -184,7 +217,10 @@ class AppShellController(
         windowState.placement = restore.placement
     }
 
-    fun toggleChat() { isChatOpenState = !isChatOpenState }
+    fun toggleChat() {
+        if (playerModeState == PlayerMode.FULLSCREEN) fullscreenChatState = !fullscreenChatState
+        else isChatOpenState = !isChatOpenState
+    }
 
     fun exitImmersive() {
         if (playerMode != PlayerMode.DEFAULT) setPlayerMode(PlayerMode.DEFAULT)

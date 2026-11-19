@@ -6,6 +6,8 @@ import java.awt.event.KeyEvent
 /** What a keyboard shortcut on the live player screen does. */
 enum class ShortcutAction {
     ToggleFullscreen,
+    // Shift+F: fullscreen with chat beside the video (F is the video alone).
+    ToggleFullscreenWithChat,
     ToggleTheater,
     ToggleChat,
     TogglePlayPause,
@@ -30,7 +32,7 @@ enum class ShortcutAction {
  * (the video surface is a native window that can take focus from Compose) and asks
  * this table what to do.
  *
- * F fullscreen, T theater, C chat, Space play/pause, Esc leaves fullscreen or theater
+ * F fullscreen (video only), Shift+F fullscreen with chat, T theater, C chat, Space play/pause, Esc leaves fullscreen or theater
  * (and closes the shortcuts sheet), F3 upscaling stats (mpv), PageUp/PageDown change
  * channel, Up/Down volume, M mute, A evens out loud and quiet audio, Z sleep timer,
  * I mini player (Esc leaves it too), ? (Shift+/) or F1 this list.
@@ -60,9 +62,11 @@ object PlayerShortcuts {
         menuOpen: Boolean = false,
         // The key is being held (auto-repeat). Only volume repeats; toggles fire once.
         isRepeat: Boolean = false,
+        // Shift is down: Shift+F is the fullscreen with chat.
+        shift: Boolean = false,
     ): ShortcutAction? {
         if (textInputFocused) return null
-        val action = actionForKey(keyCode, keyChar, ctrlOrAlt, immersive, helpOpen) ?: return null
+        val action = actionForKey(keyCode, keyChar, ctrlOrAlt, immersive, helpOpen, shift) ?: return null
         val volume = action == ShortcutAction.VolumeUp || action == ShortcutAction.VolumeDown
         if (volume && menuOpen) return null
         if (isRepeat && !volume) return null
@@ -75,11 +79,12 @@ object PlayerShortcuts {
         ctrlOrAlt: Boolean,
         immersive: Boolean,
         helpOpen: Boolean,
+        shift: Boolean,
     ): ShortcutAction? {
         if (ctrlOrAlt) return null
         if (keyChar == '?') return ShortcutAction.ToggleHelp
         return when (keyCode) {
-            KeyEvent.VK_F -> ShortcutAction.ToggleFullscreen
+            KeyEvent.VK_F -> if (shift) ShortcutAction.ToggleFullscreenWithChat else ShortcutAction.ToggleFullscreen
             KeyEvent.VK_T -> ShortcutAction.ToggleTheater
             KeyEvent.VK_C -> ShortcutAction.ToggleChat
             KeyEvent.VK_SPACE -> ShortcutAction.TogglePlayPause
@@ -111,6 +116,7 @@ object PlayerShortcuts {
      */
     fun worksInMini(action: ShortcutAction): Boolean = when (action) {
         ShortcutAction.ToggleFullscreen,
+        ShortcutAction.ToggleFullscreenWithChat,
         ShortcutAction.ToggleTheater,
         ShortcutAction.ToggleChat,
         ShortcutAction.ToggleStats,
@@ -128,7 +134,8 @@ object PlayerShortcuts {
 
     val help: List<Help> = listOf(
         Help("Space", "Play or pause"),
-        Help("F", "Fullscreen"),
+        Help("F", "Fullscreen, video only"),
+        Help("Shift + F", "Fullscreen with chat"),
         Help("T", "Theater mode"),
         Help("C", "Show or hide chat"),
         Help("I", "Mini player"),

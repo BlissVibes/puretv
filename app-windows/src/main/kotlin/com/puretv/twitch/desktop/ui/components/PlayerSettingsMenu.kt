@@ -2,6 +2,19 @@ package com.puretv.twitch.desktop.ui.components
 
 import com.puretv.twitch.core.audio.AudioLevelling
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Alignment
 import androidx.compose.foundation.background
 import com.puretv.twitch.desktop.player.NativeLibs
@@ -68,8 +81,22 @@ fun PlayerSettingsMenu(
             .padding(horizontal = 24.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
-        PlayerMenuSection("Resolution") {
-            SegmentedControl(StreamQuality.entries.toList(), currentQuality, { it.label }, onQualitySelected)
+        // Resolution, with the sleep timer beside it as a pulldown (live streams only).
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(24.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Box(Modifier.weight(1f)) {
+                PlayerMenuSection("Resolution") {
+                    SegmentedControl(StreamQuality.entries.toList(), currentQuality, { it.label }, onQualitySelected)
+                }
+            }
+            if (sleepMinutes != null) {
+                PlayerMenuSection("Sleep timer") {
+                    SleepTimerPulldown(sleepMinutes, onSleepSelected)
+                }
+            }
         }
         if (rtx != null) PlayerMenuSection("NVIDIA RTX Video") {
             RtxVideoMenuSection(
@@ -120,14 +147,91 @@ fun PlayerSettingsMenu(
                 Text("Applies after restart.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
             }
         }
-        if (sleepMinutes != null) {
-            PlayerMenuSection("Sleep timer") {
-                SegmentedControl(SleepTimer.PRESETS_MINUTES, sleepMinutes, { SleepTimerText.preset(it) }, onSleepSelected)
-                Text("Stops playback when the time is up. Press Z to cycle.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+    }
+}
+
+/**
+ * The sleep timer as a pulldown: a 40dp pill showing the preset in force, which opens
+ * the presets in place, under itself. In place rather than a floating menu, because the
+ * video is a native surface that paints over any popup that strays onto it, and this
+ * menu sits right next to the video.
+ */
+@Composable
+private fun SleepTimerPulldown(minutes: Int, onSelect: (Int) -> Unit) {
+    val c = PureTvTheme.colors
+    var open by remember { mutableStateOf(false) }
+    Column(Modifier.width(SLEEP_PULLDOWN_WIDTH), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        val anchor = remember { MutableInteractionSource() }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(40.dp)
+                .expressiveClickable(
+                    interaction = anchor,
+                    onClick = { open = !open },
+                    restRadius = 20.dp,
+                    hoverRadius = 12.dp,
+                    color = if (minutes > 0) c.primaryContainer else c.surfaceHigh,
+                    hoverColor = if (minutes > 0) c.primaryContainer else c.surfaceHighest,
+                )
+                .padding(start = 16.dp, end = 10.dp),
+        ) {
+            Text(
+                SleepTimerText.preset(minutes),
+                style = MaterialTheme.typography.labelLarge,
+                color = if (minutes > 0) c.onPrimaryContainer else c.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            Icon(
+                if (open) ExpressiveIcons.ExpandLess else ExpressiveIcons.ExpandMore,
+                contentDescription = if (open) "Close sleep timer choices" else "Choose a sleep timer",
+                tint = if (minutes > 0) c.onPrimaryContainer else c.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        if (open) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(c.surfaceHigh)
+                    .padding(vertical = 4.dp),
+            ) {
+                SleepTimer.PRESETS_MINUTES.forEach { preset ->
+                    val row = remember(preset) { MutableInteractionSource() }
+                    val selected = preset == minutes
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(36.dp)
+                            .expressiveClickable(
+                                interaction = row,
+                                onClick = { onSelect(preset); open = false },
+                                restRadius = 0.dp,
+                                hoverRadius = 0.dp,
+                                color = Color.Transparent,
+                                hoverColor = c.surfaceHighest,
+                            )
+                            .padding(horizontal = 16.dp),
+                    ) {
+                        Text(
+                            SleepTimerText.preset(preset),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (selected) c.primary else c.onSurface,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (selected) Icon(ExpressiveIcons.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(18.dp))
+                    }
+                }
             }
+            Text("Press Z to cycle.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
         }
     }
 }
+
+private val SLEEP_PULLDOWN_WIDTH = 168.dp
 
 /** What the menu's RTX Video section shows and changes. */
 class RtxMenuState(

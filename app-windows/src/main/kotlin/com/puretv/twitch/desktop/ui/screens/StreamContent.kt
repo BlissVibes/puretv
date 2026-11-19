@@ -491,10 +491,12 @@ private fun StreamScreen(
                 textInputFocused = latestChatFocused.value,
                 menuOpen = latestMenuOpen.value,
                 isRepeat = isRepeat,
+                shift = e.isShiftDown,
             ) ?: return@KeyEventDispatcher false
             if (m == PlayerMode.MINI && !PlayerShortcuts.worksInMini(action)) return@KeyEventDispatcher true
             when (action) {
-                ShortcutAction.ToggleFullscreen -> shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN)
+                ShortcutAction.ToggleFullscreen -> shell.toggleFullscreen(withChat = false)
+                ShortcutAction.ToggleFullscreenWithChat -> shell.toggleFullscreen(withChat = true)
                 ShortcutAction.ToggleTheater -> shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER)
                 ShortcutAction.ToggleChat -> shell.toggleChat()
                 ShortcutAction.TogglePlayPause -> latestViewModel.value.togglePlayPause()
@@ -729,7 +731,9 @@ private fun StreamScreen(
                         onToggleSettings = { settingsMenuOpen = !settingsMenuOpen },
                         onToggleChat = { shell.toggleChat() },
                         onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
-                        onToggleFullscreen = { shell.setPlayerMode(if (mode == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN) },
+                        fullscreenWithChat = shell.isFullscreenWithChat,
+                        onToggleFullscreen = { shell.toggleFullscreen(withChat = false) },
+                        onToggleFullscreenWithChat = { shell.toggleFullscreen(withChat = true) },
                         onToggleMini = { shell.setPlayerMode(PlayerMode.MINI) },
                         radius = panelRadius,
                     )
@@ -1014,7 +1018,9 @@ private fun PlaybackControls(
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
+    fullscreenWithChat: Boolean,
     onToggleFullscreen: () -> Unit,
+    onToggleFullscreenWithChat: () -> Unit,
     onToggleMini: () -> Unit,
     radius: Dp,
 ) {
@@ -1048,7 +1054,9 @@ private fun PlaybackControls(
             onToggleSettings = onToggleSettings,
             onToggleChat = onToggleChat,
             onToggleTheater = onToggleTheater,
+            fullscreenWithChat = fullscreenWithChat,
             onToggleFullscreen = onToggleFullscreen,
+            onToggleFullscreenWithChat = onToggleFullscreenWithChat,
             onToggleMini = onToggleMini,
         )
     }
@@ -1120,7 +1128,9 @@ private fun ConnectedControlsGroup(
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
+    fullscreenWithChat: Boolean,
     onToggleFullscreen: () -> Unit,
+    onToggleFullscreenWithChat: () -> Unit,
     onToggleMini: () -> Unit,
 ) {
     val c = PureTvTheme.colors
@@ -1152,11 +1162,58 @@ private fun ConnectedControlsGroup(
         GroupDivider()
         ControlsGroupButton(ExpressiveIcons.MiniPlayer, "Mini player", onToggleMini)
         GroupDivider()
+        // Two fullscreens: the video alone (F) and the video with chat beside it (Shift+F).
+        // The one showing lights up and offers its exit icon; pressing the other one while
+        // fullscreen swaps chat in or out without leaving fullscreen.
+        val videoOnly = mode == PlayerMode.FULLSCREEN && !fullscreenWithChat
         ControlsGroupButton(
-            icon = if (mode == PlayerMode.FULLSCREEN) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,
-            contentDescription = "Fullscreen",
+            icon = if (videoOnly) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,
+            contentDescription = if (videoOnly) "Leave fullscreen" else "Fullscreen, video only (F)",
             onClick = onToggleFullscreen,
+            tint = if (videoOnly) c.primary else null,
         )
+        GroupDivider()
+        FullscreenWithChatButton(active = fullscreenWithChat, onClick = onToggleFullscreenWithChat)
+    }
+}
+
+/** The fullscreen glyph with a small chat bubble in its corner: fullscreen with chat (Shift+F). */
+@Composable
+private fun FullscreenWithChatButton(active: Boolean, onClick: () -> Unit) {
+    val c = PureTvTheme.colors
+    val interaction = remember { MutableInteractionSource() }
+    val tint = if (active) c.primary else c.onSurface
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(56.dp)
+            .expressiveClickable(
+                interaction = interaction,
+                onClick = onClick,
+                restRadius = 0.dp,
+                hoverRadius = 0.dp,
+                color = Color.Transparent,
+                hoverColor = c.surfaceHighest,
+            ),
+    ) {
+        Box(Modifier.size(28.dp)) {
+            Icon(
+                if (active) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,
+                contentDescription = if (active) "Leave fullscreen" else "Fullscreen with chat (Shift+F)",
+                tint = tint,
+                modifier = Modifier.size(24.dp).align(Alignment.TopStart),
+            )
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(15.dp)
+                    .align(Alignment.BottomEnd)
+                    .clip(RoundedCornerShape(50))
+                    .background(c.surfaceHigh),
+            ) {
+                Icon(ExpressiveIcons.Chat, contentDescription = null, tint = tint, modifier = Modifier.size(12.dp))
+            }
+        }
     }
 }
 

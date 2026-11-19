@@ -18,6 +18,18 @@ class PlayerShortcutsTest {
         assertEquals(ShortcutAction.ToggleStats, action(KeyEvent.VK_F3))
     }
 
+    @Test fun fIsVideoOnlyFullscreenAndShiftFKeepsChat() {
+        assertEquals(ShortcutAction.ToggleFullscreen, PlayerShortcuts.actionFor(KeyEvent.VK_F, 'f', false, false, shift = false))
+        assertEquals(ShortcutAction.ToggleFullscreenWithChat, PlayerShortcuts.actionFor(KeyEvent.VK_F, 'F', false, false, shift = true))
+        // Also from inside fullscreen, to swap between the two.
+        assertEquals(ShortcutAction.ToggleFullscreenWithChat, PlayerShortcuts.actionFor(KeyEvent.VK_F, 'F', false, true, shift = true))
+        // Typing in chat is still typing.
+        assertNull(PlayerShortcuts.actionFor(KeyEvent.VK_F, 'F', false, false, textInputFocused = true, shift = true))
+        // Neither fullscreen means anything in the mini player.
+        assertTrue(!PlayerShortcuts.worksInMini(ShortcutAction.ToggleFullscreenWithChat))
+        assertTrue(PlayerShortcuts.help.any { it.keys == "Shift + F" })
+    }
+
     @Test fun escapeOnlyActsWhenThereIsSomethingToLeave() {
         assertNull(action(KeyEvent.VK_ESCAPE))
         assertEquals(ShortcutAction.ExitImmersive, action(KeyEvent.VK_ESCAPE, immersive = true))

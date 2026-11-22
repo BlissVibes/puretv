@@ -35,6 +35,7 @@ import com.puretv.twitch.core.emotes.applyThirdPartyEmotes
 import com.puretv.twitch.core.emotes.buildPickableEmotes
 import com.puretv.twitch.core.emotes.prioritizeThirdParty
 import com.puretv.twitch.core.model.ChannelEmote
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.EmoteProvider
 import com.puretv.twitch.core.model.AppSettings
 import com.puretv.twitch.core.model.Badge
@@ -882,6 +883,10 @@ class StreamViewModel(
         settingsStore.updateSettings { it.copy(audioLevelling = level) }
         vlcPlayer.setAudioLevelling(settingsStore.settings.value.audioLevellingInUse())
     }
+    /** Chat text size from the player menu: the same saved setting as Settings > Chat > Text size. */
+    fun setChatTextSize(size: ChatTextSize) =
+        settingsStore.updateSettings { it.copy(chatFontSize = size.sp) }
+
     /** Apply a scaler to the running player WITHOUT persisting — drives the
      *  hold-to-compare A/B (preview Off while held, restore the saved mode on release). */
     fun previewUpscaling(mode: UpscalingMode) = vlcPlayer.setUpscaling(mode)

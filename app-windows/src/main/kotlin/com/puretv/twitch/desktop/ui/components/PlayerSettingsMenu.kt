@@ -1,7 +1,13 @@
 package com.puretv.twitch.desktop.ui.components
 
 import com.puretv.twitch.core.audio.AudioLevelling
+import androidx.compose.foundation.LocalScrollbarStyle
+import androidx.compose.foundation.VerticalScrollbar
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.rememberScrollbarAdapter
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
@@ -28,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.puretv.twitch.core.model.ChatTextSize
 import com.puretv.twitch.core.model.PlaybackBackend
 import com.puretv.twitch.core.model.StreamQuality
 import com.puretv.twitch.core.model.UpscalingMode
@@ -75,12 +82,20 @@ fun PlayerSettingsMenu(
     // Live streams: play closer to live (the same setting as Settings > Playback). Null hides it.
     lowLatency: Boolean? = null,
     onLowLatencyChange: (Boolean) -> Unit = {},
+    // Live streams: how big chat reads (the same setting as Settings > Chat > Text size). Null hides it.
+    chatTextSize: ChatTextSize? = null,
+    onChatTextSizeSelected: (ChatTextSize) -> Unit = {},
 ) {
     val c = PureTvTheme.colors
+    // The menu sits between the video and the controls and takes the height it needs. In a
+    // small window that is more than there is, so it stops at the space it is given and
+    // scrolls; the bar on the right only shows then.
+    val scroll = rememberScrollState()
+    Box(modifier = modifier.fillMaxWidth().background(c.surface)) {
     Column(
-        modifier = modifier
+        modifier = Modifier
             .fillMaxWidth()
-            .background(c.surface)
+            .verticalScroll(scroll)
             .padding(horizontal = 24.dp, vertical = 18.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
     ) {
@@ -100,6 +115,15 @@ fun PlayerSettingsMenu(
                     SleepTimerPulldown(sleepMinutes, onSleepSelected)
                 }
             }
+        }
+        // Second from the top: in a small window the lower sections fall outside the menu.
+        if (chatTextSize != null) PlayerMenuSection("Chat size") {
+            SegmentedControl(ChatTextSize.entries.toList(), chatTextSize, { it.label }, onChatTextSizeSelected)
+            Text(
+                "How big chat reads. Emotes and badges grow with the text.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.onSurfaceVariant,
+            )
         }
         if (lowLatency != null) PlayerMenuSection("Latency") {
             Row(
@@ -166,6 +190,20 @@ fun PlayerSettingsMenu(
                 }
             } else {
                 Text("Applies after restart.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+            }
+        }
+    }
+        if (scroll.maxValue > 0) {
+            Box(Modifier.matchParentSize().padding(vertical = 6.dp, horizontal = 4.dp)) {
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(scroll),
+                    modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight(),
+                    // The default thumb is black at 12%, which cannot be seen on this surface.
+                    style = LocalScrollbarStyle.current.copy(
+                        unhoverColor = c.onSurfaceVariant.copy(alpha = 0.4f),
+                        hoverColor = c.onSurfaceVariant.copy(alpha = 0.7f),
+                    ),
+                )
             }
         }
     }

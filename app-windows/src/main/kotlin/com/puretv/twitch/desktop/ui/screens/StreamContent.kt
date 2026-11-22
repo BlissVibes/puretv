@@ -737,6 +737,8 @@ private fun StreamScreen(
                             onAudioLevellingSelected = viewModel::setAudioLevelling,
                             lowLatency = appSettings.lowLatencyMode,
                             onLowLatencyChange = viewModel::setLowLatency,
+                            chatTextSize = ChatTextSize.from(appSettings.chatFontSize),
+                            onChatTextSizeSelected = viewModel::setChatTextSize,
                         )
                     }
 

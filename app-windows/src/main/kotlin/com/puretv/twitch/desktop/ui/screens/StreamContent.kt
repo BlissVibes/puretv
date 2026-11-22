@@ -1,5 +1,9 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.components.FloatingPlayerChrome
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.EnterTransition
 import androidx.compose.foundation.layout.requiredWidth
@@ -285,7 +289,6 @@ private fun StreamScreen(
     // the shell: easing the padding would resize the video surface on every frame.
     val immersive = mode != PlayerMode.DEFAULT || docked
     val groundPad = if (immersive) 0.dp else 8.dp
-    val panelRadius = if (immersive) 0.dp else 24.dp
 
     // Chat takes or gives back its width in one step (see PureTvMotion.sidePanelSize),
     // so the video beside it resizes once per toggle; the card itself slides and fades.
@@ -308,7 +311,7 @@ private fun StreamScreen(
         label = "chatGap",
     )
 
-    // Controls visibility: always shown in DEFAULT, auto-hides in THEATER/FULLSCREEN
+    // Controls visibility: the bars roll up when the pointer rests (see FloatingPlayerChrome).
     var controlsVisible by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     var hideJob by remember { mutableStateOf<Job?>(null) }
@@ -577,21 +580,21 @@ private fun StreamScreen(
     NativePointerActivity(enabled = !mini) { resetControls() }
     // The bars stay while a menu that lives between them is open.
     val barsShown = (controlsVisible || settingsMenuOpen || helpOpen) && !mini
+    // The video's place in this window, in pixels: the bars' window is laid over it.
+    var videoSlot by remember { mutableStateOf(Rect.Zero) }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // Black behind the video whenever it runs edge to edge, so the frame between a
-            // bar leaving and the video growing into its place is black, not the ground colour.
+            // Black behind the video whenever it runs edge to edge.
             .background(if (immersive) Color.Black else c.surfaceLowest)
             .padding(groundPad)
             .pointerInput(mode) {
-                // Only genuine cursor movement counts as "activity". When the
-                // controls auto-hide in THEATER/FULLSCREEN, the player Box grows
-                // and resizes the heavyweight VLC surface; that relayout emits a
+                // Only genuine cursor movement counts as "activity". A relayout (and
+                // the bars' window showing or hiding under the pointer) emits a
                 // SAME-position synthetic move event. Resetting on it would re-show
-                // the controls → relayout → re-hide, an endless show/hide flicker
-                // synced to ControlsAutoHideMs (the theatre-mode "epilepsy" bug).
+                // the controls, which hide again, an endless show/hide flicker synced
+                // to ControlsAutoHideMs (the theatre-mode "epilepsy" bug).
                 // Comparing positions filters those synthetic events out.
                 var lastPos: Offset? = null
                 awaitPointerEventScope {
@@ -608,38 +611,100 @@ private fun StreamScreen(
                 }
             },
     ) {
+        // The bars float over the video in a window of their own, so showing and hiding
+        // them never resizes the video (that resize was the flash). The playback menu
+        // rides above the controls in the same window, and scrolls when it is too tall.
+        FloatingPlayerChrome(
+            owner = myWindow,
+            slot = videoSlot.takeIf { !mini && !it.isEmpty },
+            shown = barsShown,
+            top = {
+                TopBar(
+                    mode = mode,
+                    channelName = state.channel?.displayName ?: channelLogin,
+                    avatarUrl = state.channel?.profileImageUrl,
+                    streamInfo = state.streamInfo,
+                    adBlockStatus = state.adBlockStatus,
+                    isFollowed = isFollowed,
+                    canFollow = state.channel != null,
+                    onToggleFollow = viewModel::toggleFollow,
+                    bell = bell,
+                    onBack = onBack,
+                    onOpenMultiView = onOpenMultiView,
+                    onOpenInNewWindow = { openInNewWindow(WindowDestination.Channel(channelLogin)) },
+                    radius = 0.dp,
+                )
+            },
+            bottom = {
+                Column(Modifier.fillMaxWidth()) {
+                    AnimatedVisibility(
+                        visible = settingsMenuOpen,
+                        enter = PureTvMotion.panelEnter(),
+                        exit = PureTvMotion.panelExit(),
+                        // Takes what the controls leave, so a tall menu scrolls instead of
+                        // pushing them out of the window.
+                        modifier = Modifier.weight(1f, fill = false),
+                    ) {
+                        PlayerSettingsMenu(
+                            currentQuality = state.currentQuality,
+                            onQualitySelected = viewModel::setQuality,
+                            upscalingMode = appSettings.upscalingMode,
+                            onUpscalingSelected = viewModel::setUpscaling,
+                            scalingEnabled = vlcPlayer.supportsUpscaling,
+                            backend = appSettings.playbackBackend,
+                            onBackendSelected = viewModel::setPlaybackBackend,
+                            sleepMinutes = sleep.ui.minutes,
+                            onSleepSelected = sleep::set,
+                            rtx = if (vlcPlayer.supportsRtxVideo) RtxMenuState(
+                                status = rtxStatus,
+                                superResolution = appSettings.rtxSuperResolution,
+                                onSuperResolutionChange = viewModel::setRtxSuperResolution,
+                                hdr = appSettings.rtxHdr.takeIf { vlcPlayer.supportsRtxHdr },
+                                onHdrChange = viewModel::setRtxHdr,
+                            ) else null,
+                            engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
+                            onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
+                            audioNormalizer = appSettings.audioNormalizer,
+                            onAudioNormalizerChange = viewModel::setAudioNormalizer,
+                            audioLevelling = appSettings.audioLevelling,
+                            onAudioLevellingSelected = viewModel::setAudioLevelling,
+                            lowLatency = appSettings.lowLatencyMode,
+                            onLowLatencyChange = viewModel::setLowLatency,
+                            chatTextSize = ChatTextSize.from(appSettings.chatFontSize),
+                            onChatTextSizeSelected = viewModel::setChatTextSize,
+                        )
+                    }
+                    PlaybackControls(
+                        isPlaying = playerStatus.isPlaying,
+                        volume = playerStatus.volume,
+                        isMuted = playerStatus.isMuted,
+                        settingsOpen = settingsMenuOpen,
+                        mode = mode,
+                        isChatOpen = isChatOpen,
+                        railHidden = shell.isRailHidden,
+                        onToggleRail = shell::toggleRail,
+                        onTogglePlayPause = viewModel::togglePlayPause,
+                        onVolumeChange = viewModel::setVolume,
+                        onToggleMute = viewModel::toggleMute,
+                        onToggleSettings = { settingsMenuOpen = !settingsMenuOpen },
+                        onToggleChat = { shell.toggleChat() },
+                        onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
+                        fullscreenWithChat = shell.isFullscreenWithChat,
+                        onToggleFullscreen = { shell.toggleFullscreen(withChat = false) },
+                        onToggleFullscreenWithChat = { shell.toggleFullscreen(withChat = true) },
+                        onToggleMini = { shell.setPlayerMode(PlayerMode.MINI) },
+                        radius = 0.dp,
+                    )
+                }
+            },
+        )
+
         Row(Modifier.fillMaxSize()) {
             // ── Player + controls column ───────────────────────────────────────
             Column(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 verticalArrangement = Arrangement.spacedBy(groundPad),
             ) {
-                // Top bar: always in DEFAULT, slides up when idle in THEATER/FULLSCREEN
-                AnimatedVisibility(
-                    visible = barsShown,
-                    // The bars come and go in one step. A slide or fade here animated over a
-                    // video that then resized anyway, which read as a flash; one relayout is
-                    // also the cheapest thing to draw.
-                    enter = EnterTransition.None,
-                    exit = ExitTransition.None,
-                ) {
-                    TopBar(
-                        mode = mode,
-                        channelName = state.channel?.displayName ?: channelLogin,
-                        avatarUrl = state.channel?.profileImageUrl,
-                        streamInfo = state.streamInfo,
-                        adBlockStatus = state.adBlockStatus,
-                        isFollowed = isFollowed,
-                        canFollow = state.channel != null,
-                        onToggleFollow = viewModel::toggleFollow,
-                        bell = bell,
-                        onBack = onBack,
-                        onOpenMultiView = onOpenMultiView,
-                        onOpenInNewWindow = { openInNewWindow(WindowDestination.Channel(channelLogin)) },
-                        radius = panelRadius,
-                    )
-                }
-
                 // Video panel + playback settings menu, grouped as ONE child of the
                 // outer spacedBy so the gap above/below this pair stays a single
                 // groundPad regardless of whether the settings menu is mounted.
@@ -655,7 +720,9 @@ private fun StreamScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f)
-                            .background(Color.Black),
+                            .background(Color.Black)
+                            // Where the bars' window goes (see FloatingPlayerChrome).
+                            .onGloballyPositioned { videoSlot = it.boundsInRoot() },
                         contentAlignment = Alignment.Center,
                     ) {
                         when {
@@ -704,79 +771,12 @@ private fun StreamScreen(
                         }
                     }
 
-                    // Playback menu: lives in the Column (NOT over the video; the
-                    // heavyweight Canvas paints above Compose), between video and controls.
-                    // Opening it pushes the video up, the same way the controls bar does.
-                    AnimatedVisibility(
-                        visible = settingsMenuOpen,
-                        enter = PureTvMotion.panelEnter(),
-                        exit = PureTvMotion.panelExit(),
-                    ) {
-                        PlayerSettingsMenu(
-                            currentQuality = state.currentQuality,
-                            onQualitySelected = viewModel::setQuality,
-                            upscalingMode = appSettings.upscalingMode,
-                            onUpscalingSelected = viewModel::setUpscaling,
-                            scalingEnabled = vlcPlayer.supportsUpscaling,
-                            backend = appSettings.playbackBackend,
-                            onBackendSelected = viewModel::setPlaybackBackend,
-                            sleepMinutes = sleep.ui.minutes,
-                            onSleepSelected = sleep::set,
-                            rtx = if (vlcPlayer.supportsRtxVideo) RtxMenuState(
-                                status = rtxStatus,
-                                superResolution = appSettings.rtxSuperResolution,
-                                onSuperResolutionChange = viewModel::setRtxSuperResolution,
-                                hdr = appSettings.rtxHdr.takeIf { vlcPlayer.supportsRtxHdr },
-                                onHdrChange = viewModel::setRtxHdr,
-                            ) else null,
-                            engineNeedsRestart = playerProvider.runningBackend(appSettings.playbackBackend) != appSettings.playbackBackend,
-                            onRestart = if (AppRestart.isAvailable) AppRestart::restart else null,
-                            audioNormalizer = appSettings.audioNormalizer,
-                            onAudioNormalizerChange = viewModel::setAudioNormalizer,
-                            audioLevelling = appSettings.audioLevelling,
-                            onAudioLevellingSelected = viewModel::setAudioLevelling,
-                            lowLatency = appSettings.lowLatencyMode,
-                            onLowLatencyChange = viewModel::setLowLatency,
-                            chatTextSize = ChatTextSize.from(appSettings.chatFontSize),
-                            onChatTextSizeSelected = viewModel::setChatTextSize,
-                        )
-                    }
-
                     // Flip banner and the sleep timer's last-minute warning, then the
                     // shortcuts list: between the video and the controls like the menu above.
                     PlayerNoticeStrip(
                         text = if (mini) null else flipTarget?.let { "Switching to $it" } ?: flipNote ?: audioNote ?: sleep.ui.warning,
                     )
                     ShortcutsSheet(visible = helpOpen)
-                }
-
-                // Controls bar: always in DEFAULT, slides down when idle in THEATER/FULLSCREEN
-                AnimatedVisibility(
-                    visible = barsShown,
-                    enter = EnterTransition.None,
-                    exit = ExitTransition.None,
-                ) {
-                    PlaybackControls(
-                        isPlaying = playerStatus.isPlaying,
-                        volume = playerStatus.volume,
-                        isMuted = playerStatus.isMuted,
-                        settingsOpen = settingsMenuOpen,
-                        mode = mode,
-                        isChatOpen = isChatOpen,
-                        railHidden = shell.isRailHidden,
-                        onToggleRail = shell::toggleRail,
-                        onTogglePlayPause = viewModel::togglePlayPause,
-                        onVolumeChange = viewModel::setVolume,
-                        onToggleMute = viewModel::toggleMute,
-                        onToggleSettings = { settingsMenuOpen = !settingsMenuOpen },
-                        onToggleChat = { shell.toggleChat() },
-                        onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
-                        fullscreenWithChat = shell.isFullscreenWithChat,
-                        onToggleFullscreen = { shell.toggleFullscreen(withChat = false) },
-                        onToggleFullscreenWithChat = { shell.toggleFullscreen(withChat = true) },
-                        onToggleMini = { shell.setPlayerMode(PlayerMode.MINI) },
-                        radius = panelRadius,
-                    )
                 }
 
                 if (docked) {

@@ -1,0 +1,47 @@
+# Builds the Windows installer for this fork with the same script a Windows PC uses
+# (app-windows/packaging/windows/build-windows.ps1). Started by hand only: nothing here
+# runs on a push. The installer is a run artifact, not a release.
+name: Windows installer (fork)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+
+      # Same pins as release.yml (VLC 3.0.24: see the notes there).
+      - name: Install VLC and Inno Setup
+        run: |
+          choco install vlc --version=3.0.24 --yes --no-progress
+          choco install innosetup --yes --no-progress
+
+      - name: Desktop unit tests
+        run: .\gradlew.bat :core:desktopTest :app-windows:test --console=plain
+
+      - name: Build the installer
+        shell: pwsh
+        env:
+          # Empty unless the fork sets it; the script warns and builds anyway.
+          TWITCH_CLIENT_SECRET: ${{ secrets.TWITCH_CLIENT_SECRET }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .\app-windows\packaging\windows\build-windows.ps1
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-installer
+          path: app-windows/build/installer/*.exe
+          if-no-files-found: error
+          retention-days: 14

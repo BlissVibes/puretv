@@ -16,14 +16,14 @@ class UpdateReleaseUrlTest {
 
     @Test fun fallsBackToReleasesLatestWhenBlank() {
         assertEquals(
-            "https://github.com/dhawal-ss/puretv/releases/latest",
+            "https://github.com/BlissVibes/puretv/releases/latest",
             resolveReleaseUrl(""),
         )
     }
 
     @Test fun fallsBackWhenOnlyWhitespace() {
         assertEquals(
-            "https://github.com/dhawal-ss/puretv/releases/latest",
+            "https://github.com/BlissVibes/puretv/releases/latest",
             resolveReleaseUrl("   "),
         )
     }

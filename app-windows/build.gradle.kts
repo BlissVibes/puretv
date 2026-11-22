@@ -28,7 +28,7 @@ val generateAppBuildConfig by tasks.registering {
             |/** Generated from build.gradle.kts `appVersion` — do not edit by hand. */
             |object AppBuildConfig {
             |    const val VERSION = "$versionValue"
-            |    const val GITHUB_OWNER = "dhawal-ss"
+            |    const val GITHUB_OWNER = "BlissVibes"
             |    const val GITHUB_REPO = "puretv"
             |}
             |

@@ -1,2 +1,4 @@
 # Shell scripts run on Linux and macOS runners; keep LF even in a Windows checkout.
 *.sh text eol=lf
+# PowerShell 5 reads a script without a BOM as ANSI; CRLF keeps its here-strings and signing sane.
+*.ps1 text eol=crlf

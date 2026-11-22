@@ -1,5 +1,11 @@
 package com.puretv.twitch.desktop.ui.components
 
+import com.puretv.twitch.core.model.EmoteProvider
+import androidx.compose.ui.unit.DpOffset
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.TooltipPlacement
+import androidx.compose.foundation.TooltipArea
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -436,6 +442,9 @@ fun ChatMessageRow(
         .fillMaxWidth()
         .clip(PureTvTheme.shapes.mdShape)
         .background(rowFill)
+        // The message that was clicked is outlined in the accent colour, so it is clear
+        // which one the reply arrow belongs to.
+        .then(if (selected) Modifier.border(1.5.dp, c.primary, PureTvTheme.shapes.mdShape) else Modifier)
         .hoverable(rowInteraction)
         .then(
             if (onReply != null) Modifier.clickable(interactionSource = clickInteraction, indication = null, onClick = toggleSelected)
@@ -520,17 +529,35 @@ fun ChatMessageRow(
                         is MessagePart.Text -> chatWords(part.content).forEach { word ->
                             Text(word, color = c.onSurface, style = MaterialTheme.typography.bodyLarge)
                         }
-                        is MessagePart.TwitchEmote -> StackedEmote(
-                            "https://static-cdn.jtvnw.net/emoticons/v2/${part.id}/default/dark/2.0",
-                            part.name,
+                        is MessagePart.TwitchEmote -> EmoteZoom(
+                            name = part.name,
+                            source = "Twitch",
+                            // 3.0 is the largest size Twitch serves (112 px).
+                            largeUrl = "https://static-cdn.jtvnw.net/emoticons/v2/${part.id}/default/dark/3.0",
                             animated = false,
-                            part.overlays,
-                            // Twitch enforces a square emote canvas, so the fixed square
-                            // box is already correct. Skip the height-only path (and its
-                            // load-time reflow) for the majority of emotes in most chats.
-                            naturalAspect = false,
-                        )
-                        is MessagePart.ThirdPartyEmote -> StackedEmote(part.url, part.name, part.animated, part.overlays)
+                            overlays = part.overlays,
+                        ) {
+                            StackedEmote(
+                                "https://static-cdn.jtvnw.net/emoticons/v2/${part.id}/default/dark/2.0",
+                                part.name,
+                                animated = false,
+                                part.overlays,
+                                // Twitch enforces a square emote canvas, so the fixed square
+                                // box is already correct. Skip the height-only path (and its
+                                // load-time reflow) for the majority of emotes in most chats.
+                                naturalAspect = false,
+                            )
+                        }
+                        // Third-party addresses are already the largest size (BTTV 3x, 7TV 4x).
+                        is MessagePart.ThirdPartyEmote -> EmoteZoom(
+                            name = part.name,
+                            source = emoteSource(part.provider),
+                            largeUrl = part.url,
+                            animated = part.animated,
+                            overlays = part.overlays,
+                        ) {
+                            StackedEmote(part.url, part.name, part.animated, part.overlays)
+                        }
                     }
                 }
             }
@@ -615,6 +642,70 @@ private fun StackedEmote(
         overlays.forEach { layer -> EmoteGlyph(layer.url, layer.name, layer.animated, size, naturalAspect = false) }
     }
 }
+
+/** Where an emote comes from, as chat users call it. */
+private fun emoteSource(provider: EmoteProvider): String = when (provider) {
+    EmoteProvider.TWITCH -> "Twitch"
+    EmoteProvider.BTTV -> "BetterTTV"
+    EmoteProvider.FFZ -> "FrankerFaceZ"
+    EmoteProvider.SEVENTV -> "7TV"
+}
+
+/**
+ * Resting the pointer on a chat emote shows it at its largest size with its name and
+ * where it comes from, so a small or unfamiliar emote can be made out and typed.
+ *
+ * The card opens under the emote and to its right, which keeps it inside the chat
+ * column: the video beside chat is a native surface that paints over any popup that
+ * strays onto it.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun EmoteZoom(
+    name: String,
+    source: String,
+    largeUrl: String,
+    animated: Boolean,
+    overlays: List<EmoteLayer>,
+    content: @Composable () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    TooltipArea(
+        tooltip = {
+            val shape = RoundedCornerShape(12.dp)
+            Column(
+                modifier = Modifier
+                    .clip(shape)
+                    .background(c.surfaceHighest)
+                    .border(1.dp, c.outlineVariant, shape)
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                StackedEmote(largeUrl, name, animated, overlays, size = EMOTE_ZOOM_SIZE)
+                Text(name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = c.onSurface, maxLines = 1)
+                val with = overlays.joinToString(", ") { it.name }
+                Text(
+                    if (with.isEmpty()) source else "$source, with $with",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = c.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        },
+        delayMillis = 250,
+        tooltipPlacement = TooltipPlacement.ComponentRect(
+            anchor = Alignment.BottomStart,
+            alignment = Alignment.BottomEnd,
+            offset = DpOffset(0.dp, 4.dp),
+        ),
+    ) {
+        content()
+    }
+}
+
+/** The zoomed emote's height: the largest size the emote services draw them at (Twitch 112 px). */
+private val EMOTE_ZOOM_SIZE = 112.dp
 
 private val clockFormatter = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 private fun formatClock(epochMillis: Long): String =

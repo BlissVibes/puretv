@@ -249,6 +249,8 @@ data class AppSettings(
     // Playback
     val preferredQuality: String = "auto",
     val lowLatencyMode: Boolean = true,
+    // The live stream's delay ("5.87s") beside the LIVE badge. Desktop only for now.
+    val showLiveDelay: Boolean = true,
     val upscalingMode: UpscalingMode = UpscalingMode.OFF,
     val playbackBackend: PlaybackBackend = PlaybackBackend.VLC,
     // Keep a stream's audio going after leaving the app, with a media

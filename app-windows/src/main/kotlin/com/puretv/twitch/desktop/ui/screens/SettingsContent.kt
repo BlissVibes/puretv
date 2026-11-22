@@ -122,6 +122,8 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onAnimateEmotesChange = viewModel::setAnimateEmotes,
             lowLatency = state.settings.lowLatencyMode,
             onLowLatencyChange = viewModel::setLowLatency,
+            showDelay = state.settings.showLiveDelay,
+            onShowDelayChange = viewModel::setShowLiveDelay,
             audioNormalizer = state.settings.audioNormalizer,
             onAudioNormalizerChange = viewModel::setAudioNormalizer,
             audioLevelling = state.settings.audioLevelling,
@@ -342,6 +344,8 @@ private fun PlaybackPanel(
     onAnimateEmotesChange: (Boolean) -> Unit,
     lowLatency: Boolean,
     onLowLatencyChange: (Boolean) -> Unit,
+    showDelay: Boolean,
+    onShowDelayChange: (Boolean) -> Unit,
     audioNormalizer: Boolean,
     onAudioNormalizerChange: (Boolean) -> Unit,
     audioLevelling: AudioLevelling,
@@ -370,6 +374,13 @@ private fun PlaybackPanel(
                     "pause to buffer on a weak connection, turn this off. Applies to the next stream you open.",
             ) {
                 ExpressiveSwitch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Show delay",
+                description = "How far behind live the stream is, shown beside the LIVE badge while watching.",
+            ) {
+                ExpressiveSwitch(checked = showDelay, onCheckedChange = onShowDelayChange)
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(

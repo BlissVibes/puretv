@@ -23,6 +23,17 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.window.DialogWindow
+import androidx.compose.foundation.layout.wrapContentHeight
+import com.puretv.twitch.desktop.platform.HostOs
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
 import com.puretv.twitch.desktop.ui.theme.PureTvMotion
 import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import java.awt.Color
@@ -69,6 +80,10 @@ fun FloatingPlayerChrome(
     bottom: @Composable () -> Unit,
 ) {
     if (owner == null) return
+    if (HostOs.current == HostOs.MACOS) {
+        InWindowChrome(slot, shown, top, bottom)
+        return
+    }
     val c = PureTvTheme.colors
     val density = LocalDensity.current.density
     val progress by animateFloatAsState(
@@ -160,6 +175,82 @@ fun FloatingPlayerChrome(
     }
 }
 
+/**
+ * The macOS way to the same unroll. There the video is drawn by Compose (see
+ * ComposeVideoCanvas), so the bars lie over it in the same window: each one is clipped to
+ * its unrolled part, the top bar from the video's top edge down, the controls from its
+ * bottom edge up. No window of its own: on macOS those flashed white and stuttered while
+ * resizing, and ignored window shapes. The clip is also where clicks stop, so the video
+ * underneath takes the mouse wherever no bar shows.
+ */
+@Composable
+private fun InWindowChrome(
+    slot: Rect?,
+    shown: Boolean,
+    top: @Composable () -> Unit,
+    bottom: @Composable () -> Unit,
+) {
+    val progress by animateFloatAsState(
+        targetValue = if (shown && slot != null) 1f else 0f,
+        animationSpec = if (shown) {
+            PureTvMotion.move(PureTvMotion.Medium, PureTvMotion.Decelerate)
+        } else {
+            PureTvMotion.move(PureTvMotion.Fast + 30, PureTvMotion.Accelerate)
+        },
+        label = "playerChromeUnroll",
+    )
+    var origin by remember { mutableStateOf(Offset.Zero) }
+    var topPx by remember { mutableIntStateOf(0) }
+    var bottomPx by remember { mutableIntStateOf(0) }
+    val density = LocalDensity.current
+    Box(Modifier.fillMaxSize().zIndex(1f).onGloballyPositioned { origin = it.positionInRoot() }) {
+        if (slot == null || progress <= 0f) return@Box
+        val w = with(density) { slot.width.toDp() }
+        val h = with(density) { slot.height.toDp() }
+        Box(
+            Modifier
+                .offset { IntOffset((slot.left - origin.x).roundToInt(), (slot.top - origin.y).roundToInt()) }
+                .size(w, h),
+        ) {
+            Box(
+                Modifier
+                    .align(Alignment.TopStart)
+                    .width(w)
+                    .height(with(density) { (topPx * progress).toDp() })
+                    .clipToBounds(),
+            ) {
+                Box(
+                    Modifier
+                        .wrapContentHeight(Alignment.Top, unbounded = true)
+                        // Bounded by the video, as in the window version: the playback menu
+                        // takes the height the controls leave, which is nothing when unbounded.
+                        .heightIn(max = h)
+                        .width(w)
+                        .onSizeChanged { topPx = it.height },
+                ) { top() }
+            }
+            Box(
+                Modifier
+                    .align(Alignment.BottomStart)
+                    .width(w)
+                    .height(with(density) { (bottomPx * progress).toDp() })
+                    .clipToBounds(),
+            ) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .wrapContentHeight(Alignment.Bottom, unbounded = true)
+                        // Bounded by the video, as in the window version: the playback menu
+                        // takes the height the controls leave, which is nothing when unbounded.
+                        .heightIn(max = h)
+                        .width(w)
+                        .onSizeChanged { bottomPx = it.height },
+                ) { bottom() }
+            }
+        }
+    }
+}
+
 private data class ChromeFrame(val slot: Rect?, val progress: Float, val topPx: Int, val bottomPx: Int, val ownerMoves: Int)
 
 /** The top-left of the owner's content on screen, in screen units. */
@@ -229,3 +320,4 @@ object FloatingChromeGeometry {
 
     private fun roundUp(value: Int, step: Int): Int = if (step <= 1) value else (value + step - 1) / step * step
 }
+

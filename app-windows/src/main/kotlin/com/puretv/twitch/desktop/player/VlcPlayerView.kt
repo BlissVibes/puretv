@@ -7,6 +7,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color as ComposeColor
 import java.awt.BorderLayout
@@ -67,6 +76,10 @@ fun VlcPlayerView(
     onUserActivity: () -> Unit = {},
     onClick: (() -> Unit)? = null,
 ) {
+    if (NativeLibs.callbackVideo()) {
+        ComposeVideoView(vlcPlayer, modifier, onUserActivity, onClick)
+        return
+    }
     // Override removeNotify so the backend releases this surface BEFORE the native
     // peer (HWND) is destroyed. mpv binds its `wid` once and keeps rendering into
     // that HWND on a native VO thread; when Compose unmounts the stream screen
@@ -162,4 +175,77 @@ fun VlcPlayerView(
         modifier = modifier.focusProperties { canFocus = false },
         factory = { panel },
     )
+}
+
+/**
+ * The video drawn by Compose from the frames VLC hands over (macOS, see [ComposeVideoCanvas]):
+ * scaled to fit with black bars. The mouse reaches Compose directly here.
+ */
+@Composable
+private fun ComposeVideoView(
+    vlcPlayer: DesktopPlayer,
+    modifier: Modifier,
+    onUserActivity: () -> Unit,
+    onClick: (() -> Unit)?,
+) {
+    val canvas = remember { ComposeVideoCanvas() }
+    var frames by remember { mutableLongStateOf(0L) }
+    DisposableEffect(canvas) {
+        // One repaint request in flight at a time: frames that land meanwhile ride along.
+        val pending = java.util.concurrent.atomic.AtomicBoolean(false)
+        canvas.onFrame = {
+            if (pending.compareAndSet(false, true)) {
+                SwingUtilities.invokeLater {
+                    pending.set(false)
+                    frames++
+                }
+            }
+        }
+        onDispose { canvas.onFrame = {} }
+    }
+    DisposableEffect(vlcPlayer, canvas) {
+        SwingUtilities.invokeLater { vlcPlayer.attachToPanel(canvas) }
+        onDispose { vlcPlayer.detachFromPanel() }
+    }
+    val currentActivity by rememberUpdatedState(onUserActivity)
+    val currentClick by rememberUpdatedState(onClick)
+    Canvas(
+        modifier
+            .background(ComposeColor.Black)
+            .focusProperties { canFocus = false }
+            .pointerInput(Unit) {
+                var last: Offset? = null
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pos = event.changes.firstOrNull()?.position
+                        when (event.type) {
+                            PointerEventType.Move -> if (pos != null && pos != last) {
+                                last = pos
+                                currentActivity()
+                            }
+                            PointerEventType.Press -> currentClick?.invoke()
+                        }
+                    }
+                }
+            },
+    ) {
+        @Suppress("UNUSED_EXPRESSION") frames // read here, so a new frame redraws without recomposing
+        val image = canvas.snapshot() ?: return@Canvas
+        try {
+            val r = VideoCanvas.fit(image.width, image.height, size.width.toInt(), size.height.toInt())
+            drawIntoCanvas {
+                it.nativeCanvas.drawImageRect(
+                    image,
+                    org.jetbrains.skia.Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
+                    org.jetbrains.skia.Rect.makeXYWH(r.x.toFloat(), r.y.toFloat(), r.width.toFloat(), r.height.toFloat()),
+                    org.jetbrains.skia.SamplingMode.LINEAR,
+                    null,
+                    true,
+                )
+            }
+        } finally {
+            image.close()
+        }
+    }
 }

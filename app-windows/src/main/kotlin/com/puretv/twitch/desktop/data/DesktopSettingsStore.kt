@@ -156,6 +156,7 @@ class DesktopSettingsStore(
     private data class SettingsDto(
         val preferredQuality: String = "auto",
         val lowLatencyMode: Boolean = true,
+        val showLiveDelay: Boolean = true,
         val adBlockEnabled: Boolean = true,
         val adBlockStrategy: String = "proxy",
         val customProxyUrl: String = "",
@@ -204,6 +205,7 @@ class DesktopSettingsStore(
     private fun SettingsDto.toAppSettings() = AppSettings(
         preferredQuality = preferredQuality,
         lowLatencyMode = lowLatencyMode,
+        showLiveDelay = showLiveDelay,
         adBlockEnabled = adBlockEnabled,
         adBlockStrategy = adBlockStrategy,
         customProxyUrl = customProxyUrl,
@@ -243,6 +245,7 @@ class DesktopSettingsStore(
     private fun AppSettings.toDto() = SettingsDto(
         preferredQuality = preferredQuality,
         lowLatencyMode = lowLatencyMode,
+        showLiveDelay = showLiveDelay,
         adBlockEnabled = adBlockEnabled,
         adBlockStrategy = adBlockStrategy,
         customProxyUrl = customProxyUrl,

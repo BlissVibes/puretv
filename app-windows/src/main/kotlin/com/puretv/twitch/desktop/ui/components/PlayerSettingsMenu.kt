@@ -82,6 +82,9 @@ fun PlayerSettingsMenu(
     // Live streams: play closer to live (the same setting as Settings > Playback). Null hides it.
     lowLatency: Boolean? = null,
     onLowLatencyChange: (Boolean) -> Unit = {},
+    // Live streams: the delay readout beside LIVE (the same setting as Settings > Playback). Null hides it.
+    showDelay: Boolean? = null,
+    onShowDelayChange: (Boolean) -> Unit = {},
     // Live streams: how big chat reads (the same setting as Settings > Chat > Text size). Null hides it.
     chatTextSize: ChatTextSize? = null,
     onChatTextSizeSelected: (ChatTextSize) -> Unit = {},
@@ -141,6 +144,24 @@ fun PlayerSettingsMenu(
                     )
                 }
                 ExpressiveSwitch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
+            }
+            if (showDelay != null) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Show delay", style = MaterialTheme.typography.titleSmall, color = c.onSurface)
+                        Text(
+                            "How far behind live the stream is, beside the LIVE badge.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = c.onSurfaceVariant,
+                            modifier = Modifier.widthIn(max = 640.dp),
+                        )
+                    }
+                    ExpressiveSwitch(checked = showDelay, onCheckedChange = onShowDelayChange)
+                }
             }
         }
         if (rtx != null) PlayerMenuSection("NVIDIA RTX Video") {

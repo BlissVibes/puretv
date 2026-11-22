@@ -841,6 +841,9 @@ class StreamViewModel(
         if (_state.value.playableUrl != null) playAt(_state.value.currentQuality)
     }
 
+    fun setShowLiveDelay(on: Boolean) =
+        settingsStore.updateSettings { it.copy(showLiveDelay = on) }
+
     /** A quality picked in the player: played now and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
         playAt(quality)
@@ -1107,6 +1110,9 @@ class SettingsViewModel(
 
     fun setLowLatency(enabled: Boolean) =
         settingsStore.updateSettings { it.copy(lowLatencyMode = enabled) }
+
+    fun setShowLiveDelay(enabled: Boolean) =
+        settingsStore.updateSettings { it.copy(showLiveDelay = enabled) }
 
     fun setAudioNormalizer(enabled: Boolean) {
         settingsStore.updateSettings { it.copy(audioNormalizer = enabled) }

@@ -673,13 +673,15 @@ private fun StreamScreen(
                             onAudioLevellingSelected = viewModel::setAudioLevelling,
                             lowLatency = appSettings.lowLatencyMode,
                             onLowLatencyChange = viewModel::setLowLatency,
+                            showDelay = appSettings.showLiveDelay,
+                            onShowDelayChange = viewModel::setShowLiveDelay,
                             chatTextSize = ChatTextSize.from(appSettings.chatFontSize),
                             onChatTextSizeSelected = viewModel::setChatTextSize,
                         )
                     }
                     PlaybackControls(
                         isPlaying = playerStatus.isPlaying,
-                        liveDelayMs = playerStatus.liveDelayMs,
+                        liveDelayMs = playerStatus.liveDelayMs.takeIf { appSettings.showLiveDelay },
                         volume = playerStatus.volume,
                         isMuted = playerStatus.isMuted,
                         settingsOpen = settingsMenuOpen,

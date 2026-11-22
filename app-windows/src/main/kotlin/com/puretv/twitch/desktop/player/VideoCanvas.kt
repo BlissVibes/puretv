@@ -54,7 +54,7 @@ open class VideoCanvas(private val onRemove: () -> Unit = {}) : Canvas() {
     }
 
     /** Copies one decoded RV32 frame in and schedules a repaint. Called on libVLC's thread. */
-    internal fun present(pixels: ByteBuffer, width: Int, height: Int) {
+    internal open fun present(pixels: ByteBuffer, width: Int, height: Int) {
         if (width <= 0 || height <= 0) return
         synchronized(lock) {
             val image = frame?.takeIf { it.width == width && it.height == height }
@@ -121,5 +121,56 @@ internal class FrameSink(private val canvas: VideoCanvas) : BufferFormatCallback
 
     override fun display(mediaPlayer: MediaPlayer, nativeBuffers: Array<out ByteBuffer>, bufferFormat: BufferFormat) {
         nativeBuffers.firstOrNull()?.let { canvas.present(it, bufferFormat.width, bufferFormat.height) }
+    }
+}
+
+/**
+ * The macOS surface: VLC hands its frames over ([FrameSink]) and Compose draws them
+ * ([ComposeVideoView]), so the video is part of the Compose window like everything else.
+ * Nothing native sits over the window, so the player's bars can lie over the picture and
+ * unroll in place, with no window of their own (those flashed white and stuttered on macOS).
+ *
+ * The Canvas itself is never shown. VLC's attach only asks that it be displayable.
+ */
+internal class ComposeVideoCanvas : VideoCanvas() {
+    private val frameLock = Any()
+    private var bytes = ByteArray(0)
+    private var frameWidth = 0
+    private var frameHeight = 0
+    @Volatile private var paintedOnce = false
+
+    /** Called on libVLC's thread after each new frame. */
+    @Volatile var onFrame: () -> Unit = {}
+
+    override fun isDisplayable(): Boolean = true
+
+    override fun present(pixels: ByteBuffer, width: Int, height: Int) {
+        if (width <= 0 || height <= 0) return
+        synchronized(frameLock) {
+            val size = width * height * 4
+            if (bytes.size != size) bytes = ByteArray(size)
+            val src = pixels.duplicate().apply { rewind() }
+            src.get(bytes, 0, minOf(size, src.remaining()))
+            frameWidth = width
+            frameHeight = height
+        }
+        onFrame()
+    }
+
+    /**
+     * The newest frame as an image (RV32 in memory is B,G,R,X: Skia's BGRA, opaque), or null
+     * before the first one. The caller closes it.
+     */
+    fun snapshot(): org.jetbrains.skia.Image? = synchronized(frameLock) {
+        if (frameWidth == 0) return null
+        if (!paintedOnce) {
+            paintedOnce = true
+            TimingLog.log("player.frame_painted", 0, "${frameWidth}x$frameHeight")
+        }
+        org.jetbrains.skia.Image.makeRaster(
+            org.jetbrains.skia.ImageInfo(frameWidth, frameHeight, org.jetbrains.skia.ColorType.BGRA_8888, org.jetbrains.skia.ColorAlphaType.OPAQUE),
+            bytes,
+            frameWidth * 4,
+        )
     }
 }

@@ -2,6 +2,7 @@ package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.desktop.platform.NativeFullscreenExit
 import com.puretv.twitch.desktop.platform.WindowChrome
+import com.puretv.twitch.desktop.platform.WindowsNative
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
@@ -131,6 +132,7 @@ class AppShellController(
                 miniRestore = fullscreenRestore
                 fullscreenRestore = null
                 fullscreenChatState = false
+                WindowsNative.releaseMonitorCover(window)
                 enterMini()
             }
             mode == PlayerMode.FULLSCREEN && previous != PlayerMode.FULLSCREEN -> enterFullscreen()
@@ -198,6 +200,20 @@ class AppShellController(
             // cover the full monitor (bounds include the taskbar strip).
             frame.extendedState = Frame.NORMAL
             frame.bounds = frame.graphicsConfiguration.bounds
+            coverWholeMonitor(frame)
+        }
+    }
+
+    /**
+     * AWT's bounds stop a pixel short of the monitor at a fractional display scale, which
+     * leaves the taskbar's edge showing and a white line beside the video (see
+     * [WindowsNative.coverMonitor]). Once now, and once more after Compose has applied the
+     * window state it had queued, which can put AWT's rounded size back.
+     */
+    private fun coverWholeMonitor(frame: Frame) {
+        WindowsNative.coverMonitor(frame)
+        SwingUtilities.invokeLater {
+            if (playerModeState == PlayerMode.FULLSCREEN) WindowsNative.coverMonitor(frame)
         }
     }
 
@@ -210,6 +226,7 @@ class AppShellController(
             applyNativePlacement(restore.placement.takeIf { it != WindowPlacement.Fullscreen } ?: WindowPlacement.Floating)
             return
         }
+        WindowsNative.releaseMonitorCover(window)
         (window as? Frame)?.extendedState = Frame.NORMAL
         // Replay through WindowState so CMP re-applies geometry and keeps its own
         // size/placement memory consistent (important if restoring to Maximized).

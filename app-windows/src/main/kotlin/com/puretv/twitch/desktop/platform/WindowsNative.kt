@@ -4,6 +4,7 @@ import com.sun.jna.CallbackReference
 import com.sun.jna.Library
 import com.sun.jna.Native
 import com.sun.jna.Pointer
+import com.sun.jna.platform.win32.GDI32
 import com.sun.jna.platform.win32.User32
 import com.sun.jna.platform.win32.WinDef
 import com.sun.jna.platform.win32.WinUser
@@ -223,6 +224,70 @@ object WindowsNative {
         }.getOrDefault(false)
     }
 
+    private const val MONITOR_DEFAULTTONEAREST = 2
+
+    /**
+     * Stretches [window] over its whole monitor, for borderless fullscreen, at a size the
+     * display scale turns into whole pixels (see [FullscreenCover]).
+     *
+     * AWT sizes windows in whole scaled units, and at a fractional display scale the monitor
+     * is not a whole number of them: 3840x2160 at 175% is 2194.29 x 1234.29 units. The
+     * largest window AWT can ask for is then 3839x2159, which has two faults:
+     *  - Windows only treats a window as fullscreen when it covers the entire monitor, so
+     *    the edge of an auto-hidden taskbar stayed on top of the video.
+     *  - 2194 units is 3839.5 pixels. Skiko draws 3839 and stretches the picture over a
+     *    3841 pixel surface, which moves everything Compose draws by up to two pixels
+     *    against the native video surface: a white line along the right and bottom of
+     *    the video.
+     * So the window is sized here, in pixels, to the next size up that is a whole number
+     * of units and of pixels (3843x2163 = 2196x1236 units). What hangs over the monitor's
+     * edge is cut off with a window region, so it cannot show on a neighbouring monitor.
+     *
+     * Does nothing when the window is already that size, so it is safe to call again.
+     * [releaseMonitorCover] undoes the region on the way out of fullscreen.
+     *
+     * @return true when the window covers its monitor afterwards.
+     */
+    fun coverMonitor(window: Window): Boolean {
+        if (!isWindows) return false
+        return runCatching {
+            val ptr = Native.getWindowPointer(window) ?: return false
+            val hwnd = WinDef.HWND(ptr)
+            val u = User32.INSTANCE
+            val monitor = u.MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) ?: return false
+            val info = WinUser.MONITORINFO()
+            if (!u.GetMonitorInfo(monitor, info).booleanValue()) return false
+            val m = info.rcMonitor
+            val monitorWidth = m.right - m.left
+            val monitorHeight = m.bottom - m.top
+            val scale = window.graphicsConfiguration?.defaultTransform?.scaleX ?: 1.0
+            val width = FullscreenCover.sizePx(monitorWidth, scale)
+            val height = FullscreenCover.sizePx(monitorHeight, scale)
+            val now = WinDef.RECT()
+            if (u.GetWindowRect(hwnd, now) &&
+                now.left == m.left && now.top == m.top &&
+                now.right == m.left + width && now.bottom == m.top + height
+            ) {
+                return true
+            }
+            if (!u.SetWindowPos(hwnd, null, m.left, m.top, width, height, SWP_NOZORDER or SWP_NOACTIVATE)) return false
+            if (width != monitorWidth || height != monitorHeight) {
+                // The system owns the region once it is set; it must not be deleted here.
+                u.SetWindowRgn(hwnd, GDI32.INSTANCE.CreateRectRgn(0, 0, monitorWidth, monitorHeight), true)
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    /** Removes the region [coverMonitor] may have set. Call when the window leaves fullscreen. */
+    fun releaseMonitorCover(window: Window) {
+        if (!isWindows) return
+        runCatching {
+            val ptr = Native.getWindowPointer(window) ?: return
+            User32.INSTANCE.SetWindowRgn(WinDef.HWND(ptr), null, true)
+        }
+    }
+
     /**
      * When the window is maximized, shrinks the proposed client RECT (rgrc[0] of
      * the NCCALCSIZE_PARAMS that [lParam] points at) by the frame metrics. Without
@@ -269,5 +334,34 @@ object WindowsNative {
             else -> return null
         }
         return WinDef.LRESULT(code.toLong())
+    }
+}
+
+/** The size a borderless fullscreen window needs on a monitor, in real pixels. */
+object FullscreenCover {
+    /**
+     * The smallest size, in pixels, that covers [monitorPx] and is a whole number of both
+     * pixels and scaled units at display [scale]. At a whole scale that is the monitor
+     * itself; at 175% sizes come in steps of 7 pixels (4 units), so 3840 becomes 3843.
+     */
+    fun sizePx(monitorPx: Int, scale: Double): Int {
+        val step = stepPx(scale)
+        return if (step <= 1) monitorPx else (monitorPx + step - 1) / step * step
+    }
+
+    /**
+     * Pixels in the smallest run of whole units that is also a whole number of pixels:
+     * 2 at 200% (1 unit), 3 at 150% (2 units), 5 at 125% and 7 at 175% (4 units). Windows
+     * offers scales in steps of 25%, so 4 units always works; anything else returns 1, which
+     * leaves the size alone.
+     */
+    fun stepPx(scale: Double): Int {
+        if (scale.isNaN() || scale <= 0.0) return 1
+        for (units in 1..4) {
+            val px = units * scale
+            val whole = Math.rint(px)
+            if (Math.abs(px - whole) < 1e-6) return whole.toInt().coerceAtLeast(1)
+        }
+        return 1
     }
 }

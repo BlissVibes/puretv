@@ -71,6 +71,10 @@ import com.puretv.twitch.desktop.ui.theme.PureTvTheme
 import com.puretv.twitch.desktop.ui.theme.PureTvType
 import com.puretv.twitch.core.emotes.SevenTvPaint
 import com.puretv.twitch.desktop.ui.chat.rememberNamePaintBrush
+import com.puretv.twitch.desktop.ui.chat.ChatLineFlow
+import com.puretv.twitch.desktop.ui.chat.LocalChatSelection
+import com.puretv.twitch.desktop.ui.chat.chatWords
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
@@ -413,16 +417,29 @@ fun ChatMessageRow(
     // and an animated colour per row is a state holder and a coroutine per message.
     val rowInteraction = remember { MutableInteractionSource() }
     val rowHovered by rowInteraction.collectIsHoveredAsState()
+    // The reply arrow shows only on the message the viewer clicked (one per chat list).
+    val listSelection = LocalChatSelection.current
+    val ownSelection = remember { mutableStateOf(false) }
+    val selected = onReply != null && if (listSelection != null) listSelection.selectedId == message.id else ownSelection.value
+    val toggleSelected = {
+        if (listSelection != null) listSelection.toggle(message.id) else ownSelection.value = !ownSelection.value
+    }
     val rowFill = when {
         message.mentionsSelf -> c.primaryContainer
+        selected -> c.surfaceHighest
         rowHovered -> c.surfaceHigh
         else -> Color.Transparent
     }
+    val clickInteraction = remember { MutableInteractionSource() }
     val rowModifier = modifier
         .fillMaxWidth()
         .clip(PureTvTheme.shapes.mdShape)
         .background(rowFill)
         .hoverable(rowInteraction)
+        .then(
+            if (onReply != null) Modifier.clickable(interactionSource = clickInteraction, indication = null, onClick = toggleSelected)
+            else Modifier,
+        )
         .padding(horizontal = if (appearance.compact) 8.dp else 12.dp, vertical = if (appearance.compact) 2.dp else 7.dp)
     Column(modifier = rowModifier) {
         val parentName = message.replyParentDisplayName
@@ -436,98 +453,108 @@ fun ChatMessageRow(
                 modifier = Modifier.padding(start = 2.dp, bottom = 1.dp),
             )
         }
-        FlowRow(
+        // First child: timestamp, badges and "Name:" as one piece. Then the message, word
+        // by word and emote by emote, so it wraps like text and can start right after the
+        // name (see ChatLineFlow and Settings > Chat > Long messages). Last, when this
+        // message is selected, its reply arrow.
+        ChatLineFlow(
+            mode = appearance.longMessageBreak,
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            trailing = if (selected) 1 else 0,
         ) {
-        if (showTimestamps) {
-            val ts = remember(message.timestamp) { formatClock(message.timestamp) }
-            Text(ts, style = PureTvType.dataSmall, color = c.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.padding(end = 2.dp))
-        }
-        val badgeIndex = LocalBadgeIndex.current
-        val resolvedBadges = if (badgeIndex === BadgeIndex.EMPTY) emptyList()
-            else message.badges.mapNotNull { badgeIndex.resolve(it.setId, it.version) }
-        if (!appearance.showBadges) {
-            // Badges turned off in Settings > Chat: name and message only.
-        } else if (resolvedBadges.isNotEmpty()) {
-            // Badge art is already square (BadgeIndex resolves the 2x CDN image),
-            // so a fixed square box is correct here, no aspect-ratio bug to fix.
-            resolvedBadges.forEach { EmoteImage(it.url, it.title, Modifier.size(18.dp)) }
-        } else {
-            // Badge art not loaded yet (or this channel returned none), so fall back to
-            // the lightweight text chips so rank is still legible.
-            if (message.isBroadcaster) ChatBadge("HOST", c.primary, c.onPrimary)
-            else if (message.isModerator) ChatBadge("MOD", c.tertiaryContainer, c.onTertiaryContainer)
-            if (message.isSubscriber) ChatBadge("SUB", c.secondaryContainer, c.onSecondaryContainer)
-        }
-
-        // A 7TV name paint is a span brush, which wins over the plain name colour
-        // and fits its gradient to the name. Built once per row and paint, and lifted
-        // when it is too close to the chat background to read.
-        val nameBrush = rememberNamePaintBrush(namePaint, c.surfaceContainer)
-        val paintedName = remember(message.displayName, nameBrush) {
-            nameBrush?.let { brush ->
-                buildAnnotatedString { withStyle(SpanStyle(brush = brush)) { append(message.displayName) } }
-            }
-        }
-        if (paintedName != null) {
-            Text(
-                paintedName,
-                color = nameColor,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-        } else {
-            Text(
-                message.displayName,
-                color = nameColor,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-            )
-        }
-
-        if (message.deleted) {
-            // Moderator removed this message (timeout/ban/delete). Tombstone it
-            // instead of dropping the row so the thread stays readable.
-            Text(
-                "<message deleted>",
-                color = c.onSurfaceVariant,
-                style = MaterialTheme.typography.bodyMedium,
-                fontStyle = FontStyle.Italic,
-            )
-        } else {
-            val parts = message.parsedParts.ifEmpty { listOf(MessagePart.Text(message.message)) }
-            parts.forEach { part ->
-                when (part) {
-                    is MessagePart.Text -> Text(part.content, color = c.onSurface, style = MaterialTheme.typography.bodyLarge)
-                    is MessagePart.TwitchEmote -> StackedEmote(
-                        "https://static-cdn.jtvnw.net/emoticons/v2/${part.id}/default/dark/2.0",
-                        part.name,
-                        animated = false,
-                        part.overlays,
-                        // Twitch enforces a square emote canvas, so the fixed square
-                        // box is already correct. Skip the height-only path (and its
-                        // load-time reflow) for the majority of emotes in most chats.
-                        naturalAspect = false,
-                    )
-                    is MessagePart.ThirdPartyEmote -> StackedEmote(part.url, part.name, part.animated, part.overlays)
-                }
-            }
-        }
-        if (onReply != null) {
-            IconButton(
-                onClick = { onReply(message) },
-                modifier = Modifier.size(18.dp),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Icon(
-                    Icons.AutoMirrored.Filled.Reply,
-                    contentDescription = "Reply",
-                    tint = c.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp),
+                if (showTimestamps) {
+                    val ts = remember(message.timestamp) { formatClock(message.timestamp) }
+                    Text(ts, style = PureTvType.dataSmall, color = c.onSurfaceVariant.copy(alpha = 0.6f), modifier = Modifier.padding(end = 2.dp))
+                }
+                val badgeIndex = LocalBadgeIndex.current
+                val resolvedBadges = if (badgeIndex === BadgeIndex.EMPTY) emptyList()
+                    else message.badges.mapNotNull { badgeIndex.resolve(it.setId, it.version) }
+                if (!appearance.showBadges) {
+                    // Badges turned off in Settings > Chat: name and message only.
+                } else if (resolvedBadges.isNotEmpty()) {
+                    // Badge art is already square (BadgeIndex resolves the 2x CDN image),
+                    // so a fixed square box is correct here, no aspect-ratio bug to fix.
+                    resolvedBadges.forEach { EmoteImage(it.url, it.title, Modifier.size(18.dp)) }
+                } else {
+                    // Badge art not loaded yet (or this channel returned none), so fall back to
+                    // the lightweight text chips so rank is still legible.
+                    if (message.isBroadcaster) ChatBadge("HOST", c.primary, c.onPrimary)
+                    else if (message.isModerator) ChatBadge("MOD", c.tertiaryContainer, c.onTertiaryContainer)
+                    if (message.isSubscriber) ChatBadge("SUB", c.secondaryContainer, c.onSecondaryContainer)
+                }
+
+                // A 7TV name paint is a span brush, which wins over the plain name colour
+                // and fits its gradient to the name. Built once per row and paint, and lifted
+                // when it is too close to the chat background to read. The colon after the
+                // name is plain text colour, as on Twitch.
+                val nameBrush = rememberNamePaintBrush(namePaint, c.surfaceContainer)
+                val colonColor = c.onSurface
+                val name = remember(message.displayName, nameBrush, nameColor, colonColor) {
+                    buildAnnotatedString {
+                        withStyle(if (nameBrush != null) SpanStyle(brush = nameBrush) else SpanStyle(color = nameColor)) {
+                            append(message.displayName)
+                        }
+                        withStyle(SpanStyle(color = colonColor, fontWeight = FontWeight.Normal)) { append(":") }
+                    }
+                }
+                Text(
+                    name,
+                    color = nameColor,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
                 )
             }
-        }
+
+            if (message.deleted) {
+                // Moderator removed this message (timeout/ban/delete). Tombstone it
+                // instead of dropping the row so the thread stays readable.
+                Text(
+                    "<message deleted>",
+                    color = c.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontStyle = FontStyle.Italic,
+                )
+            } else {
+                val parts = message.parsedParts.ifEmpty { listOf(MessagePart.Text(message.message)) }
+                parts.forEach { part ->
+                    when (part) {
+                        is MessagePart.Text -> chatWords(part.content).forEach { word ->
+                            Text(word, color = c.onSurface, style = MaterialTheme.typography.bodyLarge)
+                        }
+                        is MessagePart.TwitchEmote -> StackedEmote(
+                            "https://static-cdn.jtvnw.net/emoticons/v2/${part.id}/default/dark/2.0",
+                            part.name,
+                            animated = false,
+                            part.overlays,
+                            // Twitch enforces a square emote canvas, so the fixed square
+                            // box is already correct. Skip the height-only path (and its
+                            // load-time reflow) for the majority of emotes in most chats.
+                            naturalAspect = false,
+                        )
+                        is MessagePart.ThirdPartyEmote -> StackedEmote(part.url, part.name, part.animated, part.overlays)
+                    }
+                }
+            }
+            if (selected && onReply != null) {
+                IconButton(
+                    onClick = {
+                        onReply(message)
+                        if (listSelection != null) listSelection.clear() else ownSelection.value = false
+                    },
+                    modifier = Modifier.size(22.dp),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Reply,
+                        contentDescription = "Reply",
+                        tint = c.primary,
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
         }
     }
 }

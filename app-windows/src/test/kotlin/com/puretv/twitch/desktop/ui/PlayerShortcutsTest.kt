@@ -12,7 +12,8 @@ class PlayerShortcutsTest {
 
     @Test fun existingShortcutsStillWork() {
         assertEquals(ShortcutAction.ToggleFullscreen, action(KeyEvent.VK_F))
-        assertEquals(ShortcutAction.ToggleTheater, action(KeyEvent.VK_T))
+        // Theater mode is hidden for now, so T does nothing.
+        assertNull(action(KeyEvent.VK_T))
         assertEquals(ShortcutAction.ToggleChat, action(KeyEvent.VK_C))
         assertEquals(ShortcutAction.TogglePlayPause, action(KeyEvent.VK_SPACE))
         assertEquals(ShortcutAction.ToggleStats, action(KeyEvent.VK_F3))

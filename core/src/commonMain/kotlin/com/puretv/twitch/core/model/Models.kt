@@ -300,6 +300,9 @@ data class AppSettings(
     val chatTimestamps: Boolean = false,
     val animateEmotes: Boolean = true,
     val chatFraction: Float = 0.5f,
+    // Desktop: where a long message starts, by LongMessageBreak.key: "always" (own line),
+    // "no_extra" (own line only when that adds no line) or "never" (right after the name).
+    val chatLongMessageBreak: String = "no_extra",
 
     // UI
     val theme: String = "dark", // palette key: dark (Violet Dusk), ember, teal, amoled, forest

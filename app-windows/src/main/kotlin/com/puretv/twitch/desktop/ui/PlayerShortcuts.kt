@@ -85,7 +85,8 @@ object PlayerShortcuts {
         if (keyChar == '?') return ShortcutAction.ToggleHelp
         return when (keyCode) {
             KeyEvent.VK_F -> if (shift) ShortcutAction.ToggleFullscreenWithChat else ShortcutAction.ToggleFullscreen
-            KeyEvent.VK_T -> ShortcutAction.ToggleTheater
+            // Theater mode is hidden for now (see the stream controls bar); T is kept for later.
+            // KeyEvent.VK_T -> ShortcutAction.ToggleTheater
             KeyEvent.VK_C -> ShortcutAction.ToggleChat
             KeyEvent.VK_SPACE -> ShortcutAction.TogglePlayPause
             // Esc only acts when there is something to leave, so a stray Esc elsewhere passes through.
@@ -136,7 +137,7 @@ object PlayerShortcuts {
         Help("Space", "Play or pause"),
         Help("F", "Fullscreen, video only"),
         Help("Shift + F", "Fullscreen with chat"),
-        Help("T", "Theater mode"),
+        // Help("T", "Theater mode"), // hidden with the mode, see actionForKey
         Help("C", "Show or hide chat"),
         Help("I", "Mini player"),
         Help("Esc", "Leave fullscreen, theater or the mini player"),

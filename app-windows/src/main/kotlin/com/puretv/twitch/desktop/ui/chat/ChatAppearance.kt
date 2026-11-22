@@ -11,6 +11,8 @@ data class ChatAppearance(
     val showTimestamps: Boolean = false,
     val showBadges: Boolean = true,
     val compact: Boolean = false,
+    /** Where a long message starts: under the name or right after it (Settings > Chat). */
+    val longMessageBreak: LongMessageBreak = LongMessageBreak.DEFAULT,
 )
 
 val LocalChatAppearance = staticCompositionLocalOf { ChatAppearance() }

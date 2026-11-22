@@ -194,7 +194,8 @@ private fun VodPlayerScreen(koin: Koin, launch: VodLaunch, windowPlayback: Windo
             if (m != PlayerMode.DEFAULT) resetControls()
             when (e.keyCode) {
                 KeyEvent.VK_F -> { shell.setPlayerMode(if (m == PlayerMode.FULLSCREEN) PlayerMode.DEFAULT else PlayerMode.FULLSCREEN); true }
-                KeyEvent.VK_T -> { shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER); true }
+                // Theater mode is hidden for now (see the live controls bar); T is kept for later.
+                // KeyEvent.VK_T -> { shell.setPlayerMode(if (m == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER); true }
                 KeyEvent.VK_C -> { shell.toggleChat(); true }
                 KeyEvent.VK_SPACE -> { viewModel.togglePlayPause(); true }
                 KeyEvent.VK_ESCAPE -> if (m != PlayerMode.DEFAULT) { shell.exitImmersive(); true } else false
@@ -491,13 +492,14 @@ private fun VodTopBar(
             style = if (isChatOpen) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
             boxSize = 48.dp,
         )
-        ExpressiveIconButton(
-            icon = ExpressiveIcons.AspectRatio,
-            contentDescription = "Theater mode",
-            onClick = onToggleTheater,
-            style = if (mode == PlayerMode.THEATER) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
-            boxSize = 48.dp,
-        )
+        // Theater mode, hidden for now like on the live screen; kept for later.
+        // ExpressiveIconButton(
+        // icon = ExpressiveIcons.AspectRatio,
+        // contentDescription = "Theater mode",
+        // onClick = onToggleTheater,
+        // style = if (mode == PlayerMode.THEATER) ExpressiveButtonStyle.Tonal else ExpressiveButtonStyle.Text,
+        // boxSize = 48.dp,
+        // )
         ExpressiveIconButton(
             icon = if (mode == PlayerMode.FULLSCREEN) ExpressiveIcons.FullscreenExit else ExpressiveIcons.Fullscreen,
             contentDescription = "Fullscreen",

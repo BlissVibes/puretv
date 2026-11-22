@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.chat.LongMessageBreak
+
 import com.puretv.twitch.core.audio.AudioLevelling
 import androidx.compose.runtime.produceState
 import kotlinx.coroutines.Dispatchers
@@ -153,6 +155,8 @@ fun SettingsContent(koin: Koin, onExit: () -> Unit) {
             onCompact = { on -> settingsStore.updateSettings { it.copy(compactMode = on) } },
             showNamePaints = state.settings.showSevenTvPaints,
             onShowNamePaints = { on -> settingsStore.updateSettings { it.copy(showSevenTvPaints = on) } },
+            longMessageBreak = LongMessageBreak.parse(state.settings.chatLongMessageBreak),
+            onLongMessageBreak = { mode -> settingsStore.updateSettings { it.copy(chatLongMessageBreak = mode.key) } },
         )
         Spacer(Modifier.height(16.dp))
 
@@ -474,6 +478,8 @@ private fun ChatPanel(
     onCompact: (Boolean) -> Unit,
     showNamePaints: Boolean,
     onShowNamePaints: (Boolean) -> Unit,
+    longMessageBreak: LongMessageBreak,
+    onLongMessageBreak: (LongMessageBreak) -> Unit,
 ) {
     val c = PureTvTheme.colors
     ExpressivePanel {
@@ -502,6 +508,22 @@ private fun ChatPanel(
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(label = "Compact chat", description = "Tighter rows, so more messages fit on screen.") {
                 ExpressiveSwitch(checked = compact, onCheckedChange = onCompact)
+            }
+            ExpressiveDivider(Modifier.padding(vertical = 24.dp))
+            SettingsRow(
+                label = "Long messages on their own line",
+                description = when (longMessageBreak) {
+                    LongMessageBreak.ALWAYS -> "A message too long for the name's line starts on the line below the name."
+                    LongMessageBreak.NO_EXTRA -> "A long message starts below the name only when that adds no extra line. Otherwise it starts right after the name."
+                    LongMessageBreak.NEVER -> "Every message starts right after the name, which takes the least space."
+                },
+            ) {
+                SegmentedToggle(
+                    options = LongMessageBreak.entries,
+                    selected = longMessageBreak,
+                    label = { it.label },
+                    onSelect = onLongMessageBreak,
+                )
             }
             ExpressiveDivider(Modifier.padding(vertical = 24.dp))
             SettingsRow(

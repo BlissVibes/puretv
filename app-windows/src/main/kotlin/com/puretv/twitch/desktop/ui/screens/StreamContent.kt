@@ -1,5 +1,10 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.chat.ChatSelection
+import com.puretv.twitch.desktop.ui.chat.LocalChatSelection
+
+import com.puretv.twitch.desktop.ui.chat.LongMessageBreak
+
 import com.puretv.twitch.desktop.platform.AppRestart
 import com.puretv.twitch.desktop.player.DesktopPlayerProvider
 import androidx.compose.ui.text.withStyle
@@ -796,6 +801,7 @@ private fun StreamScreen(
                                 showTimestamps = appSettings.chatTimestamps,
                                 showBadges = appSettings.showBadges,
                                 compact = appSettings.compactMode,
+                                longMessageBreak = LongMessageBreak.parse(appSettings.chatLongMessageBreak),
                             ),
                         ) {
                             ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {
@@ -1158,8 +1164,11 @@ private fun ConnectedControlsGroup(
         GroupDivider()
         ControlsGroupButton(ExpressiveIcons.Chat, "Toggle chat", onToggleChat, tint = if (isChatOpen) c.primary else null)
         GroupDivider()
-        ControlsGroupButton(ExpressiveIcons.AspectRatio, "Theater mode", onToggleTheater, tint = if (mode == PlayerMode.THEATER) c.primary else null)
-        GroupDivider()
+        // Theater mode, hidden for now: it only added the app's title bar (with its
+        // new-window button) over a near-fullscreen player. The mode, its T key and
+        // this button are kept, commented out, in case it is wanted back.
+        // ControlsGroupButton(ExpressiveIcons.AspectRatio, "Theater mode", onToggleTheater, tint = if (mode == PlayerMode.THEATER) c.primary else null)
+        // GroupDivider()
         ControlsGroupButton(ExpressiveIcons.MiniPlayer, "Mini player", onToggleMini)
         GroupDivider()
         // Two fullscreens: the video alone (F) and the video with chat beside it (Shift+F).
@@ -1373,6 +1382,8 @@ internal fun ChatMessageList(
     val shapes = PureTvTheme.shapes
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    // The message whose reply arrow is showing (clicked), one per list.
+    val selection = remember { ChatSelection() }
 
     // Geometry only DETECTS the bottom; it does NOT gate auto-scroll (that's `following`).
     var following by remember { mutableStateOf(true) }
@@ -1406,7 +1417,9 @@ internal fun ChatMessageList(
             contentPadding = PaddingValues(vertical = 14.dp),
         ) {
             items(messages, key = { it.id }) {
-                ChatMessageRow(message = it, onReply = onReply, namePaint = namePaints[it.userId])
+                CompositionLocalProvider(LocalChatSelection provides selection) {
+                    ChatMessageRow(message = it, onReply = onReply, namePaint = namePaints[it.userId])
+                }
             }
         }
         // Twitch parity: paused while scrolled up. Clicking snaps to the bottom and resumes

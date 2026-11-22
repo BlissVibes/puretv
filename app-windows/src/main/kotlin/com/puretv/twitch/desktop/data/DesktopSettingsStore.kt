@@ -196,6 +196,9 @@ class DesktopSettingsStore(
         // Per-channel go-live alerts. Missing from older files, which then load with none.
         val notifyChannels: List<String> = emptyList(),
         val perChannelNoteDismissed: Boolean = false,
+        // Where a long chat message starts. Missing from older files, which then load
+        // with "no_extra" (see LongMessageBreak).
+        val chatLongMessageBreak: String = "no_extra",
     )
 
     private fun SettingsDto.toAppSettings() = AppSettings(
@@ -232,6 +235,7 @@ class DesktopSettingsStore(
         rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.mapTo(LinkedHashSet()) { it.lowercase() },
         perChannelNoteDismissed = perChannelNoteDismissed,
+        chatLongMessageBreak = chatLongMessageBreak,
         // `accessToken`/`username`/`userId` live in the encrypted token store
         // on desktop, not in plaintext settings — left at AppSettings defaults.
     )
@@ -270,6 +274,7 @@ class DesktopSettingsStore(
         rtxHdr = rtxHdr,
         notifyChannels = notifyChannels.sorted(),
         perChannelNoteDismissed = perChannelNoteDismissed,
+        chatLongMessageBreak = chatLongMessageBreak,
     )
 
     fun updateSettings(transform: (AppSettings) -> AppSettings) = synchronized(lock) {

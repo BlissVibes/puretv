@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.chat.LongMessageBreak
+
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
@@ -484,6 +486,7 @@ private fun MultiChatColumn(
                     showTimestamps = appSettings.chatTimestamps,
                     showBadges = appSettings.showBadges,
                     compact = appSettings.compactMode,
+                    longMessageBreak = LongMessageBreak.parse(appSettings.chatLongMessageBreak),
                 ),
             ) {
                 ChatScale(ChatTextSize.from(appSettings.chatFontSize).scale) {

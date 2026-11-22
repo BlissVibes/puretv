@@ -217,6 +217,16 @@ class AppShellController(
         windowState.placement = restore.placement
     }
 
+    /**
+     * The viewer slid the left navigation panel away from the player (the button beside
+     * Play). Only player screens honour it (see App), so leaving the stream always brings
+     * the panel back and there is never a page with no way to navigate.
+     */
+    private var railHiddenState by mutableStateOf(false)
+    val isRailHidden: Boolean get() = railHiddenState
+
+    fun toggleRail() { railHiddenState = !railHiddenState }
+
     fun toggleChat() {
         if (playerModeState == PlayerMode.FULLSCREEN) fullscreenChatState = !fullscreenChatState
         else isChatOpenState = !isChatOpenState

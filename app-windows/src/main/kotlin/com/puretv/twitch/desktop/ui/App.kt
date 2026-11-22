@@ -440,8 +440,11 @@ fun App(
                             .padding(start = gutter, end = gutter, bottom = gutter),
                         horizontalArrangement = Arrangement.spacedBy(gutter),
                     ) {
+                        // On a player screen the viewer can also slide the panel away (the
+                        // button beside Play); everywhere else it is always there.
+                        val onPlayer = route is Route.Stream || route is Route.Multi || route is Route.Vod
                         AnimatedVisibility(
-                            visible = !shell.isImmersive,
+                            visible = !shell.isImmersive && !(onPlayer && shell.isRailHidden),
                             enter = PureTvMotion.railEnter(),
                             exit = ExitTransition.None,
                         ) {

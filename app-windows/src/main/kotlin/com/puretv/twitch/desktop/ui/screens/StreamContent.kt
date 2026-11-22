@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.foundation.layout.requiredWidth
+
 import com.puretv.twitch.desktop.ui.chat.ChatSelection
 import com.puretv.twitch.desktop.ui.chat.LocalChatSelection
 
@@ -728,11 +730,11 @@ private fun StreamScreen(
                         settingsOpen = settingsMenuOpen,
                         mode = mode,
                         isChatOpen = isChatOpen,
-                        audioNormalizer = appSettings.audioNormalizer,
+                        railHidden = shell.isRailHidden,
+                        onToggleRail = shell::toggleRail,
                         onTogglePlayPause = viewModel::togglePlayPause,
                         onVolumeChange = viewModel::setVolume,
                         onToggleMute = viewModel::toggleMute,
-                        onToggleAudioNormalizer = { setAudioNormalizer(!appSettings.audioNormalizer) },
                         onToggleSettings = { settingsMenuOpen = !settingsMenuOpen },
                         onToggleChat = { shell.toggleChat() },
                         onToggleTheater = { shell.setPlayerMode(if (mode == PlayerMode.THEATER) PlayerMode.DEFAULT else PlayerMode.THEATER) },
@@ -1016,11 +1018,11 @@ private fun PlaybackControls(
     settingsOpen: Boolean,
     mode: PlayerMode,
     isChatOpen: Boolean,
-    audioNormalizer: Boolean,
+    railHidden: Boolean,
+    onToggleRail: () -> Unit,
     onTogglePlayPause: () -> Unit,
     onVolumeChange: (Int) -> Unit,
     onToggleMute: () -> Unit,
-    onToggleAudioNormalizer: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
@@ -1041,13 +1043,13 @@ private fun PlaybackControls(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        // Slides the left navigation panel away for more video, and back. Fullscreen hides
+        // it anyway, so the button only matters in the normal window.
+        if (mode == PlayerMode.DEFAULT) {
+            SidePanelButton(hidden = railHidden, onClick = onToggleRail)
+        }
         PlayPauseButton(isPlaying = isPlaying, onClick = onTogglePlayPause)
-        VolumeButton(isMuted = isMuted || volume == 0, onClick = onToggleMute)
-        ExpressiveSlider(
-            value = volume / 100f,
-            onValueChange = { onVolumeChange((it * 100f).roundToInt()) },
-            modifier = Modifier.width(150.dp).padding(horizontal = 10.dp),
-        )
+        VolumeControl(volume = volume, isMuted = isMuted, onVolumeChange = onVolumeChange, onToggleMute = onToggleMute)
         Spacer(Modifier.weight(1f))
         LivePill()
         Spacer(Modifier.width(8.dp))
@@ -1055,8 +1057,6 @@ private fun PlaybackControls(
             settingsOpen = settingsOpen,
             isChatOpen = isChatOpen,
             mode = mode,
-            audioNormalizer = audioNormalizer,
-            onToggleAudioNormalizer = onToggleAudioNormalizer,
             onToggleSettings = onToggleSettings,
             onToggleChat = onToggleChat,
             onToggleTheater = onToggleTheater,
@@ -1095,6 +1095,79 @@ private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
     }
 }
 
+/**
+ * The speaker button, with the volume slider tucked away beside it. The slider slides out
+ * while the pointer is over the speaker or slider, while it is being dragged, and for a
+ * moment after the volume changes (Up/Down keys), so the bar keeps room for its other
+ * buttons in a narrow window. Clicking the speaker mutes, as before.
+ */
+@Composable
+private fun VolumeControl(volume: Int, isMuted: Boolean, onVolumeChange: (Int) -> Unit, onToggleMute: () -> Unit) {
+    val hover = remember { MutableInteractionSource() }
+    val hovered by hover.collectIsHoveredAsState()
+    var dragging by remember { mutableStateOf(false) }
+    var recentlyChanged by remember { mutableStateOf(false) }
+    var firstVolume by remember { mutableStateOf(true) }
+    LaunchedEffect(volume, isMuted) {
+        if (firstVolume) { firstVolume = false; return@LaunchedEffect }
+        recentlyChanged = true
+        delay(1500)
+        recentlyChanged = false
+    }
+    val open = hovered || dragging || recentlyChanged
+    val sliderWidth by animateDpAsState(
+        targetValue = if (open) 150.dp else 0.dp,
+        animationSpec = PureTvMotion.move(),
+        label = "volumeSlider",
+    )
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.hoverable(hover),
+    ) {
+        VolumeButton(isMuted = isMuted || volume == 0, onClick = onToggleMute)
+        if (sliderWidth > 0.dp) {
+            Box(Modifier.width(sliderWidth).clipToBounds()) {
+                ExpressiveSlider(
+                    value = volume / 100f,
+                    onValueChange = {
+                        dragging = true
+                        onVolumeChange((it * 100f).roundToInt())
+                    },
+                    onValueChangeFinished = { dragging = false },
+                    modifier = Modifier.requiredWidth(150.dp).padding(horizontal = 10.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Hides or shows the left navigation panel (see AppShellController.toggleRail). */
+@Composable
+private fun SidePanelButton(hidden: Boolean, onClick: () -> Unit) {
+    val c = PureTvTheme.colors
+    val interaction = remember { MutableInteractionSource() }
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(width = 52.dp, height = 56.dp)
+            .expressiveClickable(
+                interaction = interaction,
+                onClick = onClick,
+                restRadius = 28.dp,
+                hoverRadius = 14.dp,
+                color = c.surfaceHigh,
+                hoverColor = c.surfaceHighest,
+            ),
+    ) {
+        Icon(
+            ExpressiveIcons.Menu,
+            contentDescription = if (hidden) "Show side panel" else "Hide side panel",
+            tint = if (hidden) c.onSurfaceVariant else c.primary,
+            modifier = Modifier.size(24.dp),
+        )
+    }
+}
+
 @Composable
 private fun VolumeButton(isMuted: Boolean, onClick: () -> Unit) {
     val c = PureTvTheme.colors
@@ -1129,8 +1202,6 @@ private fun ConnectedControlsGroup(
     settingsOpen: Boolean,
     isChatOpen: Boolean,
     mode: PlayerMode,
-    audioNormalizer: Boolean,
-    onToggleAudioNormalizer: () -> Unit,
     onToggleSettings: () -> Unit,
     onToggleChat: () -> Unit,
     onToggleTheater: () -> Unit,
@@ -1146,20 +1217,8 @@ private fun ConnectedControlsGroup(
             .clip(RoundedCornerShape(28.dp))
             .background(c.surfaceHigh),
     ) {
-        // "Even out loud and quiet audio" (A): lit while it is on, like chat and theater.
-        // The sliders glyph reads as audio levels; the icon pack has no compressor symbol.
-        ControlsGroupButton(
-            ExpressiveIcons.Tune,
-            if (audioNormalizer) "Stop evening out audio" else "Even out loud and quiet audio",
-            onToggleAudioNormalizer,
-            tint = if (audioNormalizer) c.primary else null,
-        )
-        GroupDivider()
-        // No dedicated quick-quality flow exists in the ViewModel: resolution lives
-        // inside the same combined playback menu the gear opens, so this is a second
-        // entry point into that one menu rather than a distinct feature.
-        ControlsGroupButton(ExpressiveIcons.Quality, "Quality", onToggleSettings)
-        GroupDivider()
+        // Audio levelling (its own button before) lives in the gear menu and on the A key,
+        // and Quality (HD) opened that same menu, so the bar keeps just the gear.
         ControlsGroupButton(ExpressiveIcons.Settings, "Playback settings", onToggleSettings, tint = if (settingsOpen) c.primary else null)
         GroupDivider()
         ControlsGroupButton(ExpressiveIcons.Chat, "Toggle chat", onToggleChat, tint = if (isChatOpen) c.primary else null)

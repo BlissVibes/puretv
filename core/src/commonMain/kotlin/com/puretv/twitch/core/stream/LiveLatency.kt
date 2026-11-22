@@ -28,4 +28,7 @@ object LiveLatency {
      * late segment still has two more buffered behind it.
      */
     const val VLC_LIVE_DELAY_MS = 6_000L
+
+    /** VLC's own `adaptive-livedelay` when the setting is off (see `HlsLiveTiming.vlcStartMs`). */
+    const val VLC_DEFAULT_LIVE_DELAY_MS = 15_000L
 }

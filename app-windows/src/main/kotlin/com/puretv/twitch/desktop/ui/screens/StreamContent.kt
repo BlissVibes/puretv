@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.player.formatLiveDelay
 import com.puretv.twitch.desktop.ui.components.handCursor
 import androidx.compose.foundation.clickable
 import com.puretv.twitch.desktop.ui.components.FloatingPlayerChrome
@@ -678,6 +679,7 @@ private fun StreamScreen(
                     }
                     PlaybackControls(
                         isPlaying = playerStatus.isPlaying,
+                        liveDelayMs = playerStatus.liveDelayMs,
                         volume = playerStatus.volume,
                         isMuted = playerStatus.isMuted,
                         settingsOpen = settingsMenuOpen,
@@ -1059,6 +1061,7 @@ private val TOP_BAR_COMPACT_WIDTH = 760.dp
 @Composable
 private fun PlaybackControls(
     isPlaying: Boolean,
+    liveDelayMs: Long?,
     volume: Int,
     isMuted: Boolean,
     settingsOpen: Boolean,
@@ -1098,6 +1101,7 @@ private fun PlaybackControls(
         VolumeControl(volume = volume, isMuted = isMuted, onVolumeChange = onVolumeChange, onToggleMute = onToggleMute)
         Spacer(Modifier.weight(1f))
         LivePill()
+        LiveDelayReadout(liveDelayMs)
         Spacer(Modifier.width(8.dp))
         ConnectedControlsGroup(
             settingsOpen = settingsOpen,
@@ -1112,6 +1116,23 @@ private fun PlaybackControls(
             onToggleMini = onToggleMini,
         )
     }
+}
+
+/**
+ * How far behind live the picture is, in seconds, beside the LIVE badge. It holds while the
+ * stream plays and while it is paused, and steps up when a pause or a rebuffer ends.
+ * Nothing when it cannot be told (see LiveDelay.kt).
+ */
+@Composable
+private fun LiveDelayReadout(delayMs: Long?) {
+    if (delayMs == null) return
+    Text(
+        formatLiveDelay(delayMs),
+        style = PureTvType.data,
+        color = PureTvTheme.colors.onSurfaceVariant,
+        maxLines = 1,
+        softWrap = false,
+    )
 }
 
 /** Filled primary pill; morphs 28→14dp radius on hover and compresses on press. */

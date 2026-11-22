@@ -144,6 +144,8 @@ data class PlayerStatus(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val isSeekable: Boolean = false,
+    /** Live streams: milliseconds the picture is behind live (see LiveDelay.kt). Null when it cannot be told. */
+    val liveDelayMs: Long? = null,
 )
 
 /**

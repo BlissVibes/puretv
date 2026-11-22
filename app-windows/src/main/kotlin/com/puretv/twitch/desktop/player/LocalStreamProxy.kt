@@ -217,7 +217,8 @@ class LocalStreamProxy(
     private val variantFallback = VariantFallback()
 
     private sealed interface VariantFetch {
-        class Playlist(val body: String) : VariantFetch
+        /** [dateMs]: the response's `Date` header, a reading of Twitch's clock (see LiveTimingBoard). */
+        class Playlist(val body: String, val dateMs: Long? = null) : VariantFetch
         class Failed(val status: HttpStatusCode, val reason: String) : VariantFetch
     }
 
@@ -237,7 +238,7 @@ class LocalStreamProxy(
                 when {
                     !response.status.isSuccess() -> VariantFetch.Failed(response.status, "HTTP ${response.status.value}")
                     !body.trimStart().startsWith("#EXTM3U") -> VariantFetch.Failed(HttpStatusCode.BadGateway, "not a playlist")
-                    else -> return VariantFetch.Playlist(body)
+                    else -> return VariantFetch.Playlist(body, httpDateMs(response.headers["Date"]))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -249,6 +250,13 @@ class LocalStreamProxy(
         }
         return outcome
     }
+    /** An HTTP `Date` header (`Sun, 22 Nov 2026 09:26:54 GMT`) as epoch milliseconds, or null. */
+    private fun httpDateMs(header: String?): Long? = header?.let {
+        runCatching {
+            java.time.ZonedDateTime.parse(it.trim(), java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME).toInstant().toEpochMilli()
+        }.getOrNull()
+    }
+
     private val lastSuccess = AtomicReference<FetchSnapshot?>(null)
     private val lastFailure = AtomicReference<FetchSnapshot?>(null)
     private val lastVariant = AtomicReference<FetchSnapshot?>(null)
@@ -318,6 +326,8 @@ class LocalStreamProxy(
 
                     totalRequests.incrementAndGet()
                     streamFailures.remove(channel.lowercase())
+                    // A player is joining: the playlist it is served next is where it starts.
+                    LiveTimingBoard.onMasterRequested(channel)
                     // A new play of this channel: its reports count again. Multi-stream tiles
                     // (they send a cap) claim their own channel when they open, so a request
                     // from a tile that was just closed cannot bring the channel back to life.
@@ -470,7 +480,9 @@ class LocalStreamProxy(
                         }
                         return@get
                     }
-                    (fetched as VariantFetch.Playlist).body.let { raw ->
+                    val fetchedAtMono = monoNowMs()
+                    val fetchedDateMs = (fetched as VariantFetch.Playlist).dateMs
+                    fetched.body.let { raw ->
                         // Backup swap, strip, and the timeline normalization that keeps
                         // VLC's view continuous across player-type sessions (a backup's
                         // MEDIA-SEQUENCE can differ by thousands from the primary's).
@@ -510,6 +522,8 @@ class LocalStreamProxy(
                             ),
                         )
                         variantFallback.remember(originalUrl, deliveredText)
+                        // For the stream delay readout: the timeline the player was just handed.
+                        LiveTimingBoard.onVariantServed(channel, deliveredText, fetchedAtMono, fetchedDateMs)
                         call.respondText(
                             text = deliveredText,
                             contentType = ContentType.parse("application/vnd.apple.mpegurl"),

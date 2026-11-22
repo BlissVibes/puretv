@@ -73,6 +73,10 @@ class VlcPlayer(
         object : MediaPlayerEventAdapter() {
             override fun playing(mediaPlayer: MediaPlayer) {
                 _status.update { it.copy(isPlaying = true, isBuffering = false, error = null) }
+                liveTracker?.let {
+                    it.release(monoNowMs())
+                    publishLiveDelay()
+                }
                 if (pauseAfterStart) {
                     // A reload of a video the viewer had paused: show it again, paused.
                     pauseAfterStart = false
@@ -103,6 +107,8 @@ class VlcPlayer(
 
             override fun paused(mediaPlayer: MediaPlayer) {
                 pausedByUser = true
+                // The picture stops here while live moves on; the delay steps up at play.
+                liveTracker?.hold(monoNowMs())
                 _status.update { it.copy(isPlaying = false) }
             }
 
@@ -112,6 +118,15 @@ class VlcPlayer(
 
             override fun buffering(mediaPlayer: MediaPlayer, newCache: Float) {
                 _status.update { it.copy(isBuffering = newCache < 100f) }
+                // A rebuffer holds the picture as a pause does; it moves again at 100.
+                liveTracker?.let {
+                    if (newCache < 100f) {
+                        it.hold(monoNowMs())
+                    } else if (!pausedByUser) {
+                        it.release(monoNowMs())
+                        publishLiveDelay()
+                    }
+                }
             }
 
             override fun error(mediaPlayer: MediaPlayer) {
@@ -130,6 +145,8 @@ class VlcPlayer(
                     if (VodPlayback.shouldPublishTime(lastGoodMs, newTime)) _status.update { it.copy(positionMs = newTime) }
                 } else {
                     _status.update { it.copy(positionMs = newTime) }
+                    // The one time report of a live start arrives with its first picture.
+                    onLiveFirstPicture()
                 }
                 // libVLC forgets a volume set before its audio output exists, and starts
                 // that output muted: measured on a live tile, VLC read back volume 0 and
@@ -235,7 +252,9 @@ class VlcPlayer(
     private val _status = MutableStateFlow(
         if (mediaPlayer == null) PlayerStatus(
             error = NativeLibs.vlcMissingMessage(packaged = System.getProperty("compose.application.resources.dir") != null),
-        ) else PlayerStatus(),
+        // -Dpuretv.diag.startMuted=true: silent from the first frame, for test runs beside
+        // someone who is working (M unmutes as usual).
+        ) else PlayerStatus(isMuted = System.getProperty("puretv.diag.startMuted") == "true"),
     )
     override val status: StateFlow<PlayerStatus> = _status.asStateFlow()
 
@@ -355,6 +374,8 @@ class VlcPlayer(
         // default; low latency starts it LiveLatency.VLC_LIVE_DELAY_MS back.
         val options = if (lowLatency) arrayOf(":adaptive-livedelay=${LiveLatency.VLC_LIVE_DELAY_MS}") else emptyArray()
         isVod = false
+        liveChannel = LIVE_CHANNEL.find(streamUrl)?.groupValues?.get(1)
+        liveDelayOptionMs = if (lowLatency) LiveLatency.VLC_LIVE_DELAY_MS else LiveLatency.VLC_DEFAULT_LIVE_DELAY_MS
         start(streamUrl, options)
     }
 
@@ -373,6 +394,37 @@ class VlcPlayer(
 
     // True once a past video was started: its reloads resume at the current position.
     @Volatile private var isVod = false
+
+    // Stream delay (see LiveDelay.kt). The channel comes from the proxy URL being played;
+    // the tracker is made on the first time report of each start.
+    @Volatile private var liveChannel: String? = null
+    @Volatile private var liveDelayOptionMs = LiveLatency.VLC_DEFAULT_LIVE_DELAY_MS
+    @Volatile private var liveTracker: LiveDelayTracker? = null
+
+    /**
+     * The first picture of a live start is on screen: tie it to its broadcast time. Does
+     * nothing when the playlist carried no broadcast times or no reading of Twitch's clock.
+     */
+    private fun onLiveFirstPicture() {
+        if (liveTracker != null) return
+        val channel = liveChannel ?: return
+        val first = LiveTimingBoard.first(channel) ?: return
+        val tracker = LiveDelayTracker(liveDelayOptionMs)
+        if (!tracker.start(first.timing, monoNowMs())) return
+        liveTracker = tracker
+        publishLiveDelay()
+        TimingLog.log("player.live_delay", _status.value.liveDelayMs ?: -1, "segments=${first.timing.segments.size} livedelay=${liveDelayOptionMs}ms")
+        // Twitch's clock is read off each playlist, late by the trip here; a few more
+        // playlists in, the reading is as good as it gets.
+        Timer(5_000) { if (liveTracker === tracker) publishLiveDelay() }.apply { isRepeats = false }.start()
+    }
+
+    private fun publishLiveDelay() {
+        val channel = liveChannel ?: return
+        val server = LiveTimingBoard.serverMinusMonoMs(channel)
+        val delay = if (server == null) null else liveTracker?.delayMs(server)
+        _status.update { it.copy(liveDelayMs = delay) }
+    }
 
     // The last place the video was really at (see [VodPlayback.nextGood]); reloads start here.
     @Volatile var lastGoodMs = 0L
@@ -430,6 +482,9 @@ class VlcPlayer(
      */
     private fun playOnWorker(mp: EmbeddedMediaPlayer, url: String, options: Array<String>, failure: String) {
         if (mp !== mediaPlayer) return
+        // Every start joins the stream at a new place: measure the delay afresh.
+        liveTracker = null
+        _status.update { it.copy(liveDelayMs = null) }
         runCatching { mp.media().play(url, *options) }.onFailure { e ->
             if (e is IllegalStateException) {
                 SwingUtilities.invokeLater { if (mediaPlayer === mp) attachedComponent = null }
@@ -476,7 +531,11 @@ class VlcPlayer(
         } else currentOptions
         vlc {
             if (mp !== mediaPlayer) return@vlc
-            if (mp.status().state() == State.PAUSED) mp.controls().play()
+            // A past video carries on from where it was paused. A live stream starts again,
+            // which rejoins it at live: carrying on would leave the picture behind by
+            // however long it was paused. (Before: every paused stream carried on.)
+            // if (mp.status().state() == State.PAUSED) mp.controls().play()
+            if (isVod && mp.status().state() == State.PAUSED) mp.controls().play()
             else if (url != null) {
                 pauseAfterStart = false
                 playOnWorker(mp, url, options, "Playback start failed")
@@ -890,3 +949,6 @@ class VlcPlayer(
         }
     }
 }
+
+/** The channel in a local proxy stream URL (`.../stream?channel=<login>&...`). */
+private val LIVE_CHANNEL = Regex("[?&]channel=([A-Za-z0-9_]+)")

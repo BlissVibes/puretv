@@ -833,6 +833,13 @@ class StreamViewModel(
         vlcPlayer.play(url, lowLatency = settingsStore.settings.value.lowLatencyMode)
     }
 
+    /** Low latency from the player menu: saved, and the stream starts again so it applies now. */
+    fun setLowLatency(on: Boolean) {
+        if (settingsStore.settings.value.lowLatencyMode == on) return
+        settingsStore.updateSettings { it.copy(lowLatencyMode = on) }
+        if (_state.value.playableUrl != null) playAt(_state.value.currentQuality)
+    }
+
     /** A quality picked in the player: played now and kept for next time (see [StreamQuality.preferenceFor]). */
     fun setQuality(quality: StreamQuality) {
         playAt(quality)

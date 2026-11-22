@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.EnterTransition
 import androidx.compose.foundation.layout.requiredWidth
 
 import com.puretv.twitch.desktop.ui.chat.ChatSelection
@@ -215,13 +217,18 @@ fun StreamContent(
     onOpenMultiView: () -> Unit = {},
     // Owned by App, so the timer carries on into multi-stream.
     sleep: SleepSession = remember { SleepSession() },
+    // Docked: the small corner player shown while the viewer browses (see App). Video
+    // and a strip of controls only; [onExpand] goes back to the full screen.
+    docked: Boolean = false,
+    onExpand: () -> Unit = {},
+    onCloseDocked: () -> Unit = {},
 ) {
     val windowPlayback = LocalWindowPlayback.current ?: remember { koin.get<WindowPlayback>() }
     val prewarm = LocalStreamPrewarm.current
     // Never wait for the player on the UI thread (see PlayerGate). While it starts, the
     // stream itself is resolved (token and playlist), so the two do not run one after the other.
     PlayerGate(windowPlayback, onBack, whileStarting = { prewarm?.invoke(channelLogin) }) {
-        StreamScreen(koin, channelLogin, windowPlayback, onBack, onRequestSignIn, onFlip, onOpenMultiView, sleep)
+        StreamScreen(koin, channelLogin, windowPlayback, onBack, onRequestSignIn, onFlip, onOpenMultiView, sleep, docked, onExpand, onCloseDocked)
     }
 }
 
@@ -235,6 +242,9 @@ private fun StreamScreen(
     onFlip: (String) -> Unit,
     onOpenMultiView: () -> Unit,
     sleep: SleepSession,
+    docked: Boolean,
+    onExpand: () -> Unit,
+    onCloseDocked: () -> Unit,
 ) {
     val viewModel = rememberDesktopViewModel(channelLogin) {
         koin.get<StreamViewModel> { parametersOf(channelLogin, windowPlayback) }
@@ -263,7 +273,8 @@ private fun StreamScreen(
     val bell = rememberAlertBell(settingsStore, channelLogin, state.channel?.displayName ?: channelLogin)
     val shell = LocalAppShell.current
     val mode = shell.playerMode
-    val mini = mode == PlayerMode.MINI
+    // The docked corner player lays out like the mini player: video and a strip, nothing else.
+    val mini = mode == PlayerMode.MINI || docked
     val isChatOpen = shell.isChatOpen && !mini
     val c = PureTvTheme.colors
 
@@ -272,7 +283,7 @@ private fun StreamScreen(
     // chrome goes fully edge-to-edge when immersive, and back into the "separate
     // rounded cards" look the moment the user returns to DEFAULT. In one step, like
     // the shell: easing the padding would resize the video surface on every frame.
-    val immersive = mode != PlayerMode.DEFAULT
+    val immersive = mode != PlayerMode.DEFAULT || docked
     val groundPad = if (immersive) 0.dp else 8.dp
     val panelRadius = if (immersive) 0.dp else 24.dp
 
@@ -310,11 +321,12 @@ private fun StreamScreen(
     fun resetControls() {
         controlsVisible = true
         hideJob?.cancel()
-        if (currentMode != PlayerMode.DEFAULT) {
-            hideJob = scope.launch {
-                delay(PureTvMotion.ControlsAutoHideMs)
-                controlsVisible = false
-            }
+        // Fullscreen hides the bars quickly; the normal window waits longer, for someone
+        // who has settled in to watch.
+        val idleMs = if (currentMode != PlayerMode.DEFAULT) PureTvMotion.ControlsAutoHideMs else PureTvMotion.ControlsAutoHideWindowedMs
+        hideJob = scope.launch {
+            delay(idleMs)
+            controlsVisible = false
         }
         sleep.onActivity()
     }
@@ -407,6 +419,7 @@ private fun StreamScreen(
     // spaces and the letters f/t/c, still reaches the chat box.
     var chatInputFocused by remember { mutableStateOf(false) }
     val latestMode = rememberUpdatedState(mode)
+    val latestDocked = rememberUpdatedState(docked)
     val latestChatFocused = rememberUpdatedState(chatInputFocused)
     val latestUpscaling = rememberUpdatedState(appSettings.upscalingMode)
     // F3 toggles the mpv upscaling stats overlay. It's drawn by mpv's own OSD (the
@@ -461,10 +474,15 @@ private fun StreamScreen(
                 heldKey = 0
                 return@KeyEventDispatcher false
             }
+            // Docked in the corner, the keyboard belongs to the page being browsed.
+            if (latestDocked.value) {
+                heldKey = 0
+                return@KeyEventDispatcher false
+            }
             // Any key press is the viewer being there (sleep timer), typing in chat included,
             // and it brings hidden controls back (resetControls also counts as activity).
             if (e.id == KeyEvent.KEY_PRESSED) {
-                if (latestMode.value != PlayerMode.DEFAULT) resetControls() else sleep.onActivity()
+                resetControls()
             }
             if (latestChatFocused.value) {
                 heldKey = 0
@@ -556,12 +574,16 @@ private fun StreamScreen(
     }
 
     // Compose never hears the mouse over the native video, which in fullscreen is everywhere.
-    NativePointerActivity(enabled = mode != PlayerMode.DEFAULT && !mini) { resetControls() }
+    NativePointerActivity(enabled = !mini) { resetControls() }
+    // The bars stay while a menu that lives between them is open.
+    val barsShown = (controlsVisible || settingsMenuOpen || helpOpen) && !mini
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(c.surfaceLowest)
+            // Black behind the video whenever it runs edge to edge, so the frame between a
+            // bar leaving and the video growing into its place is black, not the ground colour.
+            .background(if (immersive) Color.Black else c.surfaceLowest)
             .padding(groundPad)
             .pointerInput(mode) {
                 // Only genuine cursor movement counts as "activity". When the
@@ -594,9 +616,12 @@ private fun StreamScreen(
             ) {
                 // Top bar: always in DEFAULT, slides up when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
-                    visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
-                    enter = PureTvMotion.barEnter(fromTop = true),
-                    exit = PureTvMotion.barExit(fromTop = true, instant = mini),
+                    visible = barsShown,
+                    // The bars come and go in one step. A slide or fade here animated over a
+                    // video that then resized anyway, which read as a flash; one relayout is
+                    // also the cheapest thing to draw.
+                    enter = EnterTransition.None,
+                    exit = ExitTransition.None,
                 ) {
                     TopBar(
                         mode = mode,
@@ -664,7 +689,11 @@ private fun StreamScreen(
                                 onUserActivity = { resetControls() },
                                 // Mini player: a double click on the video goes back to the full window.
                                 onClick = if (mini) {
-                                    { if (miniDoubleClick.click(System.currentTimeMillis())) shell.setPlayerMode(PlayerMode.DEFAULT) }
+                                    {
+                                        if (miniDoubleClick.click(System.currentTimeMillis())) {
+                                            if (docked) onExpand() else shell.setPlayerMode(PlayerMode.DEFAULT)
+                                        }
+                                    }
                                 } else null,
                             )
                             else -> Text(
@@ -706,6 +735,8 @@ private fun StreamScreen(
                             onAudioNormalizerChange = viewModel::setAudioNormalizer,
                             audioLevelling = appSettings.audioLevelling,
                             onAudioLevellingSelected = viewModel::setAudioLevelling,
+                            lowLatency = appSettings.lowLatencyMode,
+                            onLowLatencyChange = viewModel::setLowLatency,
                         )
                     }
 
@@ -719,9 +750,9 @@ private fun StreamScreen(
 
                 // Controls bar: always in DEFAULT, slides down when idle in THEATER/FULLSCREEN
                 AnimatedVisibility(
-                    visible = (controlsVisible || mode == PlayerMode.DEFAULT) && !mini,
-                    enter = PureTvMotion.barEnter(fromTop = false),
-                    exit = PureTvMotion.barExit(fromTop = false, instant = mini),
+                    visible = barsShown,
+                    enter = EnterTransition.None,
+                    exit = ExitTransition.None,
                 ) {
                     PlaybackControls(
                         isPlaying = playerStatus.isPlaying,
@@ -746,7 +777,18 @@ private fun StreamScreen(
                     )
                 }
 
-                if (mini) {
+                if (docked) {
+                    DockedControlStrip(
+                        title = state.channel?.displayName ?: channelLogin,
+                        isPlaying = playerStatus.isPlaying,
+                        isMuted = playerStatus.isMuted || playerStatus.volume == 0,
+                        onTogglePlayPause = viewModel::togglePlayPause,
+                        onToggleMute = viewModel::toggleMute,
+                        onExpand = onExpand,
+                        onClose = onCloseDocked,
+                    )
+                }
+                if (mini && !docked) {
                     MiniControlStrip(
                         shell = shell,
                         title = flipTarget?.let { "Switching to $it" } ?: state.channel?.displayName ?: channelLogin,
@@ -1138,6 +1180,53 @@ private fun VolumeControl(volume: Int, isMuted: Boolean, onVolumeChange: (Int) -
                 )
             }
         }
+    }
+}
+
+/** The corner player's controls: channel name, play/pause, mute, back to full size, close. */
+@Composable
+private fun DockedControlStrip(
+    title: String,
+    isPlaying: Boolean,
+    isMuted: Boolean,
+    onTogglePlayPause: () -> Unit,
+    onToggleMute: () -> Unit,
+    onExpand: () -> Unit,
+    onClose: () -> Unit,
+) {
+    val c = PureTvTheme.colors
+    Row(
+        modifier = Modifier.fillMaxWidth().height(44.dp).background(c.surfaceContainer).padding(start = 12.dp, end = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.labelLarge,
+            color = c.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        ExpressiveIconButton(
+            icon = if (isPlaying) ExpressiveIcons.Pause else ExpressiveIcons.Play,
+            contentDescription = if (isPlaying) "Pause" else "Play",
+            onClick = onTogglePlayPause, boxSize = 36.dp, iconSize = 20.dp,
+        )
+        ExpressiveIconButton(
+            icon = if (isMuted) ExpressiveIcons.VolumeOff else ExpressiveIcons.VolumeUp,
+            contentDescription = if (isMuted) "Unmute" else "Mute",
+            onClick = onToggleMute, boxSize = 36.dp, iconSize = 20.dp,
+        )
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.Expand,
+            contentDescription = "Back to the stream",
+            onClick = onExpand, boxSize = 36.dp, iconSize = 20.dp,
+        )
+        ExpressiveIconButton(
+            icon = ExpressiveIcons.Close,
+            contentDescription = "Close the stream",
+            onClick = onClose, boxSize = 36.dp, iconSize = 20.dp,
+        )
     }
 }
 

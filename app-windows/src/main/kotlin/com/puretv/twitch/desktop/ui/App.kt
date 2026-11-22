@@ -1,5 +1,6 @@
 package com.puretv.twitch.desktop.ui
 
+import androidx.compose.foundation.border
 import androidx.compose.runtime.snapshotFlow
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import com.puretv.twitch.desktop.platform.WindowChrome
@@ -146,6 +147,9 @@ internal sealed class Route {
     data class Vod(val launch: VodLaunch) : Route()
 }
 
+// The corner player while browsing: a 16:9 picture over a 44dp strip of controls.
+private val DOCK_WIDTH = 400.dp
+private val DOCK_HEIGHT = 269.dp
 private val RAIL_EXPANDED = 236.dp
 private val RAIL_COLLAPSED = 88.dp
 
@@ -222,7 +226,11 @@ fun App(
     }
 
     val startScreen = remember { start.toStartScreen() }
-    var route by remember { mutableStateOf(startScreen.route) }
+    // The route, and the stream docked in the corner while browsing (see RouteHolder).
+    val nav = remember { RouteHolder(startScreen.route) }
+    var route by nav::current
+    val streamLogin = (route as? Route.Stream)?.login ?: nav.dockedLogin
+    val streamDocked = route !is Route.Stream && streamLogin != null
     // Text for the search box when a window opens on a search (see WindowDestination.Search).
     var searchSeed by remember { mutableStateOf(startScreen.searchQuery) }
     val windowNotice by registry.notice.collectAsState()
@@ -323,10 +331,12 @@ fun App(
             DisposableEffect(shell) { onDispose { if (!isPrimary) shell.exitImmersive() } }
             // Go-live toasts skip the channel that is open on screen. Multi-stream tells the
             // notifier about its own tiles (and clears them when it closes).
-            LaunchedEffect(route, windowVisible) {
+            LaunchedEffect(route, windowVisible, nav.dockedLogin) {
                 val r = route
-                onWatching(if (windowVisible && r is Route.Stream) r.login else null)
+                onWatching(if (windowVisible) (r as? Route.Stream)?.login ?: nav.dockedLogin else null)
             }
+            // A docked stream is the small normal player: never fullscreen or the mini window.
+            LaunchedEffect(streamDocked) { if (streamDocked) shell.exitImmersive() }
             // One sleep timer for watching: it carries from a stream into multi-stream and back,
             // and is off again once PureTV is on any other screen.
             val multiSession = remember { koin.get<MultiSession>() }
@@ -334,11 +344,11 @@ fun App(
             val multiRunning by multiSession.current.collectAsState()
             // Streams in their own windows are being watched too, wherever the main window is, and so
             // is a stream in any other PureTV window: the timer stays while any of them watches.
-            LaunchedEffect(route) {
+            LaunchedEffect(route, streamDocked) {
                 registry.setActivity(
                     windowId,
-                    playing = route is Route.Stream || route is Route.Vod,
-                    watching = route is Route.Stream || route is Route.Multi,
+                    playing = route is Route.Stream || route is Route.Vod || streamDocked,
+                    watching = route is Route.Stream || route is Route.Multi || streamDocked,
                 )
             }
             val allWindows by registry.windows.collectAsState()
@@ -358,6 +368,7 @@ fun App(
                     is Route.Multi -> route = if (r.login.isBlank()) Route.Top else Route.Channel(r.login)
                     else -> Unit
                 }
+                nav.dockedLogin = null // the timer stops the corner player too
             }
             // This window's place on the desktop, for the windows popped out of multi-stream to open elsewhere.
             LaunchedEffect(multiSession, awtWindow) {
@@ -392,6 +403,8 @@ fun App(
                     resumeRoute = if (playing is Route.Multi) Route.Stream(playing.login) else playing
                     route = Route.Top
                 }
+                // Hidden, the corner player stops as well (the stream just left docks there).
+                nav.dockedLogin = null
             }
 
             // The window ground is the DEEPEST surface in the ladder, so the rail and
@@ -494,28 +507,9 @@ fun App(
                             // instantly: nothing is faded or moved around it. Every other screen
                             // eases in (see RouteTransition).
                             when (val r = route) {
-                                is Route.Stream -> StreamContent(
-                                    koin = koin,
-                                    channelLogin = r.login,
-                                    onBack = { route = Route.Channel(r.login) },
-                                    onRequestSignIn = {
-                                        destination = Destination.ACCOUNT
-                                        route = Route.Top
-                                    },
-                                    // Channel flipping swaps the stream in place.
-                                    onFlip = { login -> route = Route.Stream(login) },
-                                    onOpenMultiView = {
-                                        shell.exitImmersive()
-                                        if (registry.claimMultiGrid(windowId)) {
-                                            route = Route.Multi(r.login)
-                                        } else {
-                                            // Multi-stream is one session: it is open in another window.
-                                            registry.postNotice("Multi-stream is open in another window.")
-                                            registry.showMultiGridHolder(except = windowId)
-                                        }
-                                    },
-                                    sleep = sleep,
-                                )
+                                // Drawn after this `when`, at one fixed place in the tree, so the
+                                // same screen (player, chat, view model) carries on when it docks.
+                                is Route.Stream -> Unit
                                 is Route.Multi -> MultiViewContent(
                                     koin = koin,
                                     initialLogin = r.login,
@@ -583,6 +577,49 @@ fun App(
                                     Destination.SETTINGS -> SettingsContent(koin = koin, onExit = onQuit)
                                     Destination.ACCOUNT -> LoginContent(koin = koin)
                                 } }
+                            }
+                            // The live stream: the whole pane on its own route, or a small player
+                            // in the corner while the viewer browses the rest of the app.
+                            if (streamLogin != null) {
+                                Box(
+                                    modifier = if (streamDocked) {
+                                        Modifier
+                                            .align(Alignment.BottomEnd)
+                                            .padding(16.dp)
+                                            .size(DOCK_WIDTH, DOCK_HEIGHT)
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .border(1.dp, c.outlineVariant, RoundedCornerShape(16.dp))
+                                    } else {
+                                        Modifier.fillMaxSize()
+                                    },
+                                ) {
+                                    StreamContent(
+                                        koin = koin,
+                                        channelLogin = streamLogin,
+                                        // Docked, "back" (a player that will not start, the sleep timer) closes it.
+                                        onBack = { if (streamDocked) nav.dockedLogin = null else route = Route.Channel(streamLogin) },
+                                        onRequestSignIn = {
+                                            destination = Destination.ACCOUNT
+                                            route = Route.Top
+                                        },
+                                        // Channel flipping swaps the stream in place.
+                                        onFlip = { login -> route = Route.Stream(login) },
+                                        onOpenMultiView = {
+                                            shell.exitImmersive()
+                                            if (registry.claimMultiGrid(windowId)) {
+                                                route = Route.Multi(streamLogin)
+                                            } else {
+                                                // Multi-stream is one session: it is open in another window.
+                                                registry.postNotice("Multi-stream is open in another window.")
+                                                registry.showMultiGridHolder(except = windowId)
+                                            }
+                                        },
+                                        sleep = sleep,
+                                        docked = streamDocked,
+                                        onExpand = { route = Route.Stream(streamLogin) },
+                                        onCloseDocked = { nav.dockedLogin = null },
+                                    )
+                                }
                             }
                         }
                     }

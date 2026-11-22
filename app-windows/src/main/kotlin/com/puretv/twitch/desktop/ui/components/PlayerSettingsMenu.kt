@@ -72,6 +72,9 @@ fun PlayerSettingsMenu(
     onAudioNormalizerChange: (Boolean) -> Unit = {},
     audioLevelling: AudioLevelling = AudioLevelling.DEFAULT,
     onAudioLevellingSelected: (AudioLevelling) -> Unit = {},
+    // Live streams: play closer to live (the same setting as Settings > Playback). Null hides it.
+    lowLatency: Boolean? = null,
+    onLowLatencyChange: (Boolean) -> Unit = {},
 ) {
     val c = PureTvTheme.colors
     Column(
@@ -96,6 +99,24 @@ fun PlayerSettingsMenu(
                 PlayerMenuSection("Sleep timer") {
                     SleepTimerPulldown(sleepMinutes, onSleepSelected)
                 }
+            }
+        }
+        if (lowLatency != null) PlayerMenuSection("Latency") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Low latency", style = MaterialTheme.typography.titleSmall, color = c.onSurface)
+                    Text(
+                        "Plays a few seconds closer to live, so the stream keeps up with chat. Turn it off if the stream keeps pausing to buffer.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = c.onSurfaceVariant,
+                        modifier = Modifier.widthIn(max = 640.dp),
+                    )
+                }
+                ExpressiveSwitch(checked = lowLatency, onCheckedChange = onLowLatencyChange)
             }
         }
         if (rtx != null) PlayerMenuSection("NVIDIA RTX Video") {

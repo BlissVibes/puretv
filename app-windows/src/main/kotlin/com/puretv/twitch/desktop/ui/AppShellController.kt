@@ -189,7 +189,7 @@ class AppShellController(
         fullscreenRestore = currentGeometry()
         // macOS and Linux: the system's fullscreen, which hides their window frame too.
         if (WindowChrome.nativeFullscreen()) {
-            windowState.placement = WindowPlacement.Fullscreen
+            applyNativePlacement(WindowPlacement.Fullscreen)
             return
         }
         windowState.placement = WindowPlacement.Floating
@@ -206,7 +206,8 @@ class AppShellController(
         fullscreenRestore = null
         if (WindowChrome.nativeFullscreen()) {
             // The system puts the window back where it was; sizing it mid-transition fights that.
-            windowState.placement = restore.placement
+            // A window that was already fullscreen before (the green button) goes back to a normal one.
+            applyNativePlacement(restore.placement.takeIf { it != WindowPlacement.Fullscreen } ?: WindowPlacement.Floating)
             return
         }
         (window as? Frame)?.extendedState = Frame.NORMAL
@@ -226,6 +227,17 @@ class AppShellController(
     val isRailHidden: Boolean get() = railHiddenState
 
     fun toggleRail() { railHiddenState = !railHiddenState }
+
+    /**
+     * Asks the window itself as well as [windowState]. While macOS animates into its
+     * fullscreen Space, Compose can read the window as still floating and write that back
+     * into the state; leaving fullscreen through the state alone is then "no change" and
+     * is dropped, which left the window fullscreen with the normal layout in it.
+     */
+    private fun applyNativePlacement(placement: WindowPlacement) {
+        windowState.placement = placement
+        (window as? androidx.compose.ui.awt.ComposeWindow)?.let { if (it.placement != placement) it.placement = placement }
+    }
 
     fun toggleChat() {
         if (playerModeState == PlayerMode.FULLSCREEN) fullscreenChatState = !fullscreenChatState

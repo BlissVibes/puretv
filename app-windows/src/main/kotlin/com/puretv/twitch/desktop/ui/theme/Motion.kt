@@ -81,6 +81,8 @@ object PureTvMotion {
     const val Medium = 220
     const val Slow = 350
     const val ControlsAutoHideMs = 2800L
+    /** The same, in the normal window: longer, so the bars only leave once someone is just watching. */
+    const val ControlsAutoHideWindowedMs = 5000L
 
     /** Press-in scale for buttons, chips, rows. */
     const val PressScale = 0.97f

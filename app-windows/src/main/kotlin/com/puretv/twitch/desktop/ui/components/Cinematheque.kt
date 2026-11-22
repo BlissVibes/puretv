@@ -60,6 +60,7 @@ import com.puretv.twitch.core.adblock.AdBlockStatus
 import com.puretv.twitch.core.model.ChatMessage
 import com.puretv.twitch.core.model.EmoteLayer
 import com.puretv.twitch.core.model.MessagePart
+import com.puretv.twitch.desktop.ui.chat.ReplyContextLine
 import com.puretv.twitch.desktop.ui.chat.LocalChatAppearance
 import com.puretv.twitch.desktop.ui.emotes.AnimatedEmote
 import com.puretv.twitch.core.chat.BadgeIndex
@@ -444,14 +445,8 @@ fun ChatMessageRow(
     Column(modifier = rowModifier) {
         val parentName = message.replyParentDisplayName
         if (parentName != null) {
-            Text(
-                "replying to @" + parentName,
-                style = MaterialTheme.typography.labelSmall,
-                color = c.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(start = 2.dp, bottom = 1.dp),
-            )
+            // Who this answers and what they said; the whole quote shows on hover.
+            ReplyContextLine(parentName, message.replyParentBody, Modifier.padding(start = 2.dp, bottom = 1.dp))
         }
         // First child: timestamp, badges and "Name:" as one piece. Then the message, word
         // by word and emote by emote, so it wraps like text and can start right after the

@@ -1,5 +1,15 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+
+import androidx.compose.ui.unit.Dp
+
+import androidx.compose.ui.unit.Constraints
+
+import androidx.compose.ui.layout.Layout
+
+import androidx.compose.foundation.layout.FlowRow
+
 import com.puretv.twitch.desktop.platform.ShortcutKey
 import androidx.compose.foundation.background
 import androidx.compose.foundation.hoverable
@@ -165,6 +175,7 @@ fun ChannelContent(koin: Koin, channelLogin: String, onWatch: () -> Unit, onPlay
  * The 144dp hero avatar, the display name + live pill, the metadata line, and
  * the primary actions, straddling the banner's lower edge by -72dp.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun IdentityRow(
     displayName: String,
@@ -178,13 +189,14 @@ private fun IdentityRow(
 ) {
     val c = PureTvTheme.colors
 
-    Row(
-        modifier = Modifier.fillMaxWidth().offset(y = (-72).dp),
-        verticalAlignment = Alignment.Bottom,
-    ) {
+    // Avatar and name, with the buttons beside them when the window is wide enough and
+    // on their own (wrapping) row underneath when it is not, so the name never gets
+    // squeezed to a sliver (see IdentityLayout).
+    IdentityLayout(modifier = Modifier.fillMaxWidth().offset(y = (-72).dp)) {
+        Row(verticalAlignment = Alignment.Bottom) {
         HeroAvatar(displayName = displayName, imageUrl = channel?.profileImageUrl)
         Spacer(Modifier.width(20.dp))
-        Column(modifier = Modifier.weight(1f).padding(bottom = 12.dp)) {
+        Column(modifier = Modifier.weight(1f, fill = false).padding(bottom = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     displayName,
@@ -192,6 +204,8 @@ private fun IdentityRow(
                     color = c.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    // Shrinks (with an ellipsis) before the live pill is pushed off.
+                    modifier = Modifier.weight(1f, fill = false),
                 )
                 if (isLive) {
                     Spacer(Modifier.width(14.dp))
@@ -214,7 +228,11 @@ private fun IdentityRow(
                 Text(message, style = MaterialTheme.typography.bodyMedium, color = c.primary)
             }
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             ExpressiveButton(
                 text = if (isLive) "Watch now" else "Channel is offline",
                 onClick = onWatch,
@@ -246,6 +264,47 @@ private fun IdentityRow(
                 icon = ExpressiveIcons.OpenInNew,
                 enabled = isLive,
             )
+        }
+    }
+}
+
+/**
+ * The channel header's two pieces: [content]'s first child is the avatar and name, the
+ * second the buttons. Side by side, bottoms aligned, when the buttons fit next to at least
+ * [nameRoom] of name; otherwise the buttons go under the name at full width, where they
+ * wrap if even that is too narrow.
+ */
+@Composable
+private fun IdentityLayout(
+    modifier: Modifier = Modifier,
+    nameRoom: Dp = 420.dp,
+    gap: Dp = 24.dp,
+    stackGap: Dp = 16.dp,
+    content: @Composable () -> Unit,
+) {
+    Layout(content = content, modifier = modifier) { measurables, constraints ->
+        val identity = measurables[0]
+        val buttons = measurables[1]
+        val maxWidth = constraints.maxWidth
+        val buttonsWidth = buttons.maxIntrinsicWidth(constraints.maxHeight)
+        val gapPx = gap.roundToPx()
+        val loose = Constraints(maxWidth = maxWidth)
+        if (nameRoom.roundToPx() + gapPx + buttonsWidth <= maxWidth) {
+            val b = buttons.measure(Constraints(maxWidth = buttonsWidth))
+            val i = identity.measure(Constraints(maxWidth = maxWidth - gapPx - b.width))
+            val height = maxOf(i.height, b.height)
+            layout(maxWidth, height) {
+                i.place(0, height - i.height)
+                b.place(maxWidth - b.width, height - b.height)
+            }
+        } else {
+            val i = identity.measure(loose)
+            val b = buttons.measure(loose)
+            val top = i.height + stackGap.roundToPx()
+            layout(maxWidth, top + b.height) {
+                i.place(0, 0)
+                b.place(0, top)
+            }
         }
     }
 }

@@ -4,7 +4,12 @@
 name: Windows installer (fork)
 
 on:
+  # The Actions tab only offers a workflow that is on the default branch, and this one
+  # lives on `macos`, so a deliberately pushed `win-*` tag starts it too. No branch push does.
   workflow_dispatch:
+  push:
+    tags:
+      - "win-*"
 
 permissions:
   contents: read

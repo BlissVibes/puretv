@@ -485,7 +485,11 @@ class VlcPlayer(
     }
 
     override fun togglePlayPause() {
-        if (_status.value.isPlaying) pause() else resume()
+        val playing = _status.value.isPlaying
+        // Show the answer at once. libVLC confirms with its paused or playing event up to a
+        // second later, and until then the button looked as if the click had missed.
+        _status.update { it.copy(isPlaying = !playing) }
+        if (playing) pause() else resume()
     }
 
     override fun stop() {

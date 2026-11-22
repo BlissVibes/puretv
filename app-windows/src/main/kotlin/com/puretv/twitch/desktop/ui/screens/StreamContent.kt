@@ -1,5 +1,7 @@
 package com.puretv.twitch.desktop.ui.screens
 
+import com.puretv.twitch.desktop.ui.components.handCursor
+import androidx.compose.foundation.clickable
 import com.puretv.twitch.desktop.ui.components.FloatingPlayerChrome
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.boundsInRoot
@@ -1117,18 +1119,26 @@ private fun PlaybackControls(
 private fun PlayPauseButton(isPlaying: Boolean, onClick: () -> Unit) {
     val c = PureTvTheme.colors
     val interaction = remember { MutableInteractionSource() }
+    // The parts of expressiveClickable, written out so the focus ring can be left off: it is
+    // the line drawn around the button once it has been clicked, and it keeps the pill
+    // shape, so the button's hover morph (squarer corners) grew over it.
+    // val focused by interaction.collectIsFocusedAsState()
     Box(
         contentAlignment = Alignment.Center,
         modifier = Modifier
             .width(64.dp)
             .height(56.dp)
-            .expressiveClickable(
+            // Off for now; put back with the line above to show the ring again:
+            // .focusRing(focused, cornerRadius = 28.dp)
+            .expressiveSurface(
                 interaction = interaction,
-                onClick = onClick,
                 restRadius = 28.dp,
                 hoverRadius = 14.dp,
                 color = c.primary,
-            ),
+            )
+            .hoverable(interaction)
+            .handCursor()
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
     ) {
         Icon(
             if (isPlaying) ExpressiveIcons.Pause else ExpressiveIcons.Play,

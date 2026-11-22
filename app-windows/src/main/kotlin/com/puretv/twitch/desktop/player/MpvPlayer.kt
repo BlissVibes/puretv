@@ -467,7 +467,12 @@ class MpvPlayer(private val settingsStore: DesktopSettingsStore) : DesktopPlayer
 
     override fun resume() = withCtx { l, c -> runCatching { l.mpv_set_property_string(c, "pause", "no") }; Unit }
 
-    override fun togglePlayPause() { if (_status.value.isPlaying) pause() else resume() }
+    override fun togglePlayPause() {
+        val playing = _status.value.isPlaying
+        // Show the answer at once; mpv's own pause property confirms it a moment later.
+        _status.update { it.copy(isPlaying = !playing) }
+        if (playing) pause() else resume()
+    }
 
     override fun stop() {
         withCtx { l, c -> runCatching { l.mpv_command(c, arrayOf("stop", null)) } }

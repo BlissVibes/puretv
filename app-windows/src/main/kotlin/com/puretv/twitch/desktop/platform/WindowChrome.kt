@@ -73,3 +73,46 @@ class NativeFullscreenExit {
         return true
     }
 }
+
+/**
+ * Keeps the macOS fullscreen Space in step with what PureTV asked for. macOS ignores a
+ * fullscreen toggle while the Space animation from the previous one is still running (about
+ * a second, longer with a stream playing), so leaving fullscreen soon after entering it left
+ * the window fullscreen with the normal layout inside. The controller asks this every tick
+ * while a request is pending and acts on the answer.
+ */
+object NativePlacementSync {
+
+    enum class Step {
+        /** Ask the window for the target placement now. */
+        ISSUE,
+        /** A transition may still be running: check again on the next tick. */
+        WAIT,
+        /** The window is where PureTV wants it and has had time to settle. */
+        DONE,
+        /** Asked [MAX_ATTEMPTS] times and the window never followed: stop trying. */
+        GIVE_UP,
+    }
+
+    /** Longer than macOS takes to enter or leave its fullscreen Space (measured ~1.35 s with a stream). */
+    const val SETTLE_MS = 1600L
+    const val TICK_MS = 200L
+    const val MAX_ATTEMPTS = 4
+
+    /**
+     * [sinceIssueMs] is the time since the window was last asked for a placement, or null if
+     * it has not been asked yet. Never asks again within [SETTLE_MS] of the last ask, so a
+     * request can never land on top of a running animation.
+     */
+    fun step(
+        target: androidx.compose.ui.window.WindowPlacement,
+        actual: androidx.compose.ui.window.WindowPlacement,
+        sinceIssueMs: Long?,
+        attempts: Int,
+    ): Step = when {
+        sinceIssueMs != null && sinceIssueMs < SETTLE_MS -> Step.WAIT
+        actual == target -> Step.DONE
+        attempts >= MAX_ATTEMPTS -> Step.GIVE_UP
+        else -> Step.ISSUE
+    }
+}

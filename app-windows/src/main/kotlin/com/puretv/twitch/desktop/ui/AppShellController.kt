@@ -1,6 +1,7 @@
 package com.puretv.twitch.desktop.ui
 
 import com.puretv.twitch.desktop.platform.NativeFullscreenExit
+import com.puretv.twitch.desktop.platform.NativePlacementSync
 import com.puretv.twitch.desktop.platform.WindowChrome
 import com.puretv.twitch.desktop.platform.WindowsNative
 import androidx.compose.runtime.Composable
@@ -100,6 +101,7 @@ class AppShellController(
         if (!WindowChrome.nativeFullscreen()) return
         if (nativeExit.left(playerModeState == PlayerMode.FULLSCREEN, placement)) {
             // The OS already put the window back; only the player's layout follows.
+            stopNativeSync()
             fullscreenRestore = null
             fullscreenChatState = false
             playerModeState = PlayerMode.DEFAULT
@@ -191,7 +193,7 @@ class AppShellController(
         fullscreenRestore = currentGeometry()
         // macOS and Linux: the system's fullscreen, which hides their window frame too.
         if (WindowChrome.nativeFullscreen()) {
-            applyNativePlacement(WindowPlacement.Fullscreen)
+            requestNativePlacement(WindowPlacement.Fullscreen)
             return
         }
         windowState.placement = WindowPlacement.Floating
@@ -223,7 +225,7 @@ class AppShellController(
         if (WindowChrome.nativeFullscreen()) {
             // The system puts the window back where it was; sizing it mid-transition fights that.
             // A window that was already fullscreen before (the green button) goes back to a normal one.
-            applyNativePlacement(restore.placement.takeIf { it != WindowPlacement.Fullscreen } ?: WindowPlacement.Floating)
+            requestNativePlacement(restore.placement.takeIf { it != WindowPlacement.Fullscreen } ?: WindowPlacement.Floating)
             return
         }
         WindowsNative.releaseMonitorCover(window)
@@ -246,14 +248,57 @@ class AppShellController(
     fun toggleRail() { railHiddenState = !railHiddenState }
 
     /**
-     * Asks the window itself as well as [windowState]. While macOS animates into its
-     * fullscreen Space, Compose can read the window as still floating and write that back
-     * into the state; leaving fullscreen through the state alone is then "no change" and
-     * is dropped, which left the window fullscreen with the normal layout in it.
+     * macOS and Linux: asks for the system fullscreen (or leaves it) and keeps asking until
+     * the window really is there (see [NativePlacementSync]). macOS ignores a request made
+     * while its Space animation is running, which left the window fullscreen with the normal
+     * layout inside after a quick in-and-out. The window itself is the truth here:
+     * [windowState] can read the wrong way round for a moment mid-animation.
      */
-    private fun applyNativePlacement(placement: WindowPlacement) {
-        windowState.placement = placement
-        (window as? androidx.compose.ui.awt.ComposeWindow)?.let { if (it.placement != placement) it.placement = placement }
+    private var nativeTarget: WindowPlacement? = null
+    private var nativeIssuedAt = 0L
+    private var nativeAttempts = 0
+    private var nativeTimer: javax.swing.Timer? = null
+
+    private fun requestNativePlacement(placement: WindowPlacement) {
+        nativeTarget = placement
+        nativeAttempts = 0
+        val running = nativeTimer
+        if (running != null) {
+            // An earlier request is still settling: the next tick takes the new target.
+            return
+        }
+        nativeIssuedAt = 0L
+        nativeTick()
+        if (nativeTarget != null) {
+            nativeTimer = javax.swing.Timer(NativePlacementSync.TICK_MS.toInt()) { nativeTick() }.also { it.start() }
+        }
+    }
+
+    private fun nativeTick() {
+        val target = nativeTarget ?: return stopNativeSync()
+        val actual = (window as? androidx.compose.ui.awt.ComposeWindow)?.placement ?: windowState.placement
+        val since = if (nativeIssuedAt == 0L) null else System.currentTimeMillis() - nativeIssuedAt
+        when (NativePlacementSync.step(target, actual, since, nativeAttempts)) {
+            NativePlacementSync.Step.ISSUE -> {
+                nativeAttempts++
+                nativeIssuedAt = System.currentTimeMillis()
+                windowState.placement = target
+                (window as? androidx.compose.ui.awt.ComposeWindow)?.placement = target
+            }
+            NativePlacementSync.Step.WAIT -> Unit
+            NativePlacementSync.Step.DONE -> {
+                // Compose can have written a mid-animation reading into the state; put it right.
+                if (windowState.placement != target) windowState.placement = target
+                stopNativeSync()
+            }
+            NativePlacementSync.Step.GIVE_UP -> stopNativeSync()
+        }
+    }
+
+    private fun stopNativeSync() {
+        nativeTimer?.stop()
+        nativeTimer = null
+        nativeTarget = null
     }
 
     fun toggleChat() {
